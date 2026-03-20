@@ -67,16 +67,35 @@ export function createMockScene() {
     fillRect:  () => {},
   };
 
+  const mockGameObject = () => ({
+    body:           mockBody,
+    setInteractive: () => ({ on: () => {} }),
+    setDepth:       function() { return this; },
+    setAlpha:       function() { return this; },
+    on:             () => {},
+    destroy:        () => {},
+  });
+
   return {
     add: {
       graphics:  () => mockGraphics,
-      rectangle: () => ({ body: mockBody, setInteractive: () => ({ on: () => {} }), on: () => {} }),
+      rectangle: () => mockGameObject(),
+      image:     () => mockGameObject(),
       text:      () => ({ setOrigin: () => ({ setStyle: () => {} }), setStyle: () => {} }),
     },
     physics: {
       add: {
         existing: (obj) => { obj.body = { ...mockBody }; },
+        group:    () => ({ add: () => {}, getChildren: () => [] }),
+        overlap:  () => {},
       },
+    },
+    tweens: {
+      add: () => {},
+    },
+    time: {
+      delayedCall: (_ms, cb) => { cb(); },
+      addEvent:    () => ({ remove: () => {} }),
     },
     input: {
       keyboard: {
@@ -92,8 +111,9 @@ export function createMockScene() {
           up:    { isDown: false },
           down:  { isDown: false },
         }),
-        on:   () => {},
-        once: () => {},
+        addKey: () => ({ isDown: false }),
+        on:     () => {},
+        once:   () => {},
       },
     },
     scene:  { start: () => {} },

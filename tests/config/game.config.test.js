@@ -5,8 +5,9 @@ import { GAME_CONFIG } from '../../config/game.config.js';
 describe('GAME_CONFIG', () => {
   const REQUIRED_KEYS = [
     'WIDTH', 'HEIGHT',
-    'PLAYER_SPEED',
+    'PLAYER_SPEED', 'PLAYER_LIFE_DEFAULT',
     'WEAPON_SLOTS',
+    'SPEED_MIN', 'SPEED_MAX', 'PLAYER_SPEED_DEFAULT',
     'STAR_COUNT', 'STAR_SPEED_MIN', 'STAR_SPEED_MAX',
   ];
 
@@ -52,7 +53,24 @@ describe('GAME_CONFIG', () => {
     assert.ok(GAME_CONFIG.PLAYER_SPEED >= 100, 'PLAYER_SPEED too slow to be playable');
   });
 
+  it('PLAYER_LIFE_DEFAULT is a positive integer', () => {
+    assert.ok(Number.isInteger(GAME_CONFIG.PLAYER_LIFE_DEFAULT) && GAME_CONFIG.PLAYER_LIFE_DEFAULT > 0);
+  });
+
   it('WEAPON_SLOTS is 2', () => {
     assert.equal(GAME_CONFIG.WEAPON_SLOTS, 2);
+  });
+
+  it('SPEED_MIN is less than SPEED_MAX', () => {
+    assert.ok(GAME_CONFIG.SPEED_MIN < GAME_CONFIG.SPEED_MAX,
+      `SPEED_MIN (${GAME_CONFIG.SPEED_MIN}) must be < SPEED_MAX (${GAME_CONFIG.SPEED_MAX})`);
+  });
+
+  it('PLAYER_SPEED_DEFAULT is within [SPEED_MIN, SPEED_MAX]', () => {
+    const { SPEED_MIN, SPEED_MAX, PLAYER_SPEED_DEFAULT } = GAME_CONFIG;
+    assert.ok(
+      PLAYER_SPEED_DEFAULT >= SPEED_MIN && PLAYER_SPEED_DEFAULT <= SPEED_MAX,
+      `PLAYER_SPEED_DEFAULT (${PLAYER_SPEED_DEFAULT}) must be in [${SPEED_MIN}, ${SPEED_MAX}]`
+    );
   });
 });

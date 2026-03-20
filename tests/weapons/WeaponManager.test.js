@@ -73,6 +73,10 @@ describe('WeaponManager', () => {
     assert.ok(manager.pool !== undefined);
   });
 
+  it('exposes damage via .damage getter', () => {
+    assert.equal(manager.damage, LASER.damage);
+  });
+
   it('starts with zero cooldown (can fire immediately)', () => {
     assert.equal(manager._cooldown, 0);
   });

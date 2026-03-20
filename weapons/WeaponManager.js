@@ -32,6 +32,9 @@ export class WeaponManager {
   /** The bullet group — used by CollisionSystem to register overlaps. */
   get pool() { return this._pool; }
 
+  /** Damage dealt per bullet by the currently active weapon. */
+  get damage() { return this._cfg.damage; }
+
   /**
    * Returns a snapshot of all slots for UI rendering.
    * Populated slots return `{ key, name, color }`; empty slots return `null`.
