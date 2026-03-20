@@ -9,7 +9,7 @@ Built with **Phaser 3** — no build toolchain, no npm, runs directly in a brows
 ## Gameplay
 
 - **3 playable ships** with distinct stats and passive abilities
-- **4 weapon slots** unlocked progressively — laser, spread shot, homing missiles, railgun, and more
+- **2 weapon slots** — slot 1 starts with the laser, slot 2 fills via drops and level-transition picks
 - **Roguelike progression** — choose 1 of 3 upgrades between each level; no two runs are the same
 - **7 levels** with escalating enemy waves, mid-bosses, and end-bosses
 - **Permadeath** — 3 lives per run by default

@@ -174,13 +174,13 @@ Three ships, selectable at menu. Each has distinct stats and a passive ability.
 | Phantom | Low | High | Medium | Dodge roll (brief invincibility) |
 | Fortress | Very High | Low | High | Auto-repair (slow HP regen) |
 
-All ships start with the same base weapon (single laser). Additional weapon slots unlock per level.
+All ships start with the same base weapon (single laser) in slot 1. Slot 2 starts empty.
 
 ### Weapon System
 
-- Player has **4 weapon slots**.
-- Slots are unlocked progressively (slot 1 available from start, slot 4 available from level 4).
-- Weapons fire simultaneously or can be toggled (design decision: simultaneous by default).
+- Player has **2 weapon slots**.
+- Slot 1 starts loaded with the laser. Slot 2 is unlocked empty and filled via drops or level-transition picks.
+- Both weapons fire simultaneously when the fire key is held.
 - Weapons are picked up as bonuses or chosen at level transition.
 
 **Weapon roster (minimum, expand as needed):**

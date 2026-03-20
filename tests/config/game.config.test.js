@@ -6,6 +6,7 @@ describe('GAME_CONFIG', () => {
   const REQUIRED_KEYS = [
     'WIDTH', 'HEIGHT',
     'PLAYER_SPEED',
+    'WEAPON_SLOTS',
     'STAR_COUNT', 'STAR_SPEED_MIN', 'STAR_SPEED_MAX',
   ];
 
@@ -49,5 +50,9 @@ describe('GAME_CONFIG', () => {
 
   it('PLAYER_SPEED is at least 100', () => {
     assert.ok(GAME_CONFIG.PLAYER_SPEED >= 100, 'PLAYER_SPEED too slow to be playable');
+  });
+
+  it('WEAPON_SLOTS is 2', () => {
+    assert.equal(GAME_CONFIG.WEAPON_SLOTS, 2);
   });
 });

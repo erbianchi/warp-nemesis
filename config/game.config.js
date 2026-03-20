@@ -5,6 +5,7 @@ export const GAME_CONFIG = {
   HEIGHT: 640,
 
   PLAYER_SPEED: 300,
+  WEAPON_SLOTS: 2,
 
   STAR_COUNT: 140,
   STAR_SPEED_MIN: 40,
