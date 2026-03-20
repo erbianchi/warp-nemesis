@@ -7,6 +7,7 @@ installPhaserGlobal();
 const {
   LOOP_PATH,
   SLOTS,
+  calcFormationSlots,
   SQUADRON_SHIP_LIFE,
   FORMATION_SPEED,
   FORMATION_CYCLE_MS,
@@ -176,6 +177,90 @@ describe('FORMATION_CYCLE_MS', () => {
   it('gives players enough time to react (>= 5000 ms)', () => {
     assert.ok(FORMATION_CYCLE_MS >= 5000,
       `cycle should be at least 5 s; got ${FORMATION_CYCLE_MS} ms`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+
+describe('calcFormationSlots', () => {
+  it('returns 8 slots for 8 ships (matches SLOTS length)', () => {
+    assert.equal(calcFormationSlots(8).length, 8);
+  });
+
+  it('returns correct count for any n (1–8)', () => {
+    for (let n = 1; n <= 8; n++) {
+      assert.equal(calcFormationSlots(n).length, n, `expected ${n} slots for n=${n}`);
+    }
+  });
+
+  it('returns empty array for 0', () => {
+    assert.equal(calcFormationSlots(0).length, 0);
+  });
+
+  it('every slot has numeric x and y', () => {
+    for (const s of calcFormationSlots(5)) {
+      assert.equal(typeof s.x, 'number');
+      assert.equal(typeof s.y, 'number');
+    }
+  });
+
+  it('all slots stay within canvas bounds', () => {
+    for (let n = 1; n <= 8; n++) {
+      for (const s of calcFormationSlots(n)) {
+        assert.ok(s.x >= 0 && s.x <= WIDTH,  `x=${s.x} out of bounds for n=${n}`);
+        assert.ok(s.y >= 0 && s.y <= HEIGHT, `y=${s.y} out of bounds for n=${n}`);
+      }
+    }
+  });
+
+  it('uses at most 2 rows', () => {
+    for (let n = 1; n <= 8; n++) {
+      const rows = new Set(calcFormationSlots(n).map(s => s.y));
+      assert.ok(rows.size <= 2, `n=${n} produced ${rows.size} rows`);
+    }
+  });
+
+  it('rows differ by y (when 2 rows)', () => {
+    const slots = calcFormationSlots(8);
+    const ys = [...new Set(slots.map(s => s.y))];
+    assert.equal(ys.length, 2);
+    assert.notEqual(ys[0], ys[1]);
+  });
+
+  it('slots are near the top of the screen (y < HEIGHT/4)', () => {
+    for (const s of calcFormationSlots(8)) {
+      assert.ok(s.y < HEIGHT / 4, `y=${s.y} is not in top quarter`);
+    }
+  });
+
+  it('no duplicate (x, y) positions', () => {
+    for (let n = 1; n <= 8; n++) {
+      const seen = new Set();
+      for (const s of calcFormationSlots(n)) {
+        const key = `${s.x},${s.y}`;
+        assert.ok(!seen.has(key), `duplicate slot at ${key} for n=${n}`);
+        seen.add(key);
+      }
+    }
+  });
+
+  it('n=8 produces same x positions as SLOTS (backward-compatible)', () => {
+    const computed = calcFormationSlots(8).map(s => s.x).sort((a, b) => a - b);
+    const original = SLOTS.map(s => s.x).sort((a, b) => a - b);
+    assert.deepEqual(computed, original);
+  });
+
+  it('slots are horizontally centered (mean x ≈ WIDTH/2)', () => {
+    for (let n = 1; n <= 8; n++) {
+      const slots = calcFormationSlots(n);
+      const meanX = slots.reduce((s, p) => s + p.x, 0) / slots.length;
+      assert.ok(
+        Math.abs(meanX - WIDTH / 2) < 35,
+        `n=${n}: mean x=${meanX.toFixed(1)} is not centered on WIDTH/2=${WIDTH / 2}`
+      );
+    }
   });
 });
 

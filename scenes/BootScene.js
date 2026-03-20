@@ -44,5 +44,12 @@ export class BootScene extends Phaser.Scene {
     eb.fillRect(0, 0, 3, 10);
     eb.generateTexture('bullet_enemy', 3, 10);
     eb.destroy();
+
+    // Particle dot — 4×4 white square, tinted per-emitter at runtime
+    const pt = this.make.graphics({ add: false });
+    pt.fillStyle(0xffffff, 1);
+    pt.fillRect(0, 0, 4, 4);
+    pt.generateTexture('particle', 4, 4);
+    pt.destroy();
   }
 }

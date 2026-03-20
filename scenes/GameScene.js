@@ -5,6 +5,7 @@
 import { GAME_CONFIG } from '../config/game.config.js';
 import { ScrollingBackground } from '../systems/ScrollingBackground.js';
 import { WeaponManager } from '../weapons/WeaponManager.js';
+import { RunState } from '../systems/RunState.js';
 
 const { WIDTH, HEIGHT, PLAYER_SPEED, PLAYER_SPEED_DEFAULT, PLAYER_LIFE_DEFAULT } = GAME_CONFIG;
 
@@ -19,11 +20,32 @@ export const LOOP_PATH = [
   { x: 320, y: 75,  dur: 500 },
 ];
 
-/** 2 rows × 4 cols at the top of the screen, filled right-to-left. */
+/** Initial 2×4 arrival slots, filled right-to-left (ships exit the loop on the right). */
 export const SLOTS = [
   { x: 330, y: 65  }, { x: 270, y: 65  }, { x: 210, y: 65  }, { x: 150, y: 65  },
   { x: 330, y: 110 }, { x: 270, y: 110 }, { x: 210, y: 110 }, { x: 150, y: 110 },
 ];
+
+/**
+ * Calculate centered two-row formation slots for N living ships.
+ * Splits ships as evenly as possible between the two rows.
+ * @param {number} count
+ * @returns {Array<{x: number, y: number}>}
+ */
+export function calcFormationSlots(count) {
+  const SPACING_X = 60;
+  const ROW_YS    = [65, 110];
+  const slots     = [];
+  const row2      = Math.floor(count / 2);
+  const row1      = count - row2;
+
+  for (const [n, y] of [[row1, ROW_YS[0]], [row2, ROW_YS[1]]]) {
+    if (n === 0) continue;
+    const startX = (WIDTH - (n - 1) * SPACING_X) / 2;
+    for (let col = 0; col < n; col++) slots.push({ x: startX + col * SPACING_X, y });
+  }
+  return slots;
+}
 
 export const SQUADRON_SHIP_LIFE   = 10;    // HP per ship in this squadron
 export const FORMATION_SPEED      = 1;     // speed tier (1–5) for this squadron
@@ -47,6 +69,9 @@ export class GameScene extends Phaser.Scene {
 
     this._playerSpeed = PLAYER_SPEED_DEFAULT;
     this._playerLife  = PLAYER_LIFE_DEFAULT;
+    this._gameOver    = false;
+
+    RunState.reset();
 
     this._buildWeaponDisplay();
 
@@ -57,11 +82,29 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time, delta) {
+    if (this._gameOver) return;
+
     this._bg.update(delta);
     this._movePlayer();
     this._weapons.update(delta);
     if (this._space.isDown) {
       this._weapons.tryFire(this._player.x, this._player.y);
+    }
+
+    // Move enemy bullets (tween-driven) and check AABB collision with player
+    if (this._eBullets) {
+      const px = this._player.x, py = this._player.y;
+      for (let i = this._eBullets.length - 1; i >= 0; i--) {
+        const b = this._eBullets[i];
+        if (!b.active) { this._eBullets.splice(i, 1); continue; }
+        if (b.y > HEIGHT + 20) { b.destroy(); this._eBullets.splice(i, 1); continue; }
+        // Simple AABB: bullet 3×10, player 28×36
+        if (Math.abs(b.x - px) < 15.5 && Math.abs(b.y - py) < 23) {
+          b.destroy();
+          this._eBullets.splice(i, 1);
+          this._onEnemyBulletHit();
+        }
+      }
     }
   }
 
@@ -160,8 +203,10 @@ export class GameScene extends Phaser.Scene {
     this._fShootIndex  = 0;
     this._fShootTimer  = null;
     this._fCycleTimer  = null;
+    this._fInIdle      = false;
+    this._eBullets     = [];
 
-    // Physics group used for bullet-overlap detection
+    // Physics group used for player-bullet overlap detection
     this._fGroup = this.physics.add.group();
 
     for (let i = 0; i < 8; i++) {
@@ -176,6 +221,7 @@ export class GameScene extends Phaser.Scene {
         life:     SQUADRON_SHIP_LIFE,
         drifting: false,
         dead:     false,
+        landed:   false,   // true once the ship has reached its slot
       };
       this._fFleet.push(data);
       this.time.delayedCall(i * 200, () => this._fRunPath(data));
@@ -189,6 +235,7 @@ export class GameScene extends Phaser.Scene {
       null,
       this
     );
+
   }
 
   /**
@@ -206,7 +253,7 @@ export class GameScene extends Phaser.Scene {
         y:          data.slot.y,
         duration:   380 / data.speed,
         ease:       'Cubic.easeOut',
-        onComplete: () => this._fOnLanded(),
+        onComplete: () => { data.landed = true; this._fOnLanded(); },
       });
     });
   }
@@ -244,7 +291,9 @@ export class GameScene extends Phaser.Scene {
    * the squadron shoots, and a timer schedules the next pattern run.
    */
   _fBeginIdle() {
+    this._fInIdle = true;
     for (const data of this._fFleet) {
+      if (data.dead) continue;
       data.drifting = true;
       this._fIdleDrift(data);
     }
@@ -314,7 +363,12 @@ export class GameScene extends Phaser.Scene {
     const alive = this._fFleet.filter(d => !d.dead);
     if (alive.length === 0) return;
 
+    this._fInIdle = false;
     if (this._fShootTimer) { this._fShootTimer.remove(); this._fShootTimer = null; }
+
+    // Reassign slots for the current living count before launching
+    const newSlots = calcFormationSlots(alive.length);
+    alive.forEach((data, i) => { data.slot = newSlots[i]; data.landed = false; });
 
     for (const data of this._fFleet) {
       data.drifting = false;
@@ -349,11 +403,111 @@ export class GameScene extends Phaser.Scene {
       data.dead     = true;
       data.drifting = false;
       this.tweens.killTweensOf(ship);
+      this._explode(ship.x, ship.y);
+      RunState.addScore(SQUADRON_SHIP_LIFE);
       ship.destroy();
+      if (this._fInIdle) {
+        this._fReorganize();
+      } else if (!data.landed) {
+        // Killed mid-flight — the slot tween's onComplete will never fire,
+        // so manually tick the landing counter to keep the state machine moving.
+        this._fOnLanded();
+      }
     }
   }
 
-  /** Flash the current ship and fire a bullet downward; advance the sequence. */
+  /**
+   * Tween surviving fleet members to recalculated centered slots, then resume drift.
+   * Only called during idle phase.
+   */
+  _fReorganize() {
+    const living = this._fFleet.filter(d => !d.dead);
+    if (living.length === 0) return;
+
+    const newSlots = calcFormationSlots(living.length);
+    living.forEach((data, i) => {
+      data.slot     = newSlots[i];
+      data.drifting = false;
+      this.tweens.killTweensOf(data.ship);
+      this.tweens.add({
+        targets:    data.ship,
+        x:          data.slot.x,
+        y:          data.slot.y,
+        duration:   350,
+        ease:       'Cubic.easeOut',
+        onComplete: () => {
+          if (data.dead) return;
+          data.drifting = true;
+          this._fIdleDrift(data);
+        },
+      });
+    });
+  }
+
+  /**
+   * Called when an enemy bullet hits the player.
+   * Applies weapon damage; triggers _killPlayer at 0 HP.
+   */
+  _onEnemyBulletHit() {
+    if (this._gameOver) return;
+    this._playerLife -= this._weapons.damage;
+    if (this._playerLife <= 0) this._killPlayer();
+  }
+
+  /** Freeze the world, explode the player ship, and show the game-over overlay. */
+  _killPlayer() {
+    if (this._gameOver) return;
+    this._gameOver = true;
+
+    this._explode(this._player.x, this._player.y);
+    this._player.setVisible(false);
+    if (this._player.body) this._player.body.enable = false;
+
+    // Stop all formation activity
+    if (this._fShootTimer) { this._fShootTimer.remove(); this._fShootTimer = null; }
+    if (this._fCycleTimer) { this._fCycleTimer.remove(); this._fCycleTimer = null; }
+    for (const data of this._fFleet ?? []) {
+      data.drifting = false;
+      if (!data.dead) this.tweens.killTweensOf(data.ship);
+    }
+
+    // Pause physics so nothing moves (background stops via _gameOver flag in update)
+    this.physics.pause();
+
+    // Overlay — rendered above everything; particles continue independently
+    this.add.text(WIDTH / 2, HEIGHT / 2 - 30, 'GAME OVER', {
+      fontSize: '42px', fill: '#ff2222', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(20);
+
+    this.add.text(WIDTH / 2, HEIGHT / 2 + 30, `SCORE  ${RunState.score}`, {
+      fontSize: '20px', fill: '#ffffff', fontFamily: 'monospace',
+    }).setOrigin(0.5).setDepth(20);
+  }
+
+  /**
+   * Spawn a one-shot particle burst at (x, y).
+   * Uses Phaser 3.60+ ParticleEmitter API.
+   * @param {number} x
+   * @param {number} y
+   */
+  _explode(x, y) {
+    const emitter = this.add.particles(x, y, 'particle', {
+      speed:     { min: 80, max: 320 },
+      angle:     { min: 0,  max: 360 },
+      scale:     { start: 2.0, end: 0 },
+      alpha:     { start: 1,   end: 0 },
+      lifespan:  600,
+      quantity:  32,
+      blendMode: 'ADD',
+      tint:      [0xff6600, 0xff9900, 0xffcc00, 0xffffff],
+      emitting:  false,
+    }).setDepth(15);
+
+    emitter.explode(32);
+    this.time.delayedCall(700, () => emitter.destroy());
+  }
+
+  /** Flash the current ship and fire a bullet downward (tween-driven); advance the sequence. */
   _fFireNext() {
     const data = this._fFleet[this._fShootIndex];
     this._fShootIndex = (this._fShootIndex + 1) % this._fFleet.length;
@@ -361,14 +515,22 @@ export class GameScene extends Phaser.Scene {
 
     this.tweens.add({ targets: data.ship, alpha: 0.25, duration: 80, yoyo: true, repeat: 1 });
 
-    const bullet = this.add.rectangle(data.ship.x, data.ship.y + 14, 3, 10, 0xff3300).setDepth(9);
+    const startY = data.ship.y + 14;
+    const bullet = this.add.rectangle(data.ship.x, startY, 3, 10, 0xff3300).setDepth(9);
+    this._eBullets.push(bullet);
+
+    const pixelsPerSec = 600 * data.speed;
+    const dist         = HEIGHT + 30 - startY;
     this.tweens.add({
       targets:    bullet,
-      y:          HEIGHT + 20,
-      duration:   900 / data.speed,
+      y:          HEIGHT + 30,
+      duration:   Math.round(dist / pixelsPerSec * 1000),
       ease:       'Linear',
-      onComplete: () => bullet.destroy(),
+      onComplete: () => {
+        const idx = this._eBullets.indexOf(bullet);
+        if (idx !== -1) this._eBullets.splice(idx, 1);
+        if (bullet.active) bullet.destroy();
+      },
     });
-
   }
 }

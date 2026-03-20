@@ -82,6 +82,7 @@ export function createMockScene() {
       rectangle: () => mockGameObject(),
       image:     () => mockGameObject(),
       text:      () => ({ setOrigin: () => ({ setStyle: () => {} }), setStyle: () => {} }),
+      particles: () => ({ setDepth: () => ({ explode: () => {} }), explode: () => {}, destroy: () => {} }),
     },
     physics: {
       add: {

@@ -32,7 +32,7 @@ export class MenuScene extends Phaser.Scene {
   }
 
   _buildTitle() {
-    this.add.text(CX, CY - 130, 'STARSHIP', STYLE.title).setOrigin(0.5);
+    this.add.text(CX, CY - 130, 'WARP', STYLE.title).setOrigin(0.5);
     this.add.text(CX, CY - 90,  'NEMESIS',  { ...STYLE.title, fill: '#ff4444' }).setOrigin(0.5);
     this.add.text(CX, CY - 55,  'A SPACE ROGUELIKE', STYLE.subtitle).setOrigin(0.5);
   }

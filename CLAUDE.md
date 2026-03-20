@@ -1,4 +1,4 @@
-# CLAUDE.md — Starship Roguelike
+# CLAUDE.md — Warp Nemesis
 
 ## Project Overview
 
