@@ -9,6 +9,7 @@ describe('GAME_CONFIG', () => {
     'WEAPON_SLOTS',
     'PLAYER_HEAT_MAX', 'PLAYER_HEAT_RECOVERY_MS', 'PLAYER_OVERHEAT_RECOVERY_SHOTS',
     'PLAYER_HEAT_WARNING_RATIO', 'PLAYER_HEAT_WARNING_BLINK_MS',
+    'PLAYER_HEAT_WARNING_SHAKE_MS', 'PLAYER_HEAT_WARNING_SHAKE_INTENSITY',
     'SPEED_MIN', 'SPEED_MAX', 'PLAYER_SPEED_DEFAULT',
     'STAR_COUNT', 'STAR_SPEED_MIN', 'STAR_SPEED_MAX',
   ];
@@ -75,12 +76,20 @@ describe('GAME_CONFIG', () => {
     assert.equal(GAME_CONFIG.PLAYER_OVERHEAT_RECOVERY_SHOTS, 20);
   });
 
-  it('heat warning starts at 80 percent of the bar', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO, 0.8);
+  it('heat warning starts at 70 percent of the bar', () => {
+    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO, 0.7);
   });
 
   it('heat warning blink cadence is defined in milliseconds', () => {
     assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_BLINK_MS, 160);
+  });
+
+  it('heat warning shake cadence is defined in milliseconds', () => {
+    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_SHAKE_MS, 45);
+  });
+
+  it('heat warning shake intensity is configured', () => {
+    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_SHAKE_INTENSITY, 0.0070);
   });
 
   it('SPEED_MIN is less than SPEED_MAX', () => {

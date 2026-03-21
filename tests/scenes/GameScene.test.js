@@ -5,7 +5,55 @@ import { installPhaserGlobal } from '../helpers/phaser.mock.js';
 installPhaserGlobal();
 
 const { GAME_CONFIG } = await import('../../config/game.config.js');
-const { resolveHeatBarStyle } = await import('../../scenes/GameScene.js');
+const {
+  GameScene,
+  isHeatWarningActive,
+  resolveHeatBarStyle,
+} = await import('../../scenes/GameScene.js');
+
+function createHeatWarningScene(heatShots) {
+  const calls = [];
+  const scene = new GameScene();
+  scene._weapons = {
+    heatShots,
+    maxHeatShots: GAME_CONFIG.PLAYER_HEAT_MAX,
+  };
+  scene.cameras = {
+    main: {
+      shake: (duration, intensity, force) => {
+        calls.push({ type: 'shake', duration, intensity, force });
+      },
+      stopShake: () => {
+        calls.push({ type: 'stopShake' });
+      },
+    },
+  };
+  scene._heatWarningActive = false;
+  scene._nextHeatWarningShakeAt = 0;
+  return { scene, calls };
+}
+
+describe('isHeatWarningActive', () => {
+  it('returns false below the warning threshold', () => {
+    assert.equal(
+      isHeatWarningActive(
+        GAME_CONFIG.PLAYER_HEAT_MAX * GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO - 0.01,
+        GAME_CONFIG.PLAYER_HEAT_MAX
+      ),
+      false
+    );
+  });
+
+  it('returns true at the warning threshold', () => {
+    assert.equal(
+      isHeatWarningActive(
+        GAME_CONFIG.PLAYER_HEAT_MAX * GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO,
+        GAME_CONFIG.PLAYER_HEAT_MAX
+      ),
+      true
+    );
+  });
+});
 
 describe('resolveHeatBarStyle', () => {
   it('keeps the heat bar red and fully opaque below the warning threshold', () => {
@@ -32,5 +80,37 @@ describe('resolveHeatBarStyle', () => {
     assert.equal(bright.alpha, 1);
     assert.equal(dim.color, 0xffdd33);
     assert.equal(dim.alpha, 0.3);
+  });
+});
+
+describe('GameScene heat warning shake', () => {
+  it('starts a fast camera shake while heat is in the warning zone', () => {
+    const { scene, calls } = createHeatWarningScene(
+      GAME_CONFIG.PLAYER_HEAT_MAX * GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO
+    );
+
+    scene._updateHeatWarningShake(1000);
+
+    assert.equal(scene._heatWarningActive, true);
+    assert.deepEqual(calls, [{
+      type: 'shake',
+      duration: GAME_CONFIG.PLAYER_HEAT_WARNING_SHAKE_MS,
+      intensity: GAME_CONFIG.PLAYER_HEAT_WARNING_SHAKE_INTENSITY,
+      force: true,
+    }]);
+    assert.equal(scene._nextHeatWarningShakeAt, 1000 + GAME_CONFIG.PLAYER_HEAT_WARNING_SHAKE_MS);
+  });
+
+  it('stops the camera shake once heat drops back below the warning zone', () => {
+    const { scene, calls } = createHeatWarningScene(
+      GAME_CONFIG.PLAYER_HEAT_MAX * GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO
+    );
+
+    scene._updateHeatWarningShake(1000);
+    scene._weapons.heatShots = GAME_CONFIG.PLAYER_HEAT_MAX * GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO - 0.01;
+    scene._updateHeatWarningShake(1020);
+
+    assert.equal(scene._heatWarningActive, false);
+    assert.deepEqual(calls.at(-1), { type: 'stopShake' });
   });
 });

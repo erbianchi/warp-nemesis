@@ -19,11 +19,22 @@ const {
   PLAYER_HP_MAX, PLAYER_HP_DEFAULT,
   PLAYER_SHIELD_MAX, PLAYER_SHIELD_DEFAULT,
   PLAYER_HEAT_WARNING_RATIO, PLAYER_HEAT_WARNING_BLINK_MS,
+  PLAYER_HEAT_WARNING_SHAKE_MS, PLAYER_HEAT_WARNING_SHAKE_INTENSITY,
 } = GAME_CONFIG;
 
 const HEAT_BAR_COLOR = 0xff3300;
 const HEAT_WARNING_COLOR = 0xffdd33;
 const HEAT_WARNING_DIM_ALPHA = 0.3;
+
+/**
+ * True while the weapon heat sits in the warning zone.
+ * @param {number} heatShots
+ * @param {number} maxHeatShots
+ * @returns {boolean}
+ */
+export function isHeatWarningActive(heatShots, maxHeatShots) {
+  return maxHeatShots > 0 && (heatShots / maxHeatShots) >= PLAYER_HEAT_WARNING_RATIO;
+}
 
 /**
  * Resolve the current heat bar color/alpha.
@@ -33,8 +44,7 @@ const HEAT_WARNING_DIM_ALPHA = 0.3;
  * @returns {{color: number, alpha: number}}
  */
 export function resolveHeatBarStyle(heatShots, maxHeatShots, timeMs = 0) {
-  const heatRatio = maxHeatShots > 0 ? heatShots / maxHeatShots : 0;
-  if (heatRatio < PLAYER_HEAT_WARNING_RATIO) {
+  if (!isHeatWarningActive(heatShots, maxHeatShots)) {
     return { color: HEAT_BAR_COLOR, alpha: 1 };
   }
 
@@ -70,6 +80,8 @@ export class GameScene extends Phaser.Scene {
     this._displayedScore = 0;
     this._scoreTween     = null;
     this._hudTimeMs      = 0;
+    this._heatWarningActive = false;
+    this._nextHeatWarningShakeAt = 0;
 
     RunState.reset();
 
@@ -132,6 +144,7 @@ export class GameScene extends Phaser.Scene {
     if (wantsToFire) {
       this._weapons.tryFire(this._player.x, this._player.y);
     }
+    this._updateHeatWarningShake(time);
     this._drawStatusBars(time);
 
     this._spawner.update(delta);
@@ -253,6 +266,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   _respawnAfterDeath() {
+    this._stopHeatWarningShake();
     this._respawning = true;
 
     this._explode(this._player.x, this._player.y);
@@ -299,6 +313,7 @@ export class GameScene extends Phaser.Scene {
 
   _killPlayer() {
     if (this._gameOver) return;
+    this._stopHeatWarningShake();
     this._gameOver = true;
 
     this._explode(this._player.x, this._player.y);
@@ -475,6 +490,42 @@ export class GameScene extends Phaser.Scene {
       if (rect.setFillStyle) rect.setFillStyle(color, 1);
       rect.setAlpha(1);
     }
+  }
+
+  _updateHeatWarningShake(timeMs = this._hudTimeMs) {
+    const warningActive = isHeatWarningActive(
+      this._weapons.heatShots,
+      this._weapons.maxHeatShots
+    );
+
+    if (!warningActive) {
+      this._stopHeatWarningShake();
+      this._nextHeatWarningShakeAt = timeMs;
+      return;
+    }
+
+    this._heatWarningActive = true;
+    if (timeMs < this._nextHeatWarningShakeAt) return;
+
+    const camera = this.cameras?.main;
+    if (camera?.shake) {
+      camera.shake(
+        PLAYER_HEAT_WARNING_SHAKE_MS,
+        PLAYER_HEAT_WARNING_SHAKE_INTENSITY,
+        true
+      );
+    }
+
+    this._nextHeatWarningShakeAt = timeMs + PLAYER_HEAT_WARNING_SHAKE_MS;
+  }
+
+  _stopHeatWarningShake() {
+    if (!this._heatWarningActive) return;
+
+    this._heatWarningActive = false;
+    this._nextHeatWarningShakeAt = 0;
+    const camera = this.cameras?.main;
+    if (camera?.stopShake) camera.stopShake();
   }
 
   _buildWeaponDisplay() {
