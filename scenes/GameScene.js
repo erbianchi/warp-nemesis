@@ -18,7 +18,6 @@ const {
   PLAYER_SPEED, PLAYER_SPEED_DEFAULT, PLAYER_LIVES_DEFAULT,
   PLAYER_HP_MAX, PLAYER_HP_DEFAULT,
   PLAYER_SHIELD_MAX, PLAYER_SHIELD_DEFAULT,
-  PLAYER_HEAT_MAX,
 } = GAME_CONFIG;
 
 export class GameScene extends Phaser.Scene {
@@ -41,7 +40,6 @@ export class GameScene extends Phaser.Scene {
     this._playerLives    = PLAYER_LIVES_DEFAULT;
     this._playerHp       = PLAYER_HP_DEFAULT;
     this._playerShield   = PLAYER_SHIELD_DEFAULT;
-    this._weaponHeat     = 0;
     this._gameOver       = false;
     this._respawning     = false;
     this._displayedScore = 0;
@@ -101,11 +99,13 @@ export class GameScene extends Phaser.Scene {
 
     this._bg.update(delta);
     this._movePlayer();
-    this._weapons.update(delta);
+    const wantsToFire = this._space.isDown;
+    this._weapons.update(delta, wantsToFire);
 
-    if (this._space.isDown) {
+    if (wantsToFire) {
       this._weapons.tryFire(this._player.x, this._player.y);
     }
+    this._drawStatusBars();
 
     this._spawner.update(delta);
 
@@ -404,7 +404,7 @@ export class GameScene extends Phaser.Scene {
     const defs = [
       { key: 'hp',     max: PLAYER_HP_MAX,    color: 0x00cc44 },
       { key: 'shield', max: PLAYER_SHIELD_MAX, color: 0x2255ff },
-      { key: 'heat',   max: PLAYER_HEAT_MAX,   color: 0xff3300 },
+      { key: 'heat',   max: this._weapons.maxHeatShots, color: 0xff3300 },
     ];
 
     this._barFills = {};
@@ -434,7 +434,7 @@ export class GameScene extends Phaser.Scene {
     const vals = {
       hp:     this._playerHp,
       shield: this._playerShield,
-      heat:   this._weaponHeat,
+      heat:   this._weapons.heatShots,
     };
     for (const [key, { rect, max, fullW }] of Object.entries(this._barFills)) {
       rect.displayWidth = Math.max(0, Math.min(1, vals[key] / max)) * fullW;

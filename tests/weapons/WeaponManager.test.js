@@ -77,6 +77,11 @@ describe('WeaponManager', () => {
     assert.equal(manager.damage, LASER.damage);
   });
 
+  it('starts with zero heat and not overheated', () => {
+    assert.equal(manager.heatShots, 0);
+    assert.equal(manager.isOverheated, false);
+  });
+
   it('starts with zero cooldown (can fire immediately)', () => {
     assert.equal(manager._cooldown, 0);
   });
@@ -155,6 +160,11 @@ describe('WeaponManager', () => {
     assert.equal(manager._cooldown, LASER.fireRate);
   });
 
+  it('adds 1 heat shot per successful laser shot', () => {
+    manager.tryFire(240, 500);
+    assert.equal(manager.heatShots, 1);
+  });
+
   it('does not fire again while cooldown is active', () => {
     manager.tryFire(240, 500);
     manager.tryFire(240, 500); // should be blocked by cooldown
@@ -181,6 +191,66 @@ describe('WeaponManager', () => {
     manager.tryFire(240, 500);
     manager.update(LASER.fireRate * 10);
     assert.equal(manager._cooldown, 0);
+  });
+
+  it('recovers 1 heat shot every 100 ms when not firing', () => {
+    manager.tryFire(240, 500);
+    manager.update(100, false);
+    assert.equal(manager.heatShots, 0);
+  });
+
+  it('does not recover heat early before 100 ms has elapsed', () => {
+    manager.tryFire(240, 500);
+    manager.update(99, false);
+    assert.equal(manager.heatShots, 1);
+  });
+
+  it('does not recover heat while the trigger is held and the weapon is not overheated', () => {
+    manager.tryFire(240, 500);
+    manager.update(500, true);
+    assert.equal(manager.heatShots, 1);
+  });
+
+  it('overheats on the 30th shot and blocks further firing', () => {
+    for (let i = 0; i < manager.maxHeatShots; i++) {
+      manager.tryFire(240, 500);
+      if (i < manager.maxHeatShots - 1) manager.update(LASER.fireRate, true);
+    }
+
+    assert.equal(manager.heatShots, manager.maxHeatShots);
+    assert.equal(manager.isOverheated, true);
+
+    manager.update(LASER.fireRate, true);
+    const beforeCount = pool._children.length;
+    assert.equal(manager.tryFire(240, 500), false);
+    assert.equal(pool._children.length, beforeCount);
+  });
+
+  it('unlocks again after cooling 20 shots from full overheat', () => {
+    for (let i = 0; i < manager.maxHeatShots; i++) {
+      manager.tryFire(240, 500);
+      if (i < manager.maxHeatShots - 1) manager.update(LASER.fireRate, true);
+    }
+
+    manager.update(manager._heatRecoveryStepMs * 19, false);
+    assert.equal(manager.isOverheated, true);
+    assert.equal(manager.heatShots, 11);
+
+    manager.update(manager._heatRecoveryStepMs, false);
+    assert.equal(manager.heatShots, manager.unlockHeatShots);
+    assert.equal(manager.isOverheated, false);
+  });
+
+  it('can fire again immediately once the overheat lock clears', () => {
+    for (let i = 0; i < manager.maxHeatShots; i++) {
+      manager.tryFire(240, 500);
+      if (i < manager.maxHeatShots - 1) manager.update(LASER.fireRate, true);
+    }
+
+    manager.update(manager._heatRecoveryStepMs * manager._overheatRecoveryShots, false);
+    const beforeCount = pool._children.length;
+    assert.equal(manager.tryFire(240, 500), true);
+    assert.equal(pool._children.length, beforeCount + 1);
   });
 
   // --- update: bullet recycling ---
