@@ -266,8 +266,8 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  _onEnemyDied({ x, y, score }) {
-    this._explode(x, y);
+  _onEnemyDied({ x, y, type, vx, vy, score }) {
+    this._explodeForType(x, y, type, vx ?? 0, vy ?? 0);
     RunState.addScore(score);
     RunState.kills++;
     this._animateScore(RunState.score);
@@ -336,20 +336,56 @@ export class GameScene extends Phaser.Scene {
 
   // ── Effects ───────────────────────────────────────────────────────────────
 
-  _explode(x, y) {
+  _explodeForType(x, y, type, vx, vy) {
+    switch (type) {
+      case 'skirm': this._explodeSkirm(x, y, vx, vy); break;
+      default:      this._explodeSkirm(x, y, vx, vy); break;
+    }
+  }
+
+  /**
+   * Skirm explosion.
+   * - Radius (particle speed + count) scales with the plane's velocity.
+   * - Blast is directional — sprays toward the direction of travel.
+   * - Per-plane randomness in tint and scale.
+   */
+  _explodeSkirm(x, y, vx = 0, vy = 0) {
+    const speed = Math.sqrt(vx * vx + vy * vy);
+
+    // Direction: only meaningful above a threshold — otherwise omnidirectional
+    const hasDir   = speed > 40;
+    const dir      = hasDir ? Phaser.Math.RadToDeg(Math.atan2(vy, vx)) : 0;
+    const spread   = hasDir ? Phaser.Math.Clamp(140 - speed * 0.1, 50, 130) : 180;
+
+    // Radius scales with speed — faster = more particles, faster spread
+    const pSpeed   = Phaser.Math.Clamp(80 + speed * 0.6, 80, 400);
+    const quantity = Math.round(Phaser.Math.Clamp(16 + speed / 10, 16, 44));
+    const scaleMax = Phaser.Math.Clamp(1.4 + speed / 500, 1.4, 3.0);
+
+    // Per-plane tint randomness
+    const r     = () => Math.random() < 0.5;
+    const tints = [
+      r() ? 0xff5500 : 0xff6600,
+      r() ? 0xff8800 : 0xff9900,
+      r() ? 0xffbb00 : 0xffcc00,
+      r() ? 0xffffff : 0xffee88,
+    ];
+
     const emitter = this.add.particles(x, y, 'particle', {
-      speed:     { min: 80, max: 320 },
-      angle:     { min: 0,  max: 360 },
-      scale:     { start: 2.0, end: 0 },
-      alpha:     { start: 1,   end: 0 },
-      lifespan:  600,
-      quantity:  32,
+      speed:     { min: pSpeed * 0.25, max: pSpeed },
+      angle:     { min: dir - spread, max: dir + spread },
+      scale:     { start: scaleMax * (0.85 + Math.random() * 0.3), end: 0 },
+      alpha:     { start: 1, end: 0 },
+      lifespan:  { min: 380, max: 680 },
       blendMode: 'ADD',
-      tint:      [0xff6600, 0xff9900, 0xffcc00, 0xffffff],
+      tint:      tints,
       emitting:  false,
     }).setDepth(15);
 
-    emitter.explode(32);
-    this.time.delayedCall(700, () => emitter.destroy());
+    emitter.explode(quantity);
+    this.time.delayedCall(800, () => emitter.destroy());
   }
+
+  /** Player explosion — uses Skirm blast as placeholder. */
+  _explode(x, y) { this._explodeSkirm(x, y, 0, 0); }
 }

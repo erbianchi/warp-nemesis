@@ -49,6 +49,8 @@ export class EnemyBase extends _BaseSprite {
     scene.physics.add.existing(this);
 
     /** @type {string} */
+    this.enemyType = texture;
+    /** @type {string} */
     this.dance = dance;
 
     /** @type {number} */
@@ -74,6 +76,12 @@ export class EnemyBase extends _BaseSprite {
     /** @type {number} - accumulated ms since last shot */
     this._fireCooldown = 0;
 
+    // Velocity tracking (position-diff each frame — works for tween-driven movement)
+    this._prevX = x;
+    this._prevY = y;
+    this._velX  = 0;
+    this._velY  = 0;
+
     this.setupMovement();
     this.setupWeapon();
   }
@@ -83,6 +91,16 @@ export class EnemyBase extends _BaseSprite {
   /** @param {number} delta - Frame delta in ms */
   update(delta) {
     if (!this.alive) return;
+
+    // Track velocity from position delta (works for tween-driven movement)
+    const dt = delta / 1000;
+    if (dt > 0) {
+      this._velX = (this.x - this._prevX) / dt;
+      this._velY = (this.y - this._prevY) / dt;
+    }
+    this._prevX = this.x;
+    this._prevY = this.y;
+
     if (this.y < 0) return; // don't fire until on screen
     this._fireCooldown += delta;
     if (this.fireRate > 0 && this._fireCooldown >= this.fireRate) {
@@ -133,6 +151,9 @@ export class EnemyBase extends _BaseSprite {
     this.scene.events.emit(EVENTS.ENEMY_DIED, {
       x:          this.x,
       y:          this.y,
+      type:       this.enemyType,
+      vx:         this._velX,
+      vy:         this._velY,
       score:      this.scoreValue,
       dropChance: this.dropChance,
     });
