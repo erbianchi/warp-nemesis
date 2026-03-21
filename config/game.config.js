@@ -19,6 +19,9 @@ export const GAME_CONFIG = {
   PLAYER_HEAT_WARNING_BLINK_MS: 160,  // blink cadence once the warning threshold is reached
   PLAYER_HEAT_WARNING_SHAKE_MS: 45,   // very fast camera shake cadence while warning is active
   PLAYER_HEAT_WARNING_SHAKE_INTENSITY: 0.0070, // warning shake strength
+  PLAYER_HEAT_WARNING_DAMAGE_MULTIPLIER: 1.2, // laser damage boost in the warning zone
+  PLAYER_HEAT_WARNING_LASER_COUNT: 2,         // number of warning-zone laser beams
+  PLAYER_HEAT_WARNING_LASER_SPACING: 4,       // px between warning-zone laser beam centers
 
   SPEED_MIN: 1,            // minimum speed tier
   SPEED_MAX: 5,            // maximum speed tier

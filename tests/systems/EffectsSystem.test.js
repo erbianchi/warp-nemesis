@@ -18,6 +18,12 @@ describe('EffectsSystem', () => {
 
   beforeEach(() => {
     scene = createMockScene();
+    scene.soundCalls = [];
+    scene.sound = {
+      play: (key) => {
+        scene.soundCalls.push(key);
+      },
+    };
     completions = [];
     scene.tweens.add = (cfg) => {
       if (cfg.onComplete) completions.push(cfg.onComplete);
@@ -42,6 +48,16 @@ describe('EffectsSystem', () => {
 
     effects.explodeForType(120, 120, 'skirm', 0, 0, [], []);
     assert.equal(effects._fragmentPool.getChildren().length, 4, 'second explosion should reuse pool');
+  });
+
+  it('plays the skirm explosion sound for skirm deaths', () => {
+    effects.explodeForType(100, 100, 'skirm', 0, 0, [], []);
+    assert.deepEqual(scene.soundCalls, ['explosionSkirm_000']);
+  });
+
+  it('can suppress the category explosion sound for placeholder blasts', () => {
+    effects.explodeForType(100, 100, 'skirm', 0, 0, [], [], { playSound: false });
+    assert.deepEqual(scene.soundCalls, []);
   });
 
   it('recycles fragments back to an inert state after their tween completes', () => {

@@ -369,10 +369,11 @@ export class GameScene extends Phaser.Scene {
   // ── Collision handlers ────────────────────────────────────────────────────
 
   _onBulletHitEnemy(bullet, enemy) {
+    const damage = bullet._damage ?? this._weapons.damage;
     this._weapons.pool.killAndHide(bullet);
     if (bullet.body) { bullet.body.stop(); bullet.body.enable = false; }
     if (!enemy.alive) return;
-    enemy.takeDamage(this._weapons.damage);
+    enemy.takeDamage(damage);
   }
 
   _onEnemyTouchPlayer(player, enemy) {
@@ -575,5 +576,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Player explosion — uses Skirm blast as placeholder. */
-  _explode(x, y) { this._effects.explodeForType(x, y, 'skirm', 0, 0, this._enemies, this._eBullets); }
+  _explode(x, y) {
+    this._effects.explodeForType(
+      x,
+      y,
+      'skirm',
+      0,
+      0,
+      this._enemies,
+      this._eBullets,
+      { playSound: false }
+    );
+  }
 }

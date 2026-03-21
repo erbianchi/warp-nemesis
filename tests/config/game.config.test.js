@@ -10,6 +10,8 @@ describe('GAME_CONFIG', () => {
     'PLAYER_HEAT_MAX', 'PLAYER_HEAT_RECOVERY_MS', 'PLAYER_OVERHEAT_RECOVERY_SHOTS',
     'PLAYER_HEAT_WARNING_RATIO', 'PLAYER_HEAT_WARNING_BLINK_MS',
     'PLAYER_HEAT_WARNING_SHAKE_MS', 'PLAYER_HEAT_WARNING_SHAKE_INTENSITY',
+    'PLAYER_HEAT_WARNING_DAMAGE_MULTIPLIER', 'PLAYER_HEAT_WARNING_LASER_COUNT',
+    'PLAYER_HEAT_WARNING_LASER_SPACING',
     'SPEED_MIN', 'SPEED_MAX', 'PLAYER_SPEED_DEFAULT',
     'STAR_COUNT', 'STAR_SPEED_MIN', 'STAR_SPEED_MAX',
   ];
@@ -90,6 +92,18 @@ describe('GAME_CONFIG', () => {
 
   it('heat warning shake intensity is configured', () => {
     assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_SHAKE_INTENSITY, 0.0070);
+  });
+
+  it('heat warning shots deal 20 percent more damage', () => {
+    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_DAMAGE_MULTIPLIER, 1.2);
+  });
+
+  it('heat warning shots split into two laser beams', () => {
+    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_COUNT, 2);
+  });
+
+  it('heat warning laser beams stay close together', () => {
+    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_SPACING, 4);
   });
 
   it('SPEED_MIN is less than SPEED_MAX', () => {

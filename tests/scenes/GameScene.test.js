@@ -114,3 +114,66 @@ describe('GameScene heat warning shake', () => {
     assert.deepEqual(calls.at(-1), { type: 'stopShake' });
   });
 });
+
+describe('GameScene bullet damage', () => {
+  it('uses the bullet stored damage when a warning shot hits an enemy', () => {
+    const scene = new GameScene();
+    let hitDamage = 0;
+    let hiddenBullet = null;
+    const bullet = {
+      _damage: 12,
+      body: {
+        enable: true,
+        stop: () => {},
+      },
+    };
+    const enemy = {
+      alive: true,
+      takeDamage: (damage) => {
+        hitDamage = damage;
+      },
+    };
+
+    scene._weapons = {
+      damage: 10,
+      pool: {
+        killAndHide: (target) => {
+          hiddenBullet = target;
+        },
+      },
+    };
+
+    scene._onBulletHitEnemy(bullet, enemy);
+
+    assert.equal(hiddenBullet, bullet);
+    assert.equal(hitDamage, 12);
+    assert.equal(bullet.body.enable, false);
+  });
+});
+
+describe('GameScene player explosion placeholder', () => {
+  it('uses the skirm blast without playing the skirm enemy sound', () => {
+    const scene = new GameScene();
+    let explodeArgs = null;
+    scene._effects = {
+      explodeForType: (...args) => {
+        explodeArgs = args;
+      },
+    };
+    scene._enemies = [];
+    scene._eBullets = [];
+
+    scene._explode(120, 240);
+
+    assert.deepEqual(explodeArgs, [
+      120,
+      240,
+      'skirm',
+      0,
+      0,
+      scene._enemies,
+      scene._eBullets,
+      { playSound: false },
+    ]);
+  });
+});

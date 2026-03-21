@@ -31,11 +31,13 @@ function createMockPool(maxSize = 80) {
         active: true, visible: true, x, y,
         setActive:  (v) => { b.active  = v; return b; },
         setVisible: (v) => { b.visible = v; return b; },
+        setScale:   (sx, sy = sx) => { b.scaleX = sx; b.scaleY = sy; return b; },
         body: {
           _vx: 0, _vy: 0, enable: true,
           reset:         (x, y) => { b.x = x; b.y = y; },
           setVelocityY:  (v)    => { b.body._vy = v; },
           stop:          ()     => { b.body._vx = 0; b.body._vy = 0; },
+          updateFromGameObject: () => {},
           allowGravity:  false,
         },
       };
@@ -57,13 +59,20 @@ function createSceneWithPool(pool) {
 describe('WeaponManager', () => {
   let pool;
   let manager;
+  let scene;
 
   beforeEach(async () => {
     // Re-import fresh each time via cache-busting is not needed;
     // WeaponManager is stateless at module level
     const { WeaponManager } = await import('../../weapons/WeaponManager.js');
     pool    = createMockPool(LASER.poolSize);
-    const scene = createSceneWithPool(pool);
+    scene = createSceneWithPool(pool);
+    scene.soundCalls = [];
+    scene.sound = {
+      play: (key) => {
+        scene.soundCalls.push(key);
+      },
+    };
     manager = new WeaponManager(scene);
   });
 
@@ -154,6 +163,14 @@ describe('WeaponManager', () => {
     assert.equal(pool._children[0].body._vy, -LASER.speed);
   });
 
+  it('normal laser shots keep the default thickness and base damage', () => {
+    manager.tryFire(240, 500);
+    const bullet = pool._children[0];
+    assert.equal(bullet.scaleX, 1);
+    assert.equal(bullet.scaleY, 1);
+    assert.equal(bullet._damage, LASER.damage);
+  });
+
   it('sets cooldown after firing', () => {
     manager.tryFire(240, 500);
     assert.ok(manager._cooldown > 0, 'cooldown should be set after firing');
@@ -165,10 +182,42 @@ describe('WeaponManager', () => {
     assert.equal(manager.heatShots, 1);
   });
 
+  it('plays the default laser sound on a successful laser shot', () => {
+    manager.tryFire(240, 500);
+    assert.deepEqual(scene.soundCalls, ['laserSmall_000']);
+  });
+
+  it('switches to the overheat warning sound once laser heat is in the yellow zone', () => {
+    manager._heatShots = manager.maxHeatShots * 0.7;
+    manager.tryFire(240, 500);
+    assert.deepEqual(scene.soundCalls, ['laserOverheat_000']);
+  });
+
+  it('warning-zone laser shots split into two small beams that total 20 percent more damage', () => {
+    manager._heatShots = manager.maxHeatShots * 0.7;
+    manager.tryFire(240, 500);
+    assert.equal(pool._children.length, 2);
+
+    const bullets = [...pool._children].sort((a, b) => a.x - b.x);
+    assert.equal(bullets[0].x, 238);
+    assert.equal(bullets[1].x, 242);
+    assert.equal(bullets[0].scaleX, 1);
+    assert.equal(bullets[1].scaleX, 1);
+    assert.equal(bullets[0].scaleY, 1);
+    assert.equal(bullets[1].scaleY, 1);
+    assert.equal(bullets[0]._damage + bullets[1]._damage, 12);
+  });
+
   it('does not fire again while cooldown is active', () => {
     manager.tryFire(240, 500);
     manager.tryFire(240, 500); // should be blocked by cooldown
     assert.equal(pool._children.length, 1);
+  });
+
+  it('does not replay the laser sound when firing is blocked by cooldown', () => {
+    manager.tryFire(240, 500);
+    manager.tryFire(240, 500);
+    assert.deepEqual(scene.soundCalls, ['laserSmall_000']);
   });
 
   it('fires again once cooldown expires', () => {

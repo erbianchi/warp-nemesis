@@ -24,6 +24,12 @@ export class WeaponManager {
     this._maxHeatShots = GAME_CONFIG.PLAYER_HEAT_MAX;
     this._heatRecoveryStepMs = GAME_CONFIG.PLAYER_HEAT_RECOVERY_MS;
     this._overheatRecoveryShots = GAME_CONFIG.PLAYER_OVERHEAT_RECOVERY_SHOTS;
+    this._heatWarningRatio = GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO;
+    this._heatWarningDamageMultiplier = GAME_CONFIG.PLAYER_HEAT_WARNING_DAMAGE_MULTIPLIER;
+    this._heatWarningLaserCount = GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_COUNT;
+    this._heatWarningLaserSpacing = GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_SPACING;
+    this._defaultLaserSfxKey = 'laserSmall_000';
+    this._warningLaserSfxKey = 'laserOverheat_000';
 
     this._pool = scene.physics.add.group({
       classType:      Phaser.Physics.Arcade.Image,
@@ -103,21 +109,77 @@ export class WeaponManager {
   tryFire(x, y) {
     if (this._cooldown > 0 || !this._slots[0] || this._isOverheated) return false;
 
-    const bullet = this._pool.get(x, y - 18);
-    if (!bullet) return false;
+    const nextHeatShots = Math.min(this._maxHeatShots, this._heatShots + 1);
+    const warningShot = this._slots[0] === 'laser' && this._isHeatWarningActive(nextHeatShots);
+    const totalDamage = warningShot
+      ? Math.round(this._cfg.damage * this._heatWarningDamageMultiplier)
+      : this._cfg.damage;
 
-    bullet.setActive(true).setVisible(true);
-    bullet.body.reset(x, y - 18);
-    bullet.body.enable = true;
-    bullet.body.setVelocityY(-this._cfg.speed);
-    bullet.body.allowGravity = false;
+    if (warningShot) {
+      if (!this._fireWarningLaserPair(x, y, totalDamage)) return false;
+    } else if (!this._fireSingleBullet(x, y, totalDamage)) {
+      return false;
+    }
 
     this._cooldown = this._cfg.fireRate;
-    this._heatShots = Math.min(this._maxHeatShots, this._heatShots + 1);
+    this._heatShots = nextHeatShots;
     if (this._heatShots >= this._maxHeatShots) {
       this._heatShots = this._maxHeatShots;
       this._isOverheated = true;
     }
+
+    if (this._slots[0] === 'laser') {
+      const laserSfxKey = warningShot ? this._warningLaserSfxKey : this._defaultLaserSfxKey;
+      this._scene.sound?.play(laserSfxKey);
+    }
+
     return true;
+  }
+
+  _fireSingleBullet(x, y, damage) {
+    const bullet = this._pool.get(x, y - 18);
+    if (!bullet) return false;
+    this._armBullet(bullet, x, y, damage);
+    return true;
+  }
+
+  _fireWarningLaserPair(x, y, totalDamage) {
+    const halfSpacing = this._heatWarningLaserSpacing / 2;
+    const leftX = x - halfSpacing;
+    const rightX = x + halfSpacing;
+
+    const leftBullet = this._pool.get(leftX, y - 18);
+    if (!leftBullet) return false;
+
+    const rightBullet = this._pool.get(rightX, y - 18);
+    if (!rightBullet || this._heatWarningLaserCount < 2) {
+      this._armBullet(leftBullet, x, y, totalDamage);
+      return true;
+    }
+
+    const damages = this._splitDamage(totalDamage, this._heatWarningLaserCount);
+    this._armBullet(leftBullet, leftX, y, damages[0]);
+    this._armBullet(rightBullet, rightX, y, damages[1]);
+    return true;
+  }
+
+  _armBullet(bullet, x, y, damage) {
+    bullet.setActive(true).setVisible(true).setScale(1, 1);
+    bullet.body.reset(x, y - 18);
+    bullet.body.enable = true;
+    bullet.body.setVelocityY(-this._cfg.speed);
+    bullet.body.allowGravity = false;
+    bullet._damage = damage;
+    bullet.body.updateFromGameObject?.();
+  }
+
+  _splitDamage(totalDamage, count) {
+    const baseDamage = Math.floor(totalDamage / count);
+    const remainder = totalDamage - baseDamage * count;
+    return Array.from({ length: count }, (_, idx) => baseDamage + (idx < remainder ? 1 : 0));
+  }
+
+  _isHeatWarningActive(heatShots = this._heatShots) {
+    return this._maxHeatShots > 0 && (heatShots / this._maxHeatShots) >= this._heatWarningRatio;
   }
 }

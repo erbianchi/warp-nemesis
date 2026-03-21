@@ -8,7 +8,9 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload() {
-    // Phases 2+ will load sprites and audio here.
+    this.load.audio('laserSmall_000', 'assets/audio/sfx/laserSmall_000.ogg');
+    this.load.audio('laserOverheat_000', 'assets/audio/sfx/laserOverheat_000..ogg');
+    this.load.audio('explosionSkirm_000', 'assets/audio/sfx/explosionSkirm_000.ogg');
   }
 
   create() {

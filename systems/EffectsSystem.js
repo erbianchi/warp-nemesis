@@ -12,6 +12,9 @@ const MAX_PUSH           = 280;
 const DIRECTIONAL_SPEED_MIN = 40;
 const DIRECTIONAL_SPEED_MAX = 320;
 const TINTS = [0xff5500, 0xff6600, 0xff8800, 0xff9900, 0xffbb00, 0xffcc00, 0xffffff, 0xffee88];
+const EXPLOSION_SOUND_KEYS = Object.freeze({
+  skirm: 'explosionSkirm_000',
+});
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp  = (a, b, t) => a + (b - a) * t;
@@ -164,14 +167,27 @@ export class EffectsSystem {
    * @param {number} vy
    * @param {Array<object>} enemies
    * @param {Array<object>} enemyBullets
+   * @param {{playSound?: boolean}} [opts]
    */
-  explodeForType(x, y, type, vx = 0, vy = 0, enemies = [], enemyBullets = []) {
+  explodeForType(x, y, type, vx = 0, vy = 0, enemies = [], enemyBullets = [], opts = {}) {
+    if (opts.playSound !== false) this._playExplosionSound(type);
+
     switch (type) {
       case 'skirm':
       default:
         this._explodeSkirm(x, y, vx, vy, enemies, enemyBullets);
         break;
     }
+  }
+
+  /**
+   * Play the configured explosion sound for an enemy category.
+   * @param {string} type
+   */
+  _playExplosionSound(type) {
+    const soundKey = EXPLOSION_SOUND_KEYS[type];
+    if (!soundKey) return;
+    this._scene.sound?.play(soundKey);
   }
 
   /**
