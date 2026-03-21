@@ -4,7 +4,12 @@ import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js'
 
 installPhaserGlobal();
 
-const { EffectsSystem } = await import('../../systems/EffectsSystem.js');
+const {
+  EffectsSystem,
+  composeFragmentVelocity,
+  calcShockwavePush,
+  resolveExplosionProfile,
+} = await import('../../systems/EffectsSystem.js');
 
 describe('EffectsSystem', () => {
   let scene;
@@ -69,5 +74,29 @@ describe('EffectsSystem', () => {
     assert.ok(pushes[0].vx > 0, 'enemy to the right should be pushed rightward');
     assert.ok(Math.abs(pushes[0].vy) < 0.001, 'enemy aligned horizontally should get ~0 vertical push');
     assert.ok(bullet._pushVx < 0, 'bullet to the left should be pushed leftward');
+  });
+
+  it('fragments inherit carrier momentum instead of only rotating the burst cone', () => {
+    const fragment = composeFragmentVelocity(300, 0, Math.PI, 120);
+
+    assert.ok(fragment.inheritRatio > 0.5, 'fast ships should contribute substantial carried velocity');
+    assert.ok(fragment.vx > 0, 'even a backward fragment should still drift forward with the carrier inertia');
+  });
+
+  it('shockwave reaches farther and hits harder in front of a fast-moving craft', () => {
+    const front = calcShockwavePush(100, 100, 180, 100, 300, 0);
+    const rear  = calcShockwavePush(100, 100, 20, 100, 300, 0);
+
+    assert.ok(front, 'front target should be inside the forward lobe');
+    assert.ok(rear, 'rear target should still be inside the weaker rear lobe at this distance');
+    assert.ok(front.effectiveRadius > rear.effectiveRadius, 'forward blast radius should be larger');
+    assert.ok(front.vx > Math.abs(rear.vx), 'forward push should be stronger than rear push');
+  });
+
+  it('uses a deterministic blast envelope for the same ship motion', () => {
+    const a = resolveExplosionProfile(180, 0);
+    const b = resolveExplosionProfile(180, 0);
+
+    assert.deepEqual(a, b, 'same velocity should resolve to the same base explosion profile');
   });
 });

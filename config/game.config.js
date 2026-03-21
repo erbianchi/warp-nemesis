@@ -8,6 +8,12 @@ export const GAME_CONFIG = {
   PLAYER_LIVES_DEFAULT: 3,  // lives at the start of a run
   WEAPON_SLOTS: 2,
 
+  PLAYER_HP_MAX: 200,       // maximum HP
+  PLAYER_HP_DEFAULT: 10,    // starting HP
+  PLAYER_SHIELD_MAX: 400,   // maximum shield
+  PLAYER_SHIELD_DEFAULT: 0, // starting shield (no shield by default)
+  PLAYER_HEAT_MAX: 100,     // maximum weapon heat
+
   SPEED_MIN: 1,            // minimum speed tier
   SPEED_MAX: 5,            // maximum speed tier
   PLAYER_SPEED_DEFAULT: 1, // player starting speed tier

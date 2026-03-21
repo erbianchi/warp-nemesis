@@ -13,7 +13,13 @@ import { WeaponManager }         from '../weapons/WeaponManager.js';
 import { RunState }              from '../systems/RunState.js';
 import { Skirm }                 from '../entities/enemies/Skirm.js';
 
-const { WIDTH, HEIGHT, PLAYER_SPEED, PLAYER_SPEED_DEFAULT, PLAYER_LIVES_DEFAULT } = GAME_CONFIG;
+const {
+  WIDTH, HEIGHT,
+  PLAYER_SPEED, PLAYER_SPEED_DEFAULT, PLAYER_LIVES_DEFAULT,
+  PLAYER_HP_MAX, PLAYER_HP_DEFAULT,
+  PLAYER_SHIELD_MAX, PLAYER_SHIELD_DEFAULT,
+  PLAYER_HEAT_MAX,
+} = GAME_CONFIG;
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -33,6 +39,9 @@ export class GameScene extends Phaser.Scene {
 
     this._playerSpeed    = PLAYER_SPEED_DEFAULT;
     this._playerLives    = PLAYER_LIVES_DEFAULT;
+    this._playerHp       = PLAYER_HP_DEFAULT;
+    this._playerShield   = PLAYER_SHIELD_DEFAULT;
+    this._weaponHeat     = 0;
     this._gameOver       = false;
     this._respawning     = false;
     this._displayedScore = 0;
@@ -41,6 +50,7 @@ export class GameScene extends Phaser.Scene {
     RunState.reset();
 
     this._buildWeaponDisplay();
+    this._buildStatusBars();
     this._buildHUD();
 
     // ── Enemy management ────────────────────────────────────────────────────
@@ -191,14 +201,27 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  _onPlayerHit() {
+  _onPlayerHit(damage = 10) {
     if (this._gameOver || this._respawning) return;
-    this._playerLives--;
-    this._livesText.setText(`× ${Math.max(0, this._playerLives)}`);
-    if (this._playerLives <= 0) {
-      this._killPlayer();
-    } else {
-      this._respawnAfterDeath();
+
+    // Shield absorbs damage first
+    if (this._playerShield > 0) {
+      this._playerShield = Math.max(0, this._playerShield - damage);
+      this._drawStatusBars();
+      return;
+    }
+
+    this._playerHp -= damage;
+    this._drawStatusBars();
+
+    if (this._playerHp <= 0) {
+      this._playerLives--;
+      this._livesText.setText(`× ${Math.max(0, this._playerLives)}`);
+      if (this._playerLives <= 0) {
+        this._killPlayer();
+      } else {
+        this._respawnAfterDeath();
+      }
     }
   }
 
@@ -235,6 +258,9 @@ export class GameScene extends Phaser.Scene {
         this._player.body.reset(WIDTH / 2, HEIGHT - 80);
         this._player.body.enable = true;
       }
+
+      this._playerHp = PLAYER_HP_DEFAULT;
+      this._drawStatusBars();
 
       this.physics.resume();
       this._respawning = false;
@@ -367,11 +393,61 @@ export class GameScene extends Phaser.Scene {
 
   // ── HUD ───────────────────────────────────────────────────────────────────
 
+  _buildStatusBars() {
+    const BAR_H = 8, BAR_GAP = 5;
+    const X0     = 8;   // left margin
+    const Y_TOP  = this._weaponDisplayY + (38 - (3 * BAR_H + 2 * BAR_GAP)) / 2;
+    const BOX_W  = 62, GAP = 6;
+    const nSlots = this._weapons.getSlots().length;
+    const BAR_W  = nSlots * BOX_W + (nSlots - 1) * GAP;
+
+    const defs = [
+      { key: 'hp',     max: PLAYER_HP_MAX,    color: 0x00cc44 },
+      { key: 'shield', max: PLAYER_SHIELD_MAX, color: 0x2255ff },
+      { key: 'heat',   max: PLAYER_HEAT_MAX,   color: 0xff3300 },
+    ];
+
+    this._barFills = {};
+
+    defs.forEach((def, i) => {
+      const y = Y_TOP + i * (BAR_H + BAR_GAP);
+
+      // background — origin (0,0) so x,y is top-left corner
+      this.add.rectangle(X0, y, BAR_W, BAR_H, 0x111111)
+        .setDepth(10).setOrigin(0, 0);
+
+      // fill — origin (0,0), width scaled by displayWidth
+      const fill = this.add.rectangle(X0, y, BAR_W, BAR_H, def.color)
+        .setDepth(11).setOrigin(0, 0);
+      this._barFills[def.key] = { rect: fill, max: def.max, fullW: BAR_W };
+
+      // border
+      const gfx = this.add.graphics().setDepth(12);
+      gfx.lineStyle(1, 0x444444, 1);
+      gfx.strokeRect(X0, y, BAR_W, BAR_H);
+    });
+
+    this._drawStatusBars();
+  }
+
+  _drawStatusBars() {
+    const vals = {
+      hp:     this._playerHp,
+      shield: this._playerShield,
+      heat:   this._weaponHeat,
+    };
+    for (const [key, { rect, max, fullW }] of Object.entries(this._barFills)) {
+      rect.displayWidth = Math.max(0, Math.min(1, vals[key] / max)) * fullW;
+    }
+  }
+
   _buildWeaponDisplay() {
     const BOX_W = 62, BOX_H = 38, GAP = 6;
     const slots = this._weapons.getSlots();
     const X0    = WIDTH - 8 - slots.length * BOX_W - (slots.length - 1) * GAP;
     const Y0    = HEIGHT - BOX_H - 8;
+    this._weaponDisplayX = X0;   // shared with _buildStatusBars
+    this._weaponDisplayY = Y0;
     const gfx   = this.add.graphics();
 
     slots.forEach((slot, i) => {
