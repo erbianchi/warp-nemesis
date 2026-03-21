@@ -305,6 +305,16 @@ export class WaveSpawner {
     this._scene.events.emit(EVENTS.WAVE_START, this._currentWave);
   }
 
+  /**
+   * Re-queue the last spawned squadron so it launches again immediately.
+   * Called by GameScene when the player respawns after losing a life.
+   */
+  replayLastSquadron() {
+    if (!this._lastSquadron) return;
+    this._squadronQueue.unshift(this._lastSquadron);
+    this._nextSquadronAt = this._elapsed; // spawn on next update tick
+  }
+
   _spawnSquadron(squadron) {
     const { width, height } = this._scene.scale;
     const { difficultyBase } = this._levelConfig;
@@ -318,6 +328,8 @@ export class WaveSpawner {
       const pos   = positions[i] ?? positions[positions.length - 1];
       this._spawnFn(plane.type, pos.x, pos.y, stats, dance);
     });
+
+    this._lastSquadron = squadron; // saved for replayLastSquadron()
 
     this._scene.events.emit(EVENTS.SQUADRON_SPAWNED, {
       dance,

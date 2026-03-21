@@ -4,8 +4,8 @@ export const GAME_CONFIG = {
   WIDTH: 480,
   HEIGHT: 640,
 
-  PLAYER_SPEED: 300,       // base movement speed (px/s) at speed tier 1
-  PLAYER_LIFE_DEFAULT: 10, // player starting HP
+  PLAYER_SPEED: 300,        // base movement speed (px/s) at speed tier 1
+  PLAYER_LIVES_DEFAULT: 3,  // lives at the start of a run
   WEAPON_SLOTS: 2,
 
   SPEED_MIN: 1,            // minimum speed tier

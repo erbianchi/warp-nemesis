@@ -5,7 +5,7 @@ import { GAME_CONFIG } from '../../config/game.config.js';
 describe('GAME_CONFIG', () => {
   const REQUIRED_KEYS = [
     'WIDTH', 'HEIGHT',
-    'PLAYER_SPEED', 'PLAYER_LIFE_DEFAULT',
+    'PLAYER_SPEED', 'PLAYER_LIVES_DEFAULT',
     'WEAPON_SLOTS',
     'SPEED_MIN', 'SPEED_MAX', 'PLAYER_SPEED_DEFAULT',
     'STAR_COUNT', 'STAR_SPEED_MIN', 'STAR_SPEED_MAX',
@@ -53,8 +53,8 @@ describe('GAME_CONFIG', () => {
     assert.ok(GAME_CONFIG.PLAYER_SPEED >= 100, 'PLAYER_SPEED too slow to be playable');
   });
 
-  it('PLAYER_LIFE_DEFAULT is a positive integer', () => {
-    assert.ok(Number.isInteger(GAME_CONFIG.PLAYER_LIFE_DEFAULT) && GAME_CONFIG.PLAYER_LIFE_DEFAULT > 0);
+  it('PLAYER_LIVES_DEFAULT is 3', () => {
+    assert.equal(GAME_CONFIG.PLAYER_LIVES_DEFAULT, 3);
   });
 
   it('WEAPON_SLOTS is 2', () => {

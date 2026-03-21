@@ -13,7 +13,7 @@ import { WeaponManager }         from '../weapons/WeaponManager.js';
 import { RunState }              from '../systems/RunState.js';
 import { Skirm }                 from '../entities/enemies/Skirm.js';
 
-const { WIDTH, HEIGHT, PLAYER_SPEED, PLAYER_SPEED_DEFAULT, PLAYER_LIFE_DEFAULT } = GAME_CONFIG;
+const { WIDTH, HEIGHT, PLAYER_SPEED, PLAYER_SPEED_DEFAULT, PLAYER_LIVES_DEFAULT } = GAME_CONFIG;
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -32,8 +32,9 @@ export class GameScene extends Phaser.Scene {
     this._space   = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
     this._playerSpeed    = PLAYER_SPEED_DEFAULT;
-    this._playerLife     = PLAYER_LIFE_DEFAULT;
+    this._playerLives    = PLAYER_LIVES_DEFAULT;
     this._gameOver       = false;
+    this._respawning     = false;
     this._displayedScore = 0;
     this._scoreTween     = null;
 
@@ -86,7 +87,7 @@ export class GameScene extends Phaser.Scene {
   // ── Main loop ─────────────────────────────────────────────────────────────
 
   update(_time, delta) {
-    if (this._gameOver) return;
+    if (this._gameOver || this._respawning) return;
 
     this._bg.update(delta);
     this._movePlayer();
@@ -144,7 +145,16 @@ export class GameScene extends Phaser.Scene {
   // ── Player ────────────────────────────────────────────────────────────────
 
   _createPlayer() {
-    const p = this.add.rectangle(WIDTH / 2, HEIGHT - 80, 28, 36, 0x00ff88);
+    // Triangle pointing up — nose at top-center, base at bottom.
+    // Vertices span 28×36: bounding box matches the old rectangle exactly.
+    // Physics body stays rectangular (Arcade AABB) — same collision footprint.
+    const p = this.add.triangle(
+      WIDTH / 2, HEIGHT - 80,
+      14, 0,   // nose
+      0,  36,  // bottom-left
+      28, 36,  // bottom-right
+      0x00ff88
+    );
     this.physics.add.existing(p);
     p.body.setCollideWorldBounds(true);
     return p;
@@ -181,11 +191,57 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  _onPlayerHit(damage) {
-    if (this._gameOver) return;
-    this._playerLife -= damage;
-    this._hpText.setText(`HP  ${Math.max(0, this._playerLife)}`);
-    if (this._playerLife <= 0) this._killPlayer();
+  _onPlayerHit() {
+    if (this._gameOver || this._respawning) return;
+    this._playerLives--;
+    this._livesText.setText(`× ${Math.max(0, this._playerLives)}`);
+    if (this._playerLives <= 0) {
+      this._killPlayer();
+    } else {
+      this._respawnAfterDeath();
+    }
+  }
+
+  _respawnAfterDeath() {
+    this._respawning = true;
+
+    this._explode(this._player.x, this._player.y);
+    this._player.setVisible(false);
+    if (this._player.body) this._player.body.enable = false;
+
+    for (const fc of this._formations) fc.stop();
+    this._formations = [];
+    this.physics.pause();
+
+    this.time.delayedCall(1500, () => {
+      // Clear all enemies
+      for (let i = this._enemies.length - 1; i >= 0; i--) {
+        const e = this._enemies[i];
+        e.alive = false;
+        this._enemyGroup.remove(e);
+        e.destroy();
+      }
+      this._enemies = [];
+
+      // Clear enemy bullets
+      for (const b of this._eBullets) { if (b.active) b.destroy(); }
+      this._eBullets = [];
+
+      // Reset player to starting position
+      this._player.x = WIDTH / 2;
+      this._player.y = HEIGHT - 80;
+      this._player.setVisible(true);
+      if (this._player.body) {
+        this._player.body.reset(WIDTH / 2, HEIGHT - 80);
+        this._player.body.enable = true;
+      }
+
+      this.physics.resume();
+      this._respawning = false;
+
+      // Re-launch the squadron that was active when the player died
+      this._spawner.replayLastSquadron();
+    });
   }
 
   _killPlayer() {
@@ -312,11 +368,13 @@ export class GameScene extends Phaser.Scene {
   // ── HUD ───────────────────────────────────────────────────────────────────
 
   _buildWeaponDisplay() {
-    const BOX_W = 62, BOX_H = 38, GAP = 6, X0 = 8;
+    const BOX_W = 62, BOX_H = 38, GAP = 6;
+    const slots = this._weapons.getSlots();
+    const X0    = WIDTH - 8 - slots.length * BOX_W - (slots.length - 1) * GAP;
     const Y0    = HEIGHT - BOX_H - 8;
     const gfx   = this.add.graphics();
 
-    this._weapons.getSlots().forEach((slot, i) => {
+    slots.forEach((slot, i) => {
       const x      = X0 + i * (BOX_W + GAP);
       const filled = slot !== null;
       const border = filled ? slot.color : 0x2a2a2a;
@@ -340,8 +398,10 @@ export class GameScene extends Phaser.Scene {
       fontSize: '12px', fill: '#ffffff', fontFamily: 'monospace',
     }).setOrigin(1, 0).setDepth(10);
 
-    this._hpText = this.add.text(8, 8, `HP  ${this._playerLife}`, {
-      fontSize: '12px', fill: '#00ff88', fontFamily: 'monospace',
+    // Small ship triangle (same shape/color as player) + "× N" life count
+    this.add.triangle(14, 17, 6, 0, 0, 14, 12, 14, 0x00ff88).setDepth(10);
+    this._livesText = this.add.text(24, 9, `× ${this._playerLives}`, {
+      fontSize: '12px', fill: '#ffffff', fontFamily: 'monospace',
     }).setDepth(10);
   }
 

@@ -122,10 +122,6 @@ describe('SQUADRON_SHIP_LIFE', () => {
     assert.ok(Number.isInteger(SQUADRON_SHIP_LIFE) && SQUADRON_SHIP_LIFE > 0);
   });
 
-  it('equals the player starting life (balanced starting HP)', () => {
-    assert.equal(SQUADRON_SHIP_LIFE, GAME_CONFIG.PLAYER_LIFE_DEFAULT);
-  });
-
   it('laser kills a ship in exactly one hit', () => {
     assert.ok(
       WEAPONS.laser.damage >= SQUADRON_SHIP_LIFE,
