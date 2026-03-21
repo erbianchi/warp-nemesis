@@ -32,7 +32,7 @@ function createMockPool(maxSize = 80) {
         setActive:  (v) => { b.active  = v; return b; },
         setVisible: (v) => { b.visible = v; return b; },
         body: {
-          _vx: 0, _vy: 0,
+          _vx: 0, _vy: 0, enable: true,
           reset:         (x, y) => { b.x = x; b.y = y; },
           setVelocityY:  (v)    => { b.body._vy = v; },
           stop:          ()     => { b.body._vx = 0; b.body._vy = 0; },
@@ -210,5 +210,34 @@ describe('WeaponManager', () => {
     // Pool should still have only 1 child (reused)
     assert.equal(pool._children.length, 1);
     assert.equal(pool._children[0].active, true);
+  });
+
+  // --- body.enable: the ghost-bullet bug fix ---
+
+  it('off-screen recycle disables the physics body', () => {
+    manager.tryFire(240, 500);
+    const b = pool._children[0];
+    b.y = -25;
+    manager.update(0);
+    assert.equal(b.body.enable, false, 'recycled bullet body must be disabled');
+  });
+
+  it('tryFire re-enables the physics body when reusing a recycled bullet', () => {
+    manager.tryFire(240, 500);
+    const b = pool._children[0];
+    // Simulate hit-kill path: body disabled externally (as GameScene does)
+    b.active = false; b.visible = false; b.body.enable = false;
+    manager.update(LASER.fireRate); // expire cooldown
+    manager.tryFire(240, 500);
+    assert.equal(b.body.enable, true, 'reused bullet body must be re-enabled');
+  });
+
+  it('tryFire gives the reused bullet an upward velocity after re-enable', () => {
+    manager.tryFire(240, 500);
+    const b = pool._children[0];
+    b.active = false; b.visible = false; b.body.enable = false; b.body._vy = 0;
+    manager.update(LASER.fireRate);
+    manager.tryFire(240, 500);
+    assert.ok(b.body._vy < 0, 'reused bullet must travel upward');
   });
 });

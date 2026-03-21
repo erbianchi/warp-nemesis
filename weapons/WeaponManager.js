@@ -58,6 +58,7 @@ export class WeaponManager {
       if (b.active && b.y < -20) {
         this._pool.killAndHide(b);
         b.body.stop();
+        b.body.enable = false;
       }
     }
   }
@@ -76,6 +77,7 @@ export class WeaponManager {
 
     bullet.setActive(true).setVisible(true);
     bullet.body.reset(x, y - 18);
+    bullet.body.enable = true;
     bullet.body.setVelocityY(-this._cfg.speed);
     bullet.body.allowGravity = false;
 

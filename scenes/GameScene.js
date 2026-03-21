@@ -235,7 +235,7 @@ export class GameScene extends Phaser.Scene {
 
   _onBulletHitEnemy(bullet, enemy) {
     this._weapons.pool.killAndHide(bullet);
-    if (bullet.body) bullet.body.stop();
+    if (bullet.body) { bullet.body.stop(); bullet.body.enable = false; }
     if (!enemy.alive) return;
     enemy.takeDamage(this._weapons.damage);
   }
@@ -344,46 +344,56 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Skirm explosion.
-   * - Radius (particle speed + count) scales with the plane's velocity.
-   * - Blast is directional — sprays toward the direction of travel.
-   * - Per-plane randomness in tint and scale.
+   * Skirm explosion — physics-driven shrapnel.
+   * Each fragment is a real Arcade Physics body launched with a velocity vector.
+   * - Blast direction follows the plane's direction of travel.
+   * - Spread angle tightens at higher speeds (directional blast).
+   * - Slow/idle ships produce an omnidirectional burst.
+   * - Fragment count and launch speed scale with the plane's velocity.
+   * - Gravity + drag arc fragments downward over their lifespan.
    */
   _explodeSkirm(x, y, vx = 0, vy = 0) {
-    const speed = Math.sqrt(vx * vx + vy * vy);
+    const speed  = Math.sqrt(vx * vx + vy * vy);
+    const hasDir = speed > 40;
+    const dirRad = hasDir ? Math.atan2(vy, vx) : 0;
 
-    // Direction: only meaningful above a threshold — otherwise omnidirectional
-    const hasDir   = speed > 40;
-    const dir      = hasDir ? Phaser.Math.RadToDeg(Math.atan2(vy, vx)) : 0;
-    const spread   = hasDir ? Phaser.Math.Clamp(140 - speed * 0.1, 50, 130) : 180;
+    // Spread in radians: tightens from ~2.3 rad down to ~0.9 rad as speed rises
+    const spreadRad = hasDir
+      ? Phaser.Math.Clamp((140 - speed * 0.1) * (Math.PI / 180), 0.9, 2.3)
+      : Math.PI;
 
-    // Radius scales with speed — faster = more particles, faster spread
-    const pSpeed   = Phaser.Math.Clamp(80 + speed * 0.6, 80, 400);
-    const quantity = Math.round(Phaser.Math.Clamp(16 + speed / 10, 16, 44));
-    const scaleMax = Phaser.Math.Clamp(1.4 + speed / 500, 1.4, 3.0);
+    const launchSpeed = Phaser.Math.Clamp(120 + speed * 0.7, 120, 480);
+    const count       = Math.round(Phaser.Math.Clamp(18 + speed / 8, 18, 48));
 
-    // Per-plane tint randomness
-    const r     = () => Math.random() < 0.5;
-    const tints = [
-      r() ? 0xff5500 : 0xff6600,
-      r() ? 0xff8800 : 0xff9900,
-      r() ? 0xffbb00 : 0xffcc00,
-      r() ? 0xffffff : 0xffee88,
-    ];
+    const TINTS = [0xff5500, 0xff6600, 0xff8800, 0xff9900, 0xffbb00, 0xffcc00, 0xffffff, 0xffee88];
 
-    const emitter = this.add.particles(x, y, 'particle', {
-      speed:     { min: pSpeed * 0.25, max: pSpeed },
-      angle:     { min: dir - spread, max: dir + spread },
-      scale:     { start: scaleMax * (0.85 + Math.random() * 0.3), end: 0 },
-      alpha:     { start: 1, end: 0 },
-      lifespan:  { min: 380, max: 680 },
-      blendMode: 'ADD',
-      tint:      tints,
-      emitting:  false,
-    }).setDepth(15);
+    for (let i = 0; i < count; i++) {
+      const angle = hasDir
+        ? dirRad + Phaser.Math.FloatBetween(-spreadRad, spreadRad)
+        : Phaser.Math.FloatBetween(-Math.PI, Math.PI);
 
-    emitter.explode(quantity);
-    this.time.delayedCall(800, () => emitter.destroy());
+      const mag  = Phaser.Math.FloatBetween(launchSpeed * 0.2, launchSpeed);
+      const fvx  = Math.cos(angle) * mag;
+      const fvy  = Math.sin(angle) * mag;
+      const size = Phaser.Math.FloatBetween(2, 5 + speed / 100);
+      const tint = TINTS[Math.floor(Math.random() * TINTS.length)];
+      const life = Phaser.Math.Between(320, 700);
+
+      const frag = this.add.rectangle(x, y, size, size, tint).setDepth(15);
+      this.physics.add.existing(frag);
+      frag.body.setVelocity(fvx, fvy);
+      frag.body.setGravityY(160);
+      frag.body.setDrag(40);
+      frag.body.setCollideWorldBounds(false);
+
+      this.tweens.add({
+        targets:  frag,
+        alpha:    0,
+        duration: life,
+        ease:     'Power2',
+        onComplete: () => { if (frag.active) frag.destroy(); },
+      });
+    }
   }
 
   /** Player explosion — uses Skirm blast as placeholder. */
