@@ -6,6 +6,7 @@
 import { GAME_CONFIG }           from '../config/game.config.js';
 import { EVENTS }                from '../config/events.config.js';
 import { ScrollingBackground }   from '../systems/ScrollingBackground.js';
+import { EffectsSystem }         from '../systems/EffectsSystem.js';
 import { WaveSpawner }           from '../systems/WaveSpawner.js';
 import { FormationController }   from '../systems/FormationController.js';
 import { WeaponManager }         from '../weapons/WeaponManager.js';
@@ -23,6 +24,7 @@ export class GameScene extends Phaser.Scene {
 
   create() {
     this._bg      = new ScrollingBackground(this);
+    this._effects = new EffectsSystem(this);
     this._player  = this._createPlayer();
     this._weapons = new WeaponManager(this);
     this._cursors = this.input.keyboard.createCursorKeys();
@@ -110,10 +112,19 @@ export class GameScene extends Phaser.Scene {
     // Move enemy bullets; check player AABB collision
     const px = this._player.x;
     const py = this._player.y;
+    const dt = delta / 1000;
     for (let i = this._eBullets.length - 1; i >= 0; i--) {
       const b = this._eBullets[i];
       if (!b.active) { this._eBullets.splice(i, 1); continue; }
       if (b.y > HEIGHT + 20) { b.destroy(); this._eBullets.splice(i, 1); continue; }
+
+      // Apply and decay sideways push from nearby explosions (tweens only control y)
+      if (b._pushVx) {
+        b.x += b._pushVx * dt;
+        b._pushVx *= Math.max(0, 1 - 2.5 * dt);
+        if (Math.abs(b._pushVx) < 0.5) b._pushVx = 0;
+      }
+
       if (Math.abs(b.x - px) < 15.5 && Math.abs(b.y - py) < 23) {
         const dmg = b._damage ?? 10;
         b.destroy();
@@ -337,65 +348,9 @@ export class GameScene extends Phaser.Scene {
   // ── Effects ───────────────────────────────────────────────────────────────
 
   _explodeForType(x, y, type, vx, vy) {
-    switch (type) {
-      case 'skirm': this._explodeSkirm(x, y, vx, vy); break;
-      default:      this._explodeSkirm(x, y, vx, vy); break;
-    }
-  }
-
-  /**
-   * Skirm explosion — physics-driven shrapnel.
-   * Each fragment is a real Arcade Physics body launched with a velocity vector.
-   * - Blast direction follows the plane's direction of travel.
-   * - Spread angle tightens at higher speeds (directional blast).
-   * - Slow/idle ships produce an omnidirectional burst.
-   * - Fragment count and launch speed scale with the plane's velocity.
-   * - Gravity + drag arc fragments downward over their lifespan.
-   */
-  _explodeSkirm(x, y, vx = 0, vy = 0) {
-    const speed  = Math.sqrt(vx * vx + vy * vy);
-    const hasDir = speed > 40;
-    const dirRad = hasDir ? Math.atan2(vy, vx) : 0;
-
-    // Spread in radians: tightens from ~2.3 rad down to ~0.9 rad as speed rises
-    const spreadRad = hasDir
-      ? Phaser.Math.Clamp((140 - speed * 0.1) * (Math.PI / 180), 0.9, 2.3)
-      : Math.PI;
-
-    const launchSpeed = Phaser.Math.Clamp(120 + speed * 0.7, 120, 480);
-    const count       = Math.round(Phaser.Math.Clamp(18 + speed / 8, 18, 48));
-
-    const TINTS = [0xff5500, 0xff6600, 0xff8800, 0xff9900, 0xffbb00, 0xffcc00, 0xffffff, 0xffee88];
-
-    for (let i = 0; i < count; i++) {
-      const angle = hasDir
-        ? dirRad + Phaser.Math.FloatBetween(-spreadRad, spreadRad)
-        : Phaser.Math.FloatBetween(-Math.PI, Math.PI);
-
-      const mag  = Phaser.Math.FloatBetween(launchSpeed * 0.2, launchSpeed);
-      const fvx  = Math.cos(angle) * mag;
-      const fvy  = Math.sin(angle) * mag;
-      const size = Phaser.Math.FloatBetween(2, 5 + speed / 100);
-      const tint = TINTS[Math.floor(Math.random() * TINTS.length)];
-      const life = Phaser.Math.Between(320, 700);
-
-      const frag = this.add.rectangle(x, y, size, size, tint).setDepth(15);
-      this.physics.add.existing(frag);
-      frag.body.setVelocity(fvx, fvy);
-      frag.body.setGravityY(160);
-      frag.body.setDrag(40);
-      frag.body.setCollideWorldBounds(false);
-
-      this.tweens.add({
-        targets:  frag,
-        alpha:    0,
-        duration: life,
-        ease:     'Power2',
-        onComplete: () => { if (frag.active) frag.destroy(); },
-      });
-    }
+    this._effects.explodeForType(x, y, type, vx, vy, this._enemies, this._eBullets);
   }
 
   /** Player explosion — uses Skirm blast as placeholder. */
-  _explode(x, y) { this._explodeSkirm(x, y, 0, 0); }
+  _explode(x, y) { this._effects.explodeForType(x, y, 'skirm', 0, 0, this._enemies, this._eBullets); }
 }

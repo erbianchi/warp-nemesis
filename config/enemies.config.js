@@ -14,7 +14,7 @@ export const ENEMIES = {
     hp: 10,
     damage: 10,
     speed: 80,        // slow
-    fireRate: 2200,   // ms between shots
+    fireRate: 4400,   // ms between shots
     score: 50,
     dropChance: 0.10,
     bulletSpeed: 220,

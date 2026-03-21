@@ -82,6 +82,12 @@ export class EnemyBase extends _BaseSprite {
     this._velX  = 0;
     this._velY  = 0;
 
+    // Spring-damped push offset — applied on top of tween position each frame
+    this._pushOffX = 0; // current displacement from tween path
+    this._pushOffY = 0;
+    this._pushVx   = 0; // velocity of the displacement
+    this._pushVy   = 0;
+
     this.setupMovement();
     this.setupWeapon();
   }
@@ -100,6 +106,52 @@ export class EnemyBase extends _BaseSprite {
     }
     this._prevX = this.x;
     this._prevY = this.y;
+
+    // Spring-damped turbulence: displacement offset applied on top of tween position.
+    // Spring pulls offset back to zero → plane returns smoothly to its flight path.
+    // Overdamped (ζ > 1) → no oscillation, pure smooth glide.
+    if (this._pushVx !== 0 || this._pushVy !== 0 ||
+        this._pushOffX !== 0 || this._pushOffY !== 0) {
+      const SPRING  = 10; // restoring force per px of offset
+      const DAMPING = 12; // ζ = 12/(2√10) ≈ 1.9 → overdamped, no bounce
+      const MAX_STEP = 1 / 60;
+      let remaining = dt;
+      let moved     = false;
+
+      while (remaining > 0 && (
+        this._pushVx !== 0 || this._pushVy !== 0 ||
+        this._pushOffX !== 0 || this._pushOffY !== 0
+      )) {
+        const step = Math.min(remaining, MAX_STEP);
+        remaining -= step;
+
+        const ax = -SPRING * this._pushOffX - DAMPING * this._pushVx;
+        const ay = -SPRING * this._pushOffY - DAMPING * this._pushVy;
+
+        this._pushVx += ax * step;
+        this._pushVy += ay * step;
+
+        const dx = this._pushVx * step;
+        const dy = this._pushVy * step;
+        this._pushOffX += dx;
+        this._pushOffY += dy;
+        this.x += dx;
+        this.y += dy;
+        moved = moved || dx !== 0 || dy !== 0;
+
+        if (Math.abs(this._pushVx)   < 0.5 && Math.abs(this._pushVy)   < 0.5 &&
+            Math.abs(this._pushOffX) < 0.5 && Math.abs(this._pushOffY) < 0.5) {
+          this.x -= this._pushOffX; // remove residual sub-pixel offset
+          this.y -= this._pushOffY;
+          this._pushOffX = 0; this._pushOffY = 0;
+          this._pushVx   = 0; this._pushVy   = 0;
+          moved = true;
+          break;
+        }
+      }
+
+      if (moved) this._syncBodyToSprite();
+    }
 
     if (this.y < 0) return; // don't fire until on screen
     this._fireCooldown += delta;
@@ -122,6 +174,25 @@ export class EnemyBase extends _BaseSprite {
       this.hp = 0;
       this.die();
     }
+  }
+
+  /**
+   * Apply a velocity impulse to the spring-damped offset.
+   * The offset is added on top of the tween-driven position each frame,
+   * and the spring pulls it back to zero — the plane returns to its flight path
+   * with natural, smooth deceleration (no snap, no oscillation).
+   * @param {number} vx
+   * @param {number} vy
+   */
+  applyPush(vx, vy) {
+    this._pushVx += vx;
+    this._pushVy += vy;
+  }
+
+  /** Sync the Arcade body after manual displacement so visuals and hitbox stay aligned. */
+  _syncBodyToSprite() {
+    if (!this.body || typeof this.body.updateFromGameObject !== 'function') return;
+    this.body.updateFromGameObject();
   }
 
   /** Kill this enemy immediately (e.g., nuke / screen-clear). */
