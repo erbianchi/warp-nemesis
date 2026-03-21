@@ -20,7 +20,6 @@ export class WeaponManager {
     this._cooldown = 0;
     this._cfg      = WEAPONS[this._slots[0]];
     this._heatShots = 0;
-    this._heatRecoveryMs = 0;
     this._isOverheated = false;
     this._maxHeatShots = GAME_CONFIG.PLAYER_HEAT_MAX;
     this._heatRecoveryStepMs = GAME_CONFIG.PLAYER_HEAT_RECOVERY_MS;
@@ -41,7 +40,7 @@ export class WeaponManager {
   /** Damage dealt per bullet by the currently active weapon. */
   get damage() { return this._cfg.damage; }
 
-  /** Current heat measured in shots. */
+  /** Current heat measured in shots. Can be fractional while cooling. */
   get heatShots() { return this._heatShots; }
 
   /** Heat capacity measured in shots. */
@@ -77,14 +76,11 @@ export class WeaponManager {
 
     const canRecoverHeat = !wantsToFire || this._isOverheated || !this._slots[0];
     if (canRecoverHeat && this._heatShots > 0) {
-      this._heatRecoveryMs += delta;
-      while (this._heatRecoveryMs >= this._heatRecoveryStepMs && this._heatShots > 0) {
-        this._heatShots--;
-        this._heatRecoveryMs -= this._heatRecoveryStepMs;
-      }
+      this._heatShots = Math.max(0, this._heatShots - (delta / this._heatRecoveryStepMs));
+      if (this._heatShots < 1e-6) this._heatShots = 0;
     }
 
-    if (this._isOverheated && this._heatShots <= this.unlockHeatShots) {
+    if (this._isOverheated && this._heatShots <= this.unlockHeatShots + 1e-6) {
       this._isOverheated = false;
     }
 
@@ -117,7 +113,6 @@ export class WeaponManager {
     bullet.body.allowGravity = false;
 
     this._cooldown = this._cfg.fireRate;
-    this._heatRecoveryMs = 0;
     this._heatShots = Math.min(this._maxHeatShots, this._heatShots + 1);
     if (this._heatShots >= this._maxHeatShots) {
       this._heatShots = this._maxHeatShots;

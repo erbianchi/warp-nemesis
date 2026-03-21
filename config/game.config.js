@@ -15,6 +15,8 @@ export const GAME_CONFIG = {
   PLAYER_HEAT_MAX: 30,      // weapon heat capacity measured in shots
   PLAYER_HEAT_RECOVERY_MS: 100,       // recover 1 shot of heat every 100 ms
   PLAYER_OVERHEAT_RECOVERY_SHOTS: 20, // shots of heat that must clear before firing resumes
+  PLAYER_HEAT_WARNING_RATIO: 0.8,     // yellow/blinking warning threshold
+  PLAYER_HEAT_WARNING_BLINK_MS: 160,  // blink cadence once the warning threshold is reached
 
   SPEED_MIN: 1,            // minimum speed tier
   SPEED_MAX: 5,            // maximum speed tier

@@ -193,16 +193,19 @@ describe('WeaponManager', () => {
     assert.equal(manager._cooldown, 0);
   });
 
-  it('recovers 1 heat shot every 100 ms when not firing', () => {
+  it('recovers 1 full heat shot over 100 ms when not firing', () => {
     manager.tryFire(240, 500);
     manager.update(100, false);
     assert.equal(manager.heatShots, 0);
   });
 
-  it('does not recover heat early before 100 ms has elapsed', () => {
+  it('recovers heat smoothly before 100 ms has elapsed', () => {
     manager.tryFire(240, 500);
-    manager.update(99, false);
-    assert.equal(manager.heatShots, 1);
+    manager.update(50, false);
+    assert.equal(manager.heatShots, 0.5);
+
+    manager.update(25, false);
+    assert.equal(manager.heatShots, 0.25);
   });
 
   it('does not recover heat while the trigger is held and the weapon is not overheated', () => {

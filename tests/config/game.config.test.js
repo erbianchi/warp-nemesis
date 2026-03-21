@@ -8,6 +8,7 @@ describe('GAME_CONFIG', () => {
     'PLAYER_SPEED', 'PLAYER_LIVES_DEFAULT',
     'WEAPON_SLOTS',
     'PLAYER_HEAT_MAX', 'PLAYER_HEAT_RECOVERY_MS', 'PLAYER_OVERHEAT_RECOVERY_SHOTS',
+    'PLAYER_HEAT_WARNING_RATIO', 'PLAYER_HEAT_WARNING_BLINK_MS',
     'SPEED_MIN', 'SPEED_MAX', 'PLAYER_SPEED_DEFAULT',
     'STAR_COUNT', 'STAR_SPEED_MIN', 'STAR_SPEED_MAX',
   ];
@@ -72,6 +73,14 @@ describe('GAME_CONFIG', () => {
 
   it('overheat requires 20 shots of recovery before firing resumes', () => {
     assert.equal(GAME_CONFIG.PLAYER_OVERHEAT_RECOVERY_SHOTS, 20);
+  });
+
+  it('heat warning starts at 80 percent of the bar', () => {
+    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO, 0.8);
+  });
+
+  it('heat warning blink cadence is defined in milliseconds', () => {
+    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_BLINK_MS, 160);
   });
 
   it('SPEED_MIN is less than SPEED_MAX', () => {

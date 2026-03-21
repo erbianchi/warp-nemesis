@@ -18,7 +18,32 @@ const {
   PLAYER_SPEED, PLAYER_SPEED_DEFAULT, PLAYER_LIVES_DEFAULT,
   PLAYER_HP_MAX, PLAYER_HP_DEFAULT,
   PLAYER_SHIELD_MAX, PLAYER_SHIELD_DEFAULT,
+  PLAYER_HEAT_WARNING_RATIO, PLAYER_HEAT_WARNING_BLINK_MS,
 } = GAME_CONFIG;
+
+const HEAT_BAR_COLOR = 0xff3300;
+const HEAT_WARNING_COLOR = 0xffdd33;
+const HEAT_WARNING_DIM_ALPHA = 0.3;
+
+/**
+ * Resolve the current heat bar color/alpha.
+ * @param {number} heatShots
+ * @param {number} maxHeatShots
+ * @param {number} [timeMs=0]
+ * @returns {{color: number, alpha: number}}
+ */
+export function resolveHeatBarStyle(heatShots, maxHeatShots, timeMs = 0) {
+  const heatRatio = maxHeatShots > 0 ? heatShots / maxHeatShots : 0;
+  if (heatRatio < PLAYER_HEAT_WARNING_RATIO) {
+    return { color: HEAT_BAR_COLOR, alpha: 1 };
+  }
+
+  const blinkPhase = Math.floor(timeMs / PLAYER_HEAT_WARNING_BLINK_MS) % 2;
+  return {
+    color: HEAT_WARNING_COLOR,
+    alpha: blinkPhase === 0 ? 1 : HEAT_WARNING_DIM_ALPHA,
+  };
+}
 
 export class GameScene extends Phaser.Scene {
   constructor() {
@@ -44,6 +69,7 @@ export class GameScene extends Phaser.Scene {
     this._respawning     = false;
     this._displayedScore = 0;
     this._scoreTween     = null;
+    this._hudTimeMs      = 0;
 
     RunState.reset();
 
@@ -94,9 +120,10 @@ export class GameScene extends Phaser.Scene {
 
   // ── Main loop ─────────────────────────────────────────────────────────────
 
-  update(_time, delta) {
+  update(time, delta) {
     if (this._gameOver || this._respawning) return;
 
+    this._hudTimeMs = time;
     this._bg.update(delta);
     this._movePlayer();
     const wantsToFire = this._space.isDown;
@@ -105,7 +132,7 @@ export class GameScene extends Phaser.Scene {
     if (wantsToFire) {
       this._weapons.tryFire(this._player.x, this._player.y);
     }
-    this._drawStatusBars();
+    this._drawStatusBars(time);
 
     this._spawner.update(delta);
 
@@ -404,7 +431,7 @@ export class GameScene extends Phaser.Scene {
     const defs = [
       { key: 'hp',     max: PLAYER_HP_MAX,    color: 0x00cc44 },
       { key: 'shield', max: PLAYER_SHIELD_MAX, color: 0x2255ff },
-      { key: 'heat',   max: this._weapons.maxHeatShots, color: 0xff3300 },
+      { key: 'heat',   max: this._weapons.maxHeatShots, color: HEAT_BAR_COLOR },
     ];
 
     this._barFills = {};
@@ -419,7 +446,7 @@ export class GameScene extends Phaser.Scene {
       // fill — origin (0,0), width scaled by displayWidth
       const fill = this.add.rectangle(X0, y, BAR_W, BAR_H, def.color)
         .setDepth(11).setOrigin(0, 0);
-      this._barFills[def.key] = { rect: fill, max: def.max, fullW: BAR_W };
+      this._barFills[def.key] = { rect: fill, max: def.max, fullW: BAR_W, color: def.color };
 
       // border
       const gfx = this.add.graphics().setDepth(12);
@@ -430,14 +457,23 @@ export class GameScene extends Phaser.Scene {
     this._drawStatusBars();
   }
 
-  _drawStatusBars() {
+  _drawStatusBars(timeMs = this._hudTimeMs) {
     const vals = {
       hp:     this._playerHp,
       shield: this._playerShield,
       heat:   this._weapons.heatShots,
     };
-    for (const [key, { rect, max, fullW }] of Object.entries(this._barFills)) {
+    for (const [key, { rect, max, fullW, color }] of Object.entries(this._barFills)) {
       rect.displayWidth = Math.max(0, Math.min(1, vals[key] / max)) * fullW;
+      if (key === 'heat') {
+        const style = resolveHeatBarStyle(vals[key], max, timeMs);
+        if (rect.setFillStyle) rect.setFillStyle(style.color, style.alpha);
+        rect.setAlpha(style.alpha);
+        continue;
+      }
+
+      if (rect.setFillStyle) rect.setFillStyle(color, 1);
+      rect.setAlpha(1);
     }
   }
 
