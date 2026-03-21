@@ -14,10 +14,9 @@ const {
   FORMATION_SHOOT_RATE,
   DRIFT_RANGE_X,
   DRIFT_RANGE_Y,
-} = await import('../../scenes/GameScene.js');
+} = await import('../../systems/FormationController.js');
 
-const { WEAPONS } = await import('../../config/weapons.config.js');
-
+const { WEAPONS }     = await import('../../config/weapons.config.js');
 const { GAME_CONFIG } = await import('../../config/game.config.js');
 const { WIDTH, HEIGHT } = GAME_CONFIG;
 
@@ -179,8 +178,6 @@ describe('FORMATION_CYCLE_MS', () => {
       `cycle should be at least 5 s; got ${FORMATION_CYCLE_MS} ms`);
   });
 });
-
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 

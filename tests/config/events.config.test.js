@@ -3,10 +3,16 @@ import assert from 'node:assert/strict';
 import { EVENTS } from '../../config/events.config.js';
 
 const REQUIRED_KEYS = [
+  // Run lifecycle
   'GAME_START', 'GAME_OVER', 'LEVEL_COMPLETE', 'LEVEL_START',
+  // Player
   'PLAYER_HIT', 'PLAYER_DIED', 'HEALTH_CHANGED', 'SHIELD_CHANGED',
-  'ENEMY_KILLED',
+  // Enemies — actively used
+  'ENEMY_DIED', 'ENEMY_FIRE',
+  'WAVE_START', 'WAVE_COMPLETE', 'ALL_WAVES_COMPLETE', 'SQUADRON_SPAWNED',
+  // Scoring / state
   'SCORE_CHANGED', 'LIVES_CHANGED',
+  // Weapons / bonuses
   'WEAPON_CHANGED', 'BONUS_COLLECTED',
 ];
 

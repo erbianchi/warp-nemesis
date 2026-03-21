@@ -1,63 +1,25 @@
 /** @module GameScene
  * Core game loop — orchestrator only.
- * Phase 1: starfield + moveable player rectangle + weapon slot display. */
+ * Delegates enemy spawning to WaveSpawner, movement to entity classes,
+ * and collision to physics.add.overlap + manual AABB for enemy bullets. */
 
-import { GAME_CONFIG } from '../config/game.config.js';
-import { ScrollingBackground } from '../systems/ScrollingBackground.js';
-import { WeaponManager } from '../weapons/WeaponManager.js';
-import { RunState } from '../systems/RunState.js';
+import { GAME_CONFIG }           from '../config/game.config.js';
+import { EVENTS }                from '../config/events.config.js';
+import { ScrollingBackground }   from '../systems/ScrollingBackground.js';
+import { WaveSpawner }           from '../systems/WaveSpawner.js';
+import { FormationController }   from '../systems/FormationController.js';
+import { WeaponManager }         from '../weapons/WeaponManager.js';
+import { RunState }              from '../systems/RunState.js';
+import { Skirm }                 from '../entities/enemies/Skirm.js';
 
 const { WIDTH, HEIGHT, PLAYER_SPEED, PLAYER_SPEED_DEFAULT, PLAYER_LIFE_DEFAULT } = GAME_CONFIG;
-
-/** Waypoints (x, y, dur ms) every ship follows before breaking to its slot. */
-export const LOOP_PATH = [
-  { x: 240, y: 160, dur: 500 },
-  { x: 80,  y: 300, dur: 700 },
-  { x: 65,  y: 490, dur: 650 },
-  { x: 220, y: 560, dur: 550 },
-  { x: 400, y: 510, dur: 600 },
-  { x: 450, y: 290, dur: 600 },
-  { x: 320, y: 75,  dur: 500 },
-];
-
-/** Initial 2×4 arrival slots, filled right-to-left (ships exit the loop on the right). */
-export const SLOTS = [
-  { x: 330, y: 65  }, { x: 270, y: 65  }, { x: 210, y: 65  }, { x: 150, y: 65  },
-  { x: 330, y: 110 }, { x: 270, y: 110 }, { x: 210, y: 110 }, { x: 150, y: 110 },
-];
-
-/**
- * Calculate centered two-row formation slots for N living ships.
- * Splits ships as evenly as possible between the two rows.
- * @param {number} count
- * @returns {Array<{x: number, y: number}>}
- */
-export function calcFormationSlots(count) {
-  const SPACING_X = 60;
-  const ROW_YS    = [65, 110];
-  const slots     = [];
-  const row2      = Math.floor(count / 2);
-  const row1      = count - row2;
-
-  for (const [n, y] of [[row1, ROW_YS[0]], [row2, ROW_YS[1]]]) {
-    if (n === 0) continue;
-    const startX = (WIDTH - (n - 1) * SPACING_X) / 2;
-    for (let col = 0; col < n; col++) slots.push({ x: startX + col * SPACING_X, y });
-  }
-  return slots;
-}
-
-export const SQUADRON_SHIP_LIFE   = 10;    // HP per ship in this squadron
-export const FORMATION_SPEED      = 1;     // speed tier (1–5) for this squadron
-export const FORMATION_CYCLE_MS   = 10000; // ms in idle before repeating the pattern
-export const FORMATION_SHOOT_RATE = 2;     // shots per second for the whole squadron
-export const DRIFT_RANGE_X        = 30;    // max horizontal jab distance from slot (px)
-export const DRIFT_RANGE_Y        = 5;     // max vertical offset during jab (px)
 
 export class GameScene extends Phaser.Scene {
   constructor() {
     super({ key: 'GameScene' });
   }
+
+  // ── Setup ─────────────────────────────────────────────────────────────────
 
   create() {
     this._bg      = new ScrollingBackground(this);
@@ -67,19 +29,59 @@ export class GameScene extends Phaser.Scene {
     this._wasd    = this._createWASD();
     this._space   = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
 
-    this._playerSpeed = PLAYER_SPEED_DEFAULT;
-    this._playerLife  = PLAYER_LIFE_DEFAULT;
-    this._gameOver    = false;
+    this._playerSpeed    = PLAYER_SPEED_DEFAULT;
+    this._playerLife     = PLAYER_LIFE_DEFAULT;
+    this._gameOver       = false;
+    this._displayedScore = 0;
+    this._scoreTween     = null;
 
     RunState.reset();
 
     this._buildWeaponDisplay();
+    this._buildHUD();
+
+    // ── Enemy management ────────────────────────────────────────────────────
+    this._enemies    = [];   // live enemy instances
+    this._eBullets   = [];   // tween-driven enemy bullet rectangles
+    this._enemyGroup = this.physics.add.group();
+    this._formations = [];   // active FormationControllers
+
+    // Player bullets hit enemies
+    this.physics.add.overlap(
+      this._weapons.pool,
+      this._enemyGroup,
+      this._onBulletHitEnemy,
+      null,
+      this
+    );
+
+    // Enemy body touches player
+    this.physics.add.overlap(
+      this._player,
+      this._enemyGroup,
+      this._onEnemyTouchPlayer,
+      null,
+      this
+    );
+
+    this.events.on(EVENTS.ENEMY_FIRE,       this._onEnemyFire,  this);
+    this.events.on(EVENTS.ENEMY_DIED,       this._onEnemyDied,  this);
+    this.events.on(EVENTS.ALL_WAVES_COMPLETE, this._onLevelClear, this);
+    this.events.on(EVENTS.SQUADRON_SPAWNED, this._onSquadronSpawned, this);
+
+    // ── WaveSpawner ─────────────────────────────────────────────────────────
+    this._spawner = new WaveSpawner(
+      this,
+      0,   // Level 1
+      (type, x, y, stats, dance) => this._spawnEnemy(type, x, y, stats, dance)
+    );
+
+    this.time.delayedCall(2000, () => this._spawner.start());
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.start('MenuScene'));
-
-    // Spawn enemy formation 3 seconds after the game starts
-    this.time.delayedCall(3000, () => this._spawnFormation());
   }
+
+  // ── Main loop ─────────────────────────────────────────────────────────────
 
   update(_time, delta) {
     if (this._gameOver) return;
@@ -87,38 +89,56 @@ export class GameScene extends Phaser.Scene {
     this._bg.update(delta);
     this._movePlayer();
     this._weapons.update(delta);
+
     if (this._space.isDown) {
       this._weapons.tryFire(this._player.x, this._player.y);
     }
 
-    // Move enemy bullets (tween-driven) and check AABB collision with player
-    if (this._eBullets) {
-      const px = this._player.x, py = this._player.y;
-      for (let i = this._eBullets.length - 1; i >= 0; i--) {
-        const b = this._eBullets[i];
-        if (!b.active) { this._eBullets.splice(i, 1); continue; }
-        if (b.y > HEIGHT + 20) { b.destroy(); this._eBullets.splice(i, 1); continue; }
-        // Simple AABB: bullet 3×10, player 28×36
-        if (Math.abs(b.x - px) < 15.5 && Math.abs(b.y - py) < 23) {
-          b.destroy();
-          this._eBullets.splice(i, 1);
-          this._onEnemyBulletHit();
-        }
+    this._spawner.update(delta);
+
+    // Update enemies; cull anything that has gone off-screen
+    for (let i = this._enemies.length - 1; i >= 0; i--) {
+      const e = this._enemies[i];
+      if (!e.active) { this._enemyGroup.remove(e); this._enemies.splice(i, 1); continue; }
+      if (e.y > HEIGHT + 80 || e.x < -100 || e.x > WIDTH + 100) {
+        this._removeEnemy(e, i);
+        continue;
       }
+      e.update(delta);
+    }
+
+    // Move enemy bullets; check player AABB collision
+    const px = this._player.x;
+    const py = this._player.y;
+    for (let i = this._eBullets.length - 1; i >= 0; i--) {
+      const b = this._eBullets[i];
+      if (!b.active) { this._eBullets.splice(i, 1); continue; }
+      if (b.y > HEIGHT + 20) { b.destroy(); this._eBullets.splice(i, 1); continue; }
+      if (Math.abs(b.x - px) < 15.5 && Math.abs(b.y - py) < 23) {
+        const dmg = b._damage ?? 10;
+        b.destroy();
+        this._eBullets.splice(i, 1);
+        this._onPlayerHit(dmg);
+      }
+    }
+
+    // Signal wave clear once all squadrons have spawned and no enemies remain
+    if (this._spawner.isWaveActive
+        && this._spawner.pendingSquadrons === 0
+        && this._enemies.length === 0) {
+      this._spawner.onWaveCleared();
     }
   }
 
-  // ---------------------------------------------------------------------------
+  // ── Player ────────────────────────────────────────────────────────────────
 
-  /** @returns {Phaser.GameObjects.Rectangle} Physics-enabled player rectangle. */
   _createPlayer() {
-    const player = this.add.rectangle(WIDTH / 2, HEIGHT - 80, 28, 36, 0x00ff88);
-    this.physics.add.existing(player);
-    player.body.setCollideWorldBounds(true);
-    return player;
+    const p = this.add.rectangle(WIDTH / 2, HEIGHT - 80, 28, 36, 0x00ff88);
+    this.physics.add.existing(p);
+    p.body.setCollideWorldBounds(true);
+    return p;
   }
 
-  /** @returns {object} WASD key set. */
   _createWASD() {
     return this.input.keyboard.addKeys({
       up:    Phaser.Input.Keyboard.KeyCodes.W,
@@ -128,44 +148,6 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  /**
-   * Draw static weapon slot boxes in the bottom-left corner.
-   * Re-call whenever the loadout changes (future phases).
-   */
-  _buildWeaponDisplay() {
-    const BOX_W = 62;
-    const BOX_H = 38;
-    const GAP   = 6;
-    const X0    = 8;
-    const Y0    = HEIGHT - BOX_H - 8;
-
-    const gfx = this.add.graphics();
-
-    this._weapons.getSlots().forEach((slot, i) => {
-      const x      = X0 + i * (BOX_W + GAP);
-      const filled = slot !== null;
-      const border = filled ? slot.color : 0x2a2a2a;
-      const bg     = filled ? 0x001428  : 0x080808;
-      const css    = filled ? `#${slot.color.toString(16).padStart(6, '0')}` : '#2a2a2a';
-
-      gfx.fillStyle(bg, 1);
-      gfx.fillRect(x, Y0, BOX_W, BOX_H);
-      gfx.lineStyle(1, border, 1);
-      gfx.strokeRect(x, Y0, BOX_W, BOX_H);
-
-      // Slot number — top-left
-      this.add.text(x + 4, Y0 + 3, `${i + 1}`, {
-        fontSize: '9px', fill: filled ? '#aaaaaa' : '#333333', fontFamily: 'monospace',
-      });
-
-      // Weapon name — centered
-      this.add.text(x + BOX_W / 2, Y0 + BOX_H / 2 + 3, filled ? slot.name : '----', {
-        fontSize: '11px', fill: css, fontFamily: 'monospace',
-      }).setOrigin(0.5);
-    });
-  }
-
-  /** Read input, set velocity, normalise diagonals. */
   _movePlayer() {
     const body  = this._player.body;
     const c     = this._cursors;
@@ -188,273 +170,13 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Enemy formation sequence
-  // State machine: arrive → idle (drift + shoot) ⟲ pattern → idle
-  // ---------------------------------------------------------------------------
-
-  /**
-   * Spawn 8 ships that fly in from off-screen, align, then enter the idle/pattern loop.
-   * Each ship carries { ship, slot, speed, life, drifting, dead }.
-   */
-  _spawnFormation() {
-    this._fFleet       = [];
-    this._fLanded      = 0;
-    this._fShootIndex  = 0;
-    this._fShootTimer  = null;
-    this._fCycleTimer  = null;
-    this._fInIdle      = false;
-    this._eBullets     = [];
-
-    // Physics group used for player-bullet overlap detection
-    this._fGroup = this.physics.add.group();
-
-    for (let i = 0; i < 8; i++) {
-      const ship = this.add.rectangle(WIDTH / 2, -30, 24, 20, 0xdd2211).setDepth(10);
-      this.physics.add.existing(ship);  // attach arcade body for overlap checks
-      this._fGroup.add(ship);
-
-      const data = {
-        ship,
-        slot:     SLOTS[i],
-        speed:    FORMATION_SPEED,
-        life:     SQUADRON_SHIP_LIFE,
-        drifting: false,
-        dead:     false,
-        landed:   false,   // true once the ship has reached its slot
-      };
-      this._fFleet.push(data);
-      this.time.delayedCall(i * 200, () => this._fRunPath(data));
-    }
-
-    // Player bullets vs formation ships
-    this.physics.add.overlap(
-      this._weapons.pool,
-      this._fGroup,
-      this._fOnBulletHit,
-      null,
-      this
-    );
-
-  }
-
-  /**
-   * Send a ship through LOOP_PATH (speed-scaled), then tween it to its slot.
-   * Dead ships are counted as already landed so the cycle counter stays correct.
-   * @param {{ ship, slot: {x,y}, speed: number, life: number, drifting: boolean, dead: boolean }} data
-   */
-  _fRunPath(data) {
-    if (data.dead) { this._fOnLanded(); return; }
-
-    this._fChainStep(data.ship, LOOP_PATH, 0, data.speed, () => {
-      this.tweens.add({
-        targets:    data.ship,
-        x:          data.slot.x,
-        y:          data.slot.y,
-        duration:   380 / data.speed,
-        ease:       'Cubic.easeOut',
-        onComplete: () => { data.landed = true; this._fOnLanded(); },
-      });
-    });
-  }
-
-  /**
-   * Recursively chain waypoint tweens, scaling each duration by speed.
-   * @param {Phaser.GameObjects.Rectangle} ship
-   * @param {Array<{x,y,dur}>} steps
-   * @param {number} idx
-   * @param {number} speed
-   * @param {Function} onDone
-   */
-  _fChainStep(ship, steps, idx, speed, onDone) {
-    if (idx >= steps.length) { onDone(); return; }
-    const { x, y, dur } = steps[idx];
-    this.tweens.add({
-      targets:    ship,
-      x, y,
-      duration:   dur / speed,
-      ease:       'Sine.easeInOut',
-      onComplete: () => this._fChainStep(ship, steps, idx + 1, speed, onDone),
-    });
-  }
-
-  /** Count landings; once all fleet entries are accounted for, enter idle (if any alive). */
-  _fOnLanded() {
-    this._fLanded++;
-    if (this._fLanded < this._fFleet.length) return;
-    const alive = this._fFleet.filter(d => !d.dead).length;
-    if (alive > 0) this._fBeginIdle();
-  }
-
-  /**
-   * Idle phase: every ship drifts randomly around its slot,
-   * the squadron shoots, and a timer schedules the next pattern run.
-   */
-  _fBeginIdle() {
-    this._fInIdle = true;
-    for (const data of this._fFleet) {
-      if (data.dead) continue;
-      data.drifting = true;
-      this._fIdleDrift(data);
-    }
-
-    // (Re)start shoot loop — interval driven by squadron shoot rate
-    if (this._fShootTimer) this._fShootTimer.remove();
-    this._fShootTimer = this.time.addEvent({
-      delay:         Math.round(1000 / FORMATION_SHOOT_RATE),
-      callback:      this._fFireNext,
-      callbackScope: this,
-      loop:          true,
-    });
-
-    // Schedule the next pattern run
-    this._fCycleTimer = this.time.delayedCall(FORMATION_CYCLE_MS, () => this._fBeginPattern());
-  }
-
-  /**
-   * Jab the ship to one side, snap it back to its slot, pause, repeat.
-   * Movement is fast and abrupt (Cubic ease) with a strong horizontal bias.
-   * Stops when data.drifting is set to false.
-   * @param {{ ship, slot, speed, drifting }} data
-   */
-  _fIdleDrift(data) {
-    if (!data.drifting) return;
-
-    const sign = Math.random() < 0.5 ? -1 : 1;
-    const ox   = sign * DRIFT_RANGE_X * (0.7 + Math.random() * 0.3);
-    const oy   = (Math.random() - 0.5) * 2 * DRIFT_RANGE_Y;
-    const dur  = Math.round((120 + Math.random() * 100) / data.speed);
-
-    // Snap to side
-    this.tweens.add({
-      targets:    data.ship,
-      x:          data.slot.x + ox,
-      y:          data.slot.y + oy,
-      duration:   dur,
-      ease:       'Cubic.easeOut',
-      onComplete: () => {
-        if (!data.drifting) return;
-        // Snap back to slot centre
-        this.tweens.add({
-          targets:    data.ship,
-          x:          data.slot.x,
-          y:          data.slot.y,
-          duration:   dur,
-          ease:       'Cubic.easeIn',
-          onComplete: () => {
-            if (!data.drifting) return;
-            // Short pause before next jab
-            this.time.delayedCall(
-              Math.round(80 + Math.random() * 180),
-              () => this._fIdleDrift(data)
-            );
-          },
-        });
-      },
-    });
-  }
-
-  /**
-   * Pattern phase: stop drift and shooting, then stagger all ships back through
-   * LOOP_PATH. Landing completes will trigger _fBeginIdle again, looping forever.
-   * Stops cleanly if the entire squadron has been destroyed.
-   */
-  _fBeginPattern() {
-    const alive = this._fFleet.filter(d => !d.dead);
-    if (alive.length === 0) return;
-
-    this._fInIdle = false;
-    if (this._fShootTimer) { this._fShootTimer.remove(); this._fShootTimer = null; }
-
-    // Reassign slots for the current living count before launching
-    const newSlots = calcFormationSlots(alive.length);
-    alive.forEach((data, i) => { data.slot = newSlots[i]; data.landed = false; });
-
-    for (const data of this._fFleet) {
-      data.drifting = false;
-      if (!data.dead) this.tweens.killTweensOf(data.ship);
-    }
-
-    this._fLanded = 0;
-    let delay = 0;
-    for (const data of this._fFleet) {
-      // Dead ships count immediately; living ships launch with stagger
-      if (data.dead) { this._fLanded++; continue; }
-      this.time.delayedCall(delay, () => this._fRunPath(data));
-      delay += 200;
-    }
-  }
-
-  /**
-   * Called by Phaser's overlap system when a player bullet hits a formation ship.
-   * Recycles the bullet and applies weapon damage; destroys the ship at 0 HP.
-   * @param {Phaser.Physics.Arcade.Image} bullet
-   * @param {Phaser.GameObjects.Rectangle} ship
-   */
-  _fOnBulletHit(bullet, ship) {
-    this._weapons.pool.killAndHide(bullet);
-    if (bullet.body) bullet.body.stop();
-
-    const data = this._fFleet.find(d => d.ship === ship);
-    if (!data || data.dead) return;
-
-    data.life -= this._weapons.damage;
-    if (data.life <= 0) {
-      data.dead     = true;
-      data.drifting = false;
-      this.tweens.killTweensOf(ship);
-      this._explode(ship.x, ship.y);
-      RunState.addScore(SQUADRON_SHIP_LIFE);
-      ship.destroy();
-      if (this._fInIdle) {
-        this._fReorganize();
-      } else if (!data.landed) {
-        // Killed mid-flight — the slot tween's onComplete will never fire,
-        // so manually tick the landing counter to keep the state machine moving.
-        this._fOnLanded();
-      }
-    }
-  }
-
-  /**
-   * Tween surviving fleet members to recalculated centered slots, then resume drift.
-   * Only called during idle phase.
-   */
-  _fReorganize() {
-    const living = this._fFleet.filter(d => !d.dead);
-    if (living.length === 0) return;
-
-    const newSlots = calcFormationSlots(living.length);
-    living.forEach((data, i) => {
-      data.slot     = newSlots[i];
-      data.drifting = false;
-      this.tweens.killTweensOf(data.ship);
-      this.tweens.add({
-        targets:    data.ship,
-        x:          data.slot.x,
-        y:          data.slot.y,
-        duration:   350,
-        ease:       'Cubic.easeOut',
-        onComplete: () => {
-          if (data.dead) return;
-          data.drifting = true;
-          this._fIdleDrift(data);
-        },
-      });
-    });
-  }
-
-  /**
-   * Called when an enemy bullet hits the player.
-   * Applies weapon damage; triggers _killPlayer at 0 HP.
-   */
-  _onEnemyBulletHit() {
+  _onPlayerHit(damage) {
     if (this._gameOver) return;
-    this._playerLife -= this._weapons.damage;
+    this._playerLife -= damage;
+    this._hpText.setText(`HP  ${Math.max(0, this._playerLife)}`);
     if (this._playerLife <= 0) this._killPlayer();
   }
 
-  /** Freeze the world, explode the player ship, and show the game-over overlay. */
   _killPlayer() {
     if (this._gameOver) return;
     this._gameOver = true;
@@ -463,18 +185,9 @@ export class GameScene extends Phaser.Scene {
     this._player.setVisible(false);
     if (this._player.body) this._player.body.enable = false;
 
-    // Stop all formation activity
-    if (this._fShootTimer) { this._fShootTimer.remove(); this._fShootTimer = null; }
-    if (this._fCycleTimer) { this._fCycleTimer.remove(); this._fCycleTimer = null; }
-    for (const data of this._fFleet ?? []) {
-      data.drifting = false;
-      if (!data.dead) this.tweens.killTweensOf(data.ship);
-    }
-
-    // Pause physics so nothing moves (background stops via _gameOver flag in update)
+    for (const fc of this._formations) fc.stop();
     this.physics.pause();
 
-    // Overlay — rendered above everything; particles continue independently
     this.add.text(WIDTH / 2, HEIGHT / 2 - 30, 'GAME OVER', {
       fontSize: '42px', fill: '#ff2222', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(20);
@@ -482,14 +195,147 @@ export class GameScene extends Phaser.Scene {
     this.add.text(WIDTH / 2, HEIGHT / 2 + 30, `SCORE  ${RunState.score}`, {
       fontSize: '20px', fill: '#ffffff', fontFamily: 'monospace',
     }).setOrigin(0.5).setDepth(20);
+
+    this.time.delayedCall(4000, () => this.scene.start('MenuScene'));
+    this.input.keyboard.once('keydown-ENTER', () => this.scene.start('GameScene'));
   }
 
-  /**
-   * Spawn a one-shot particle burst at (x, y).
-   * Uses Phaser 3.60+ ParticleEmitter API.
-   * @param {number} x
-   * @param {number} y
-   */
+  _onSquadronSpawned({ dance, count }) {
+    if (dance !== 'straight') return;
+    const ships = this._enemies.slice(-count);
+    const fc = new FormationController(this, ships);
+    this._formations.push(fc);
+  }
+
+  // ── Enemy spawning ────────────────────────────────────────────────────────
+
+  _spawnEnemy(type, x, y, stats, dance) {
+    let enemy;
+    switch (type) {
+      case 'skirm':
+      default:
+        enemy = new Skirm(this, x, y, stats, dance);
+        break;
+    }
+    this._enemies.push(enemy);
+    this._enemyGroup.add(enemy);
+  }
+
+  /** Remove an off-screen enemy silently (no score awarded). */
+  _removeEnemy(enemy, idx) {
+    enemy.alive = false;
+    enemy.setActive(false).setVisible(false);
+    if (enemy.body) enemy.body.stop();
+    this._enemyGroup.remove(enemy);
+    enemy.destroy();
+    this._enemies.splice(idx, 1);
+  }
+
+  // ── Collision handlers ────────────────────────────────────────────────────
+
+  _onBulletHitEnemy(bullet, enemy) {
+    this._weapons.pool.killAndHide(bullet);
+    if (bullet.body) bullet.body.stop();
+    if (!enemy.alive) return;
+    enemy.takeDamage(this._weapons.damage);
+  }
+
+  _onEnemyTouchPlayer(player, enemy) {
+    if (!enemy.alive) return;
+    const dmg = enemy.damage ?? 10;
+    enemy.die();
+    this._onPlayerHit(dmg);
+  }
+
+  _onEnemyFire({ x, y, vy, damage }) {
+    const bullet = this.add.rectangle(x, y, 3, 10, 0xff4400).setDepth(9);
+    bullet._damage = damage;
+    this._eBullets.push(bullet);
+
+    const dist = HEIGHT + 30 - y;
+    this.tweens.add({
+      targets:    bullet,
+      y:          HEIGHT + 30,
+      duration:   Math.round((dist / vy) * 1000),
+      ease:       'Linear',
+      onComplete: () => {
+        const idx = this._eBullets.indexOf(bullet);
+        if (idx !== -1) this._eBullets.splice(idx, 1);
+        if (bullet.active) bullet.destroy();
+      },
+    });
+  }
+
+  _onEnemyDied({ x, y, score }) {
+    this._explode(x, y);
+    RunState.addScore(score);
+    RunState.kills++;
+    this._animateScore(RunState.score);
+  }
+
+  _animateScore(target) {
+    if (this._scoreTween) this._scoreTween.stop();
+    const obj = { val: this._displayedScore ?? 0 };
+    this._scoreTween = this.tweens.add({
+      targets:  obj,
+      val:      target,
+      duration: 600,
+      ease:     'Linear',
+      onUpdate: () => this._scoreText.setText(`SCORE  ${Math.floor(obj.val)}`),
+      onComplete: () => { this._displayedScore = target; },
+    });
+  }
+
+  _onLevelClear() {
+    this.add.text(WIDTH / 2, HEIGHT / 2, 'LEVEL CLEAR!', {
+      fontSize: '32px', fill: '#00ffff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(20);
+
+    this.add.text(WIDTH / 2, HEIGHT / 2 + 48, `SCORE  ${RunState.score}`, {
+      fontSize: '18px', fill: '#ffffff', fontFamily: 'monospace',
+    }).setOrigin(0.5).setDepth(20);
+
+    this.time.delayedCall(4000, () => this.scene.start('MenuScene'));
+  }
+
+  // ── HUD ───────────────────────────────────────────────────────────────────
+
+  _buildWeaponDisplay() {
+    const BOX_W = 62, BOX_H = 38, GAP = 6, X0 = 8;
+    const Y0    = HEIGHT - BOX_H - 8;
+    const gfx   = this.add.graphics();
+
+    this._weapons.getSlots().forEach((slot, i) => {
+      const x      = X0 + i * (BOX_W + GAP);
+      const filled = slot !== null;
+      const border = filled ? slot.color : 0x2a2a2a;
+      const bg     = filled ? 0x001428  : 0x080808;
+      const css    = filled ? `#${slot.color.toString(16).padStart(6, '0')}` : '#2a2a2a';
+
+      gfx.fillStyle(bg, 1);      gfx.fillRect(x, Y0, BOX_W, BOX_H);
+      gfx.lineStyle(1, border, 1); gfx.strokeRect(x, Y0, BOX_W, BOX_H);
+
+      this.add.text(x + 4, Y0 + 3, `${i + 1}`, {
+        fontSize: '9px', fill: filled ? '#aaaaaa' : '#333333', fontFamily: 'monospace',
+      });
+      this.add.text(x + BOX_W / 2, Y0 + BOX_H / 2 + 3, filled ? slot.name : '----', {
+        fontSize: '11px', fill: css, fontFamily: 'monospace',
+      }).setOrigin(0.5);
+    });
+  }
+
+  _buildHUD() {
+    this._scoreText = this.add.text(WIDTH - 8, 8, 'SCORE  0', {
+      fontSize: '12px', fill: '#ffffff', fontFamily: 'monospace',
+    }).setOrigin(1, 0).setDepth(10);
+
+    this._hpText = this.add.text(8, 8, `HP  ${this._playerLife}`, {
+      fontSize: '12px', fill: '#00ff88', fontFamily: 'monospace',
+    }).setDepth(10);
+  }
+
+  // ── Effects ───────────────────────────────────────────────────────────────
+
   _explode(x, y) {
     const emitter = this.add.particles(x, y, 'particle', {
       speed:     { min: 80, max: 320 },
@@ -505,32 +351,5 @@ export class GameScene extends Phaser.Scene {
 
     emitter.explode(32);
     this.time.delayedCall(700, () => emitter.destroy());
-  }
-
-  /** Flash the current ship and fire a bullet downward (tween-driven); advance the sequence. */
-  _fFireNext() {
-    const data = this._fFleet[this._fShootIndex];
-    this._fShootIndex = (this._fShootIndex + 1) % this._fFleet.length;
-    if (!data || data.dead || !data.ship.active) return;
-
-    this.tweens.add({ targets: data.ship, alpha: 0.25, duration: 80, yoyo: true, repeat: 1 });
-
-    const startY = data.ship.y + 14;
-    const bullet = this.add.rectangle(data.ship.x, startY, 3, 10, 0xff3300).setDepth(9);
-    this._eBullets.push(bullet);
-
-    const pixelsPerSec = 600 * data.speed;
-    const dist         = HEIGHT + 30 - startY;
-    this.tweens.add({
-      targets:    bullet,
-      y:          HEIGHT + 30,
-      duration:   Math.round(dist / pixelsPerSec * 1000),
-      ease:       'Linear',
-      onComplete: () => {
-        const idx = this._eBullets.indexOf(bullet);
-        if (idx !== -1) this._eBullets.splice(idx, 1);
-        if (bullet.active) bullet.destroy();
-      },
-    });
   }
 }

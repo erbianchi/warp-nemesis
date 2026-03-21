@@ -18,6 +18,7 @@ export function installPhaserGlobal() {
       Between:       (min, max) => Math.floor(Math.random() * (max - min + 1)) + min,
       FloatBetween:  (min, max) => Math.random() * (max - min) + min,
       Linear:        (a, b, t)  => a + (b - a) * t,
+      Clamp:         (val, min, max) => Math.min(Math.max(val, min), max),
     },
 
     Display: {
@@ -42,6 +43,28 @@ export function installPhaserGlobal() {
           setVelocity() {}
           setVelocityX() {}
           setVelocityY() {}
+        },
+        Sprite: class {
+          constructor(scene, x, y, texture) {
+            this.scene   = scene;
+            this.x       = x;
+            this.y       = y;
+            this.texture = texture;
+            this.body    = {
+              setVelocity:  () => {},
+              setVelocityX: () => {},
+              setVelocityY: () => {},
+            };
+            this.active = true;
+          }
+          destroy()        { this.active = false; }
+          setActive(v)     { this.active = v; return this; }
+          setVisible()     { return this; }
+          setVelocity()    { return this; }
+          setVelocityX()   { return this; }
+          setVelocityY()   { return this; }
+          setDepth()       { return this; }
+          setAlpha()       { return this; }
         },
       },
     },
@@ -83,6 +106,7 @@ export function createMockScene() {
       image:     () => mockGameObject(),
       text:      () => ({ setOrigin: () => ({ setStyle: () => {} }), setStyle: () => {} }),
       particles: () => ({ setDepth: () => ({ explode: () => {} }), explode: () => {}, destroy: () => {} }),
+      existing:  () => {},
     },
     physics: {
       add: {
@@ -95,7 +119,7 @@ export function createMockScene() {
       add: () => {},
     },
     time: {
-      delayedCall: (_ms, cb) => { cb(); },
+      delayedCall: () => {},
       addEvent:    () => ({ remove: () => {} }),
     },
     input: {

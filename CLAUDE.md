@@ -374,11 +374,46 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 
 ---
 
+## Current State (as of 2026-03-21)
+
+### What is implemented and working
+- `BootScene` — generates all placeholder textures (player, skirm, bullets, particles)
+- `MenuScene` — Start button, transitions to GameScene
+- `GameScene` — main loop: player movement, weapon firing, enemy management, bullet AABB, particle explosions, collision (bullets → enemy, enemy body → player)
+- `ScrollingBackground` — scrolling starfield
+- `WeaponManager` — laser weapon, bullet pool, 2-slot display
+- `RunState` — score and kill tracking
+- `EnemyBase` — abstract base class for enemies (Phaser sprite + stats + fire cooldown)
+- `Skirm` — first enemy type; 5 tween-driven dances: `sweep_left`, `sweep_right`, `zigzag`, `side_cross`, `fan_out`
+- `FormationController` — the "straight" dance: 8 ships fly the loop path together, settle into a 2-row slot formation, drift + shoot in sequence, do pattern runs every 10s
+- `WaveSpawner` — roguelike pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning
+- `levels.config.js` — currently **1 level, 1 wave, 1 squadron** (8 Skirms, straight/formation dance). Expand when new enemies and dances are ready.
+- `enemies.config.js` — `skirm` stats + `standard`, `heavy`, `light`, `ace` plane presets
+
+### What is stub / not yet implemented
+- `PlayerShip.js` — empty; player is currently a plain rectangle in GameScene
+- All enemy types except Skirm (`Fighter`, `Bomber`, `Interceptor`, `Kamikaze`, `TurretDrone`)
+- All bosses (`BossBase`, `Boss_L1` … `Boss_L7`)
+- All weapons except laser (`SpreadShot`, `Missile`, `Plasma`, `Railgun`, `DualLaser`, `Bomb`)
+- `BonusSystem`, `CollisionSystem`, `EffectsSystem` — inline in GameScene for now
+- `HUDScene`, `LevelTransitionScene`, `GameOverScene`, `VictoryScene` — empty stubs
+- `ships.config.js`, `bonuses.config.js` — empty
+- Levels 2–7 — not defined
+
+### Key architectural rules
+- **Do not add anything to the game that was not explicitly requested.** No HUD elements, text overlays, menus, or features unless asked.
+- `GameScene` is the orchestrator only — it creates systems, delegates, and listens to events. No raw game logic inline.
+- All event names live in `config/events.config.js`. Never inline event strings.
+- Formation (straight dance) is driven by `FormationController`, not by individual enemy entities.
+- `WaveSpawner` emits `SQUADRON_SPAWNED` after each squadron spawns; `GameScene` listens to create `FormationController` for straight-dance squadrons.
+- Keep `config/` as the authoritative source for all balance numbers.
+- Phaser **3.x** only. Arcade Physics throughout — no Matter.js.
+- Target **60fps** on a mid-range laptop.
+
 ## Notes for Claude Code
 
-- **Always implement the current phase fully before moving to the next.**
+- Only implement what is explicitly requested. Do not add creative decisions, UI, or features on your own.
 - When adding a new entity or system, wire it into `GameScene` and verify the game still runs before proceeding.
-- When modifying `RunState`, check all consumers (HUD, LevelTransition, GameOver) for consistency.
-- Keep `config/` files the authoritative source. If a balance question arises, add it to config rather than hardcoding.
+- When modifying `RunState`, check all consumers for consistency.
 - Phaser version: **3.x** (not Phaser 2 / CE). Use `this.physics.add`, `this.add.group`, Arcade Physics throughout — no Matter.js unless explicitly requested.
 - The game must run at **60fps** on a mid-range laptop. Profile before adding particle-heavy effects.

@@ -14,9 +14,15 @@ export const EVENTS = {
   HEALTH_CHANGED: 'player:health_changed',
   SHIELD_CHANGED: 'player:shield_changed',
 
-  // Enemies
-  ENEMY_KILLED:   'enemy:killed',
-  BOSS_PHASE:     'boss:phase_changed',
+  // Enemies / waves
+  ENEMY_KILLED:        'enemy:killed',
+  ENEMY_DIED:          'enemy:died',      // emitted by EnemyBase on death (score, drops)
+  ENEMY_FIRE:          'enemy:fire',      // emitted by enemy entities when shooting
+  BOSS_PHASE:          'boss:phase_changed',
+  WAVE_START:          'wave:start',
+  WAVE_COMPLETE:       'wave:complete',
+  ALL_WAVES_COMPLETE:  'wave:all_complete',
+  SQUADRON_SPAWNED:    'squadron:spawned',  // emitted after all planes in a squadron are spawned
 
   // Scoring / state
   SCORE_CHANGED:  'run:score_changed',

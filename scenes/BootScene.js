@@ -38,6 +38,18 @@ export class BootScene extends Phaser.Scene {
     ef.generateTexture('enemy_fighter', 24, 20);
     ef.destroy();
 
+    // Skirm — 20×16 px basic cannon-fodder, orange-red, nose down
+    const sk = this.make.graphics({ add: false });
+    sk.fillStyle(0xff6600, 1);
+    sk.fillTriangle(10, 16, 0, 4, 20, 4);   // body
+    sk.fillStyle(0xffaa44, 1);
+    sk.fillRect(7, 0, 6, 5);                // cockpit
+    sk.fillStyle(0xff6600, 1);
+    sk.fillRect(0, 3, 5, 5);               // left wing
+    sk.fillRect(15, 3, 5, 5);              // right wing
+    sk.generateTexture('skirm', 20, 16);
+    sk.destroy();
+
     // Enemy bullet — small red bar
     const eb = this.make.graphics({ add: false });
     eb.fillStyle(0xff3300, 1);
