@@ -380,7 +380,8 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 - `BootScene` — generates all placeholder textures (player, skirm, bullets, particles)
 - `MenuScene` — Start button, transitions to GameScene
 - `GameScene` — main loop: player movement, weapon firing with heat system, enemy management, bullet AABB, physics-driven fragment explosions, collision (bullets → enemy, enemy body → player); exports `isHeatWarningActive`, `resolveHeatBarStyle`
-- `ScrollingBackground` — scrolling starfield
+- `ScrollingBackground` — scrolling starfield (dots only; speed-line rendering removed, reserved for future use)
+- **Player rubber-band**: spring-damper on the ship's horizontal scale when moving back (S/↓); stretches X to ~135%, compresses Y slightly, bounces back — visual only, hitbox unchanged
 - `WeaponManager` — laser weapon, bullet pool, 2-slot display; weapon heat accumulates per shot, recovers when not firing, hard-locks on overheat and resumes after `PLAYER_OVERHEAT_RECOVERY_SHOTS` cool down; in the warning zone, fires ONE bullet using the `bullet_laser_warning` texture (two thin beams baked into a single 11 px sprite, centered on the ship) — one damage event, no double-dip
 - `EffectsSystem` — physics-driven fragment explosions (real Arcade bodies, gravity, drag); directional momentum inheritance; directional shockwave push on nearby enemies and bullets
 - `RunState` — score and kill tracking

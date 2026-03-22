@@ -82,6 +82,8 @@ export class GameScene extends Phaser.Scene {
     this._hudTimeMs      = 0;
     this._heatWarningActive = false;
     this._nextHeatWarningShakeAt = 0;
+    this._rbOffset = 0;   // rubber-band spring displacement (0 = neutral)
+    this._rbVel    = 0;   // spring velocity
 
     RunState.reset();
 
@@ -143,6 +145,7 @@ export class GameScene extends Phaser.Scene {
     this._hudTimeMs = time;
     this._bg.update(delta);
     this._movePlayer();
+    this._updateRubberBand(delta);
     const wantsToFire = this._space.isDown;
     this._weapons.update(delta, wantsToFire);
 
@@ -217,6 +220,26 @@ export class GameScene extends Phaser.Scene {
     return p;
   }
 
+  /**
+   * Spring-damper rubber-band: stretch the ship when moving forward (up),
+   * spring back when not. Visual only — physics body is unaffected.
+   * @param {number} delta - ms since last frame
+   */
+  _updateRubberBand(delta) {
+    const dt = delta / 1000;
+    const movingBack = this._cursors.down.isDown || this._wasd.down.isDown;
+
+    const target  = movingBack ? 0.35 : 0;
+    const SPRING  = 40;
+    const DAMPING = 10;
+
+    this._rbVel    += ((target - this._rbOffset) * SPRING - this._rbVel * DAMPING) * dt;
+    this._rbOffset += this._rbVel * dt;
+
+    // Stretch X when moving backward, compress Y slightly.
+    this._player.setScale(1 + this._rbOffset, 1 - this._rbOffset * 0.5);
+  }
+
   _createWASD() {
     return this.input.keyboard.addKeys({
       up:    Phaser.Input.Keyboard.KeyCodes.W,
@@ -282,7 +305,9 @@ export class GameScene extends Phaser.Scene {
 
     for (const fc of this._formations) fc.stop();
     this._formations = [];
-    this.physics.pause();
+
+    // Defer physics pause so fragments have time to travel before freezing.
+    this.time.delayedCall(400, () => this.physics.pause());
 
     this.time.delayedCall(1500, () => {
       // Clear all enemies
@@ -308,6 +333,9 @@ export class GameScene extends Phaser.Scene {
       }
 
       this._playerHp = PLAYER_HP_DEFAULT;
+      this._rbOffset = 0;
+      this._rbVel    = 0;
+      this._player.setScale(1, 1);
       this._drawStatusBars();
 
       // Roll back score to the start of this squadron — replayed enemies
@@ -335,7 +363,6 @@ export class GameScene extends Phaser.Scene {
     if (this._player.body) this._player.body.enable = false;
 
     for (const fc of this._formations) fc.stop();
-    this.physics.pause();
 
     this.add.text(WIDTH / 2, HEIGHT / 2 - 30, 'GAME OVER', {
       fontSize: '42px', fill: '#ff2222', fontFamily: 'monospace', fontStyle: 'bold',
