@@ -127,6 +127,8 @@ export class GameScene extends Phaser.Scene {
       (type, x, y, stats, dance) => this._spawnEnemy(type, x, y, stats, dance)
     );
 
+    this._squadronScoreCheckpoint = 0;   // score at the start of the current squadron attempt
+
     this._showLevelBanner(this._levelIndex + 1);
     this.time.delayedCall(2000, () => this._spawner.start());
 
@@ -308,6 +310,13 @@ export class GameScene extends Phaser.Scene {
       this._playerHp = PLAYER_HP_DEFAULT;
       this._drawStatusBars();
 
+      // Roll back score to the start of this squadron — replayed enemies
+      // would otherwise award points twice for the same kill attempt.
+      RunState.score = this._squadronScoreCheckpoint;
+      if (this._scoreTween) { this._scoreTween.stop(); this._scoreTween = null; }
+      this._displayedScore = this._squadronScoreCheckpoint;
+      this._scoreText.setText(`SCORE  ${this._squadronScoreCheckpoint}`);
+
       this.physics.resume();
       this._respawning = false;
 
@@ -341,6 +350,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   _onSquadronSpawned({ dance, count }) {
+    this._squadronScoreCheckpoint = RunState.score;
     if (dance !== 'straight') return;
     const ships = this._enemies.slice(-count);
     const fc = new FormationController(this, ships);
