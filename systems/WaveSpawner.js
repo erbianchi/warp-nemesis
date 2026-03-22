@@ -50,9 +50,10 @@ export function resolveStats(type, difficultyBase, difficultyFactor, planeOverri
  * @param {object} squadron - Squadron config entry
  * @param {number} width    - Canvas width
  * @param {number} height   - Canvas height
+ * @param {Function} [rng]  - Optional RNG used by randomized formations
  * @returns {Array<{x, y}>} - One position per plane, in planes[] order
  */
-export function resolveFormationPositions(squadron, width, height) {
+export function resolveFormationPositions(squadron, width, height, rng = Math.random) {
   const { formation, entryEdge, entryX = 0.5, spacing = 60, planes } = squadron;
   const count = planes.length;
   const positions = [];
@@ -122,8 +123,8 @@ export function resolveFormationPositions(squadron, width, height) {
       const jitter = spacing / 2;
       for (let i = 0; i < count; i++) {
         positions.push({
-          x: anchorX + (Math.random() - 0.5) * jitter * 2,
-          y: anchorY + (Math.random() - 0.5) * jitter * 2,
+          x: anchorX + (rng() - 0.5) * jitter * 2,
+          y: anchorY + (rng() - 0.5) * jitter * 2,
         });
       }
       break;
@@ -192,6 +193,7 @@ export function samplePool(pool, count, rng = Math.random) {
  *   EVENTS.WAVE_START          (waveConfig)
  *   EVENTS.WAVE_COMPLETE       (waveConfig)
  *   EVENTS.ALL_WAVES_COMPLETE  ()
+ *   EVENTS.SQUADRON_SPAWNED    ({ dance, count, squadron })
  */
 export class WaveSpawner {
   /**
@@ -319,21 +321,23 @@ export class WaveSpawner {
     const { width, height } = this._scene.scale;
     const { difficultyBase } = this._levelConfig;
     const { difficultyFactor } = this._currentWave;
-    const dance = squadron.dance ?? 'straight';
+    const defaultDance = squadron.dance ?? 'straight';
 
-    const positions = resolveFormationPositions(squadron, width, height);
+    const positions = resolveFormationPositions(squadron, width, height, this._rng);
 
     squadron.planes.forEach((plane, i) => {
       const stats = resolveStats(plane.type, difficultyBase, difficultyFactor, plane);
       const pos   = positions[i] ?? positions[positions.length - 1];
+      const dance = plane.dance ?? defaultDance;
       this._spawnFn(plane.type, pos.x, pos.y, stats, dance);
     });
 
     this._lastSquadron = squadron; // saved for replayLastSquadron()
 
     this._scene.events.emit(EVENTS.SQUADRON_SPAWNED, {
-      dance,
+      dance: defaultDance,
       count: squadron.planes.length,
+      squadron,
     });
   }
 }

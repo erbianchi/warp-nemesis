@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { resolveStats, resolveFormationPositions, samplePool, WaveSpawner } from '../../systems/WaveSpawner.js';
 import { ENEMIES, PLANE_PRESETS } from '../../config/enemies.config.js';
 import { EVENTS } from '../../config/events.config.js';
+import { LEVELS } from '../../config/levels.config.js';
 
 function makeScene() {
   const emitted = [];
@@ -132,6 +133,12 @@ describe('resolveFormationPositions', () => {
     pos.forEach(p => assert.ok(p.x > W));
   });
 
+  it('cluster formation uses the injected rng for deterministic jitter', () => {
+    const posA = resolveFormationPositions(sq('cluster', 'top', 4), W, H, () => 0.25);
+    const posB = resolveFormationPositions(sq('cluster', 'top', 4), W, H, () => 0.25);
+    assert.deepEqual(posA, posB);
+  });
+
   it('throws on unknown formation', () => {
     assert.throws(() => resolveFormationPositions(sq('spiral', 'top', 3), W, H), /unknown formation/);
   });
@@ -219,39 +226,58 @@ describe('WaveSpawner', () => {
   });
 
   it('roguelike: draws exactly squadronCount squadrons from pool', () => {
-    // Level 0 (Level 1) has squadronCount=6, pool of 10
     const spawner = new WaveSpawner(scene, 0, spawnFn);
     spawner.start();
-    // Advance past all 6 squadrons (6 * interSquadronDelay = 6 * 3.5 = 21s)
-    spawner.update(22000);
-    // Count distinct squadron spawns by grouping by timestamp approximation — easier: check pool sampling
-    // The squadronQueue is resolved at start(); we verify count via spawner internals
-    assert.equal(spawner._squadronQueue.length, 0, 'all 6 squadrons should have been dispatched');
+    assert.equal(spawner._squadronQueue.length, 1);
+    spawner.update(16);
+    assert.equal(spawner._squadronQueue.length, 0, 'the single selected squadron should have been dispatched');
   });
 
-  it('roguelike: two runs with different rng draw different squadrons (probabilistic)', () => {
-    let counter1 = 0;
-    const rng1 = () => (counter1++ % 2 === 0) ? 0.1 : 0.9;
-    let counter2 = 0;
-    const rng2 = () => (counter2++ % 2 === 0) ? 0.9 : 0.1;
+  it('per-plane dance overrides the squadron default dance', () => {
+    const spawner = new WaveSpawner(scene, 0, spawnFn);
+    spawner._currentWave = { difficultyFactor: 1.0 };
+    spawner._spawnSquadron({
+      id: 'override_test',
+      dance: 'straight',
+      formation: 'line',
+      entryEdge: 'top',
+      entryX: 0.5,
+      spacing: 60,
+      planes: [
+        { type: 'skirm' },
+        { type: 'skirm', dance: 'jink_drop' },
+      ],
+    });
 
-    const spawner1 = new WaveSpawner(scene, 0, spawnFn, rng1);
-    const spawned1 = [];
-    const s1fn = (...args) => spawned1.push(args);
-    const sp1  = new WaveSpawner(scene, 0, s1fn, rng1);
-    sp1.start();
-    sp1.update(16);
+    assert.equal(spawned[0].dance, 'straight');
+    assert.equal(spawned[1].dance, 'jink_drop');
+  });
 
-    const spawned2 = [];
-    const sp2  = new WaveSpawner(scene, 0, (...args) => spawned2.push(args), rng2);
-    sp2.start();
-    sp2.update(16);
+  it('SQUADRON_SPAWNED includes the full squadron config', () => {
+    const spawner = new WaveSpawner(scene, 0, spawnFn);
+    spawner.start();
+    spawner.update(16);
 
-    // First squadron dances may differ between runs
-    if (spawned1.length > 0 && spawned2.length > 0) {
-      // This is probabilistic — just verify both ran without error
-      assert.ok(true);
-    }
+    const event = scene.events._log.find(e => e.event === EVENTS.SQUADRON_SPAWNED);
+    assert.ok(event);
+    assert.ok(event.data.squadron);
+    assert.equal(event.data.count, event.data.squadron.planes.length);
+  });
+
+  it('roguelike: different rng values can draw different squadrons', () => {
+    const spawnedA = [];
+    const spawnedB = [];
+    const spawnerA = new WaveSpawner(scene, 0, (...args) => spawnedA.push(args), () => 0.01);
+    const spawnerB = new WaveSpawner(scene, 0, (...args) => spawnedB.push(args), () => 0.99);
+
+    spawnerA.start();
+    spawnerB.start();
+    spawnerA.update(16);
+    spawnerB.update(16);
+
+    assert.ok(spawnerA._lastSquadron);
+    assert.ok(spawnerB._lastSquadron);
+    assert.notEqual(spawnerA._lastSquadron.id, spawnerB._lastSquadron.id);
   });
 
   it('onWaveCleared() emits WAVE_COMPLETE', () => {
@@ -261,14 +287,33 @@ describe('WaveSpawner', () => {
     assert.ok(scene.events._log.find(e => e.event === EVENTS.WAVE_COMPLETE));
   });
 
+  it('launches the next Level 1 wave in under 2 seconds after a clear', () => {
+    const spawner = new WaveSpawner(scene, 0, spawnFn);
+    spawner.start();
+
+    const waveStartEvents = () => scene.events._log.filter(e => e.event === EVENTS.WAVE_START).length;
+    const nextDelayMs = Math.round(LEVELS[0].waves[1].interSquadronDelay * 1000);
+
+    assert.equal(waveStartEvents(), 1);
+    spawner.onWaveCleared();
+    spawner.update(nextDelayMs - 1);
+    assert.equal(waveStartEvents(), 1, 'next wave should not start before the configured delay');
+
+    spawner.update(2);
+    assert.equal(waveStartEvents(), 2, 'next wave should start immediately after the short delay');
+    assert.ok(nextDelayMs < 2000, 'configured next-wave delay must stay under 2 seconds');
+  });
+
   it('after last wave cleared, emits ALL_WAVES_COMPLETE and stops', () => {
     const spawner = new WaveSpawner(scene, 0, spawnFn);
     spawner.start();
-    // Level 1 has 3 waves — clear each one (advance time so inter-wave delay passes)
-    spawner.onWaveCleared();
-    spawner.update(10000); // advance past inter-wave delay
-    spawner.onWaveCleared();
-    spawner.update(10000);
+    const waves = LEVELS[0].waves;
+
+    for (let i = 0; i < waves.length - 1; i++) {
+      spawner.onWaveCleared();
+      spawner.update(Math.ceil(waves[i + 1].interSquadronDelay * 1000) + 1);
+    }
+
     spawner.onWaveCleared();
     assert.ok(scene.events._log.find(e => e.event === EVENTS.ALL_WAVES_COMPLETE));
 

@@ -5,16 +5,13 @@ import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js'
 installPhaserGlobal();
 
 const {
-  LOOP_PATH,
-  SLOTS,
+  buildFormationPath,
   calcFormationSlots,
-  SQUADRON_SHIP_LIFE,
-  FORMATION_SPEED,
-  FORMATION_CYCLE_MS,
-  FORMATION_SHOOT_RATE,
-  DRIFT_RANGE_X,
-  DRIFT_RANGE_Y,
   FormationController,
+  getDefaultFormationBehavior,
+  resolveFormationBehavior,
+  resolveSideAnchorX,
+  resolveFormationStep,
 } = await import('../../systems/FormationController.js');
 
 const { Skirm }        = await import('../../entities/enemies/Skirm.js');
@@ -27,159 +24,138 @@ const SKIRM_STATS = resolveStats('skirm', 1.0, 1.0, {});
 const { WEAPONS }     = await import('../../config/weapons.config.js');
 const { GAME_CONFIG } = await import('../../config/game.config.js');
 const { WIDTH, HEIGHT } = GAME_CONFIG;
+const DEFAULT_BEHAVIOR = getDefaultFormationBehavior();
 
 // ---------------------------------------------------------------------------
 
-describe('LOOP_PATH', () => {
-  it('has 7 waypoints', () => {
-    assert.equal(LOOP_PATH.length, 7);
+describe('getDefaultFormationBehavior', () => {
+  it('returns a fresh object each time', () => {
+    const a = getDefaultFormationBehavior();
+    const b = getDefaultFormationBehavior();
+
+    assert.notEqual(a, b);
+    assert.notEqual(a.path, b.path);
+    assert.notEqual(a.rowYs, b.rowYs);
   });
 
-  it('every waypoint has numeric x, y, and dur', () => {
-    for (const wp of LOOP_PATH) {
-      assert.equal(typeof wp.x,   'number', `x must be number: ${JSON.stringify(wp)}`);
-      assert.equal(typeof wp.y,   'number', `y must be number: ${JSON.stringify(wp)}`);
-      assert.equal(typeof wp.dur, 'number', `dur must be number: ${JSON.stringify(wp)}`);
+  it('defines a 7-step path with positive durations', () => {
+    assert.equal(DEFAULT_BEHAVIOR.path.length, 7);
+    for (const step of DEFAULT_BEHAVIOR.path) {
+      assert.equal(typeof step.dur, 'number', `dur must be number: ${JSON.stringify(step)}`);
+      assert.ok(step.dur > 0, `dur must be > 0: ${JSON.stringify(step)}`);
+      assert.ok(
+        typeof step.x === 'number' || typeof step.xPct === 'number',
+        `step must define x or xPct: ${JSON.stringify(step)}`
+      );
+      assert.ok(
+        typeof step.y === 'number' || typeof step.yPct === 'number',
+        `step must define y or yPct: ${JSON.stringify(step)}`
+      );
     }
   });
 
-  it('all durations are positive', () => {
-    for (const wp of LOOP_PATH) {
-      assert.ok(wp.dur > 0, `dur must be > 0: ${JSON.stringify(wp)}`);
-    }
-  });
-
-  it('x values stay within a generous canvas margin (−100 … WIDTH+100)', () => {
-    for (const wp of LOOP_PATH) {
-      assert.ok(wp.x >= -100 && wp.x <= WIDTH + 100, `x out of range: ${wp.x}`);
-    }
-  });
-
-  it('loop descends below mid-screen (max y > HEIGHT/2)', () => {
-    const maxY = Math.max(...LOOP_PATH.map(w => w.y));
-    assert.ok(maxY > HEIGHT / 2, `loop should reach below mid-screen; max y = ${maxY}`);
-  });
-
-  it('last waypoint is near the top (y < HEIGHT/4)', () => {
-    const lastY = LOOP_PATH[LOOP_PATH.length - 1].y;
-    assert.ok(lastY < HEIGHT / 4, `last waypoint should be near top; y = ${lastY}`);
+  it('includes positive firing and timing values', () => {
+    assert.ok(DEFAULT_BEHAVIOR.cycleMs >= 5000);
+    assert.ok(DEFAULT_BEHAVIOR.shootRate >= 1);
+    assert.ok(DEFAULT_BEHAVIOR.pathShootRate >= 1);
+    assert.ok(DEFAULT_BEHAVIOR.launchStaggerMs > 0);
+    assert.ok(DEFAULT_BEHAVIOR.speed >= GAME_CONFIG.SPEED_MIN);
+    assert.ok(DEFAULT_BEHAVIOR.speed <= GAME_CONFIG.SPEED_MAX);
   });
 });
 
 // ---------------------------------------------------------------------------
 
-describe('SLOTS', () => {
-  it('has exactly 8 slots', () => {
-    assert.equal(SLOTS.length, 8);
+describe('resolveFormationBehavior', () => {
+  it('merges controller overrides without mutating defaults', () => {
+    const behavior = resolveFormationBehavior({
+      shootRate: 3,
+      rowYs: [70, 120],
+      path: [{ xPct: 0.5, yPct: 0.2, dur: 100 }],
+    });
+
+    assert.equal(behavior.shootRate, 3);
+    assert.deepEqual(behavior.rowYs, [70, 120]);
+    assert.equal(behavior.path.length, 1);
+    assert.equal(DEFAULT_BEHAVIOR.path.length, 7);
   });
 
-  it('every slot has numeric x and y', () => {
-    for (const s of SLOTS) {
-      assert.equal(typeof s.x, 'number', `x must be number: ${JSON.stringify(s)}`);
-      assert.equal(typeof s.y, 'number', `y must be number: ${JSON.stringify(s)}`);
-    }
-  });
+  it('resolves mirrorPath=\"random\" through the injected rng', () => {
+    const mirrored = resolveFormationBehavior({ mirrorPath: 'random' }, () => 0.2);
+    const normal = resolveFormationBehavior({ mirrorPath: 'random' }, () => 0.8);
 
-  it('all slots are within canvas bounds', () => {
-    for (const s of SLOTS) {
-      assert.ok(s.x >= 0 && s.x <= WIDTH,  `x out of bounds: ${s.x}`);
-      assert.ok(s.y >= 0 && s.y <= HEIGHT, `y out of bounds: ${s.y}`);
-    }
-  });
-
-  it('slots form exactly 2 rows (2 distinct y values)', () => {
-    const rows = new Set(SLOTS.map(s => s.y));
-    assert.equal(rows.size, 2, `expected 2 rows, got ${rows.size}`);
-  });
-
-  it('each row has exactly 4 ships', () => {
-    const counts = {};
-    for (const s of SLOTS) counts[s.y] = (counts[s.y] ?? 0) + 1;
-    for (const [y, n] of Object.entries(counts)) {
-      assert.equal(n, 4, `row y=${y} has ${n} ships, expected 4`);
-    }
-  });
-
-  it('slots are near the top of the screen (y < HEIGHT/4)', () => {
-    for (const s of SLOTS) {
-      assert.ok(s.y < HEIGHT / 4, `slot y=${s.y} should be in top quarter`);
-    }
-  });
-
-  it('no two slots share the same (x, y) position', () => {
-    const seen = new Set();
-    for (const s of SLOTS) {
-      const key = `${s.x},${s.y}`;
-      assert.ok(!seen.has(key), `duplicate slot position: ${key}`);
-      seen.add(key);
-    }
-  });
-
-  it('slot x-spacing is positive (ships have distinct columns)', () => {
-    const xs = [...new Set(SLOTS.map(s => s.x))].sort((a, b) => a - b);
-    for (let i = 1; i < xs.length; i++) {
-      assert.ok(xs[i] > xs[i - 1], `duplicate column x=${xs[i - 1]}`);
-    }
+    assert.equal(mirrored.mirrorPath, true);
+    assert.equal(normal.mirrorPath, false);
   });
 });
 
 // ---------------------------------------------------------------------------
 
-describe('SQUADRON_SHIP_LIFE', () => {
-  it('is a positive integer', () => {
-    assert.ok(Number.isInteger(SQUADRON_SHIP_LIFE) && SQUADRON_SHIP_LIFE > 0);
-  });
-
-  it('laser kills a ship in exactly one hit', () => {
-    assert.ok(
-      WEAPONS.laser.damage >= SQUADRON_SHIP_LIFE,
-      `laser damage (${WEAPONS.laser.damage}) should be >= ship life (${SQUADRON_SHIP_LIFE})`
+describe('resolveFormationStep / buildFormationPath', () => {
+  it('resolves percentage coordinates into world-space waypoints', () => {
+    const step = resolveFormationStep(
+      { xPct: 0.5, yPct: 0.25, dur: 500 },
+      0,
+      DEFAULT_BEHAVIOR,
+      () => 0.5
     );
-  });
-});
 
-// ---------------------------------------------------------------------------
-
-describe('FORMATION_SPEED', () => {
-  it('is a number', () => {
-    assert.equal(typeof FORMATION_SPEED, 'number');
+    assert.equal(step.x, WIDTH * 0.5);
+    assert.equal(step.y, HEIGHT * 0.25);
+    assert.equal(step.dur, 500);
   });
 
-  it('is within [SPEED_MIN, SPEED_MAX]', () => {
-    assert.ok(
-      FORMATION_SPEED >= GAME_CONFIG.SPEED_MIN && FORMATION_SPEED <= GAME_CONFIG.SPEED_MAX,
-      `FORMATION_SPEED (${FORMATION_SPEED}) must be in [${GAME_CONFIG.SPEED_MIN}, ${GAME_CONFIG.SPEED_MAX}]`
+  it('mirrors path steps across the playfield when requested', () => {
+    const behavior = resolveFormationBehavior({ mirrorPath: true });
+    const step = resolveFormationStep(
+      { xPct: 0.2, yPct: 0.25, dur: 500 },
+      10,
+      behavior,
+      () => 0.5
     );
-  });
-});
 
-// ---------------------------------------------------------------------------
-
-describe('FORMATION_SHOOT_RATE', () => {
-  it('is a positive number', () => {
-    assert.ok(typeof FORMATION_SHOOT_RATE === 'number' && FORMATION_SHOOT_RATE > 0);
+    assert.equal(step.x, WIDTH - (WIDTH * 0.2 + 10));
   });
 
-  it('interval (1000 / rate) is an integer ms value', () => {
-    assert.equal(Math.round(1000 / FORMATION_SHOOT_RATE), 1000 / FORMATION_SHOOT_RATE,
-      'rate should divide evenly into 1000 ms');
+  it('builds a path whose waypoints stay in a readable play area', () => {
+    const path = buildFormationPath(DEFAULT_BEHAVIOR, 4, 10, () => 0.5);
+    const maxY = Math.max(...path.map(step => step.y));
+    const lastY = path.at(-1).y;
+    const firstY = path[0].y;
+
+    assert.equal(path.length, DEFAULT_BEHAVIOR.path.length + 2);
+    assert.ok(firstY < HEIGHT / 4, `first point should begin near the top side; y = ${firstY}`);
+    assert.ok(maxY > HEIGHT / 2, `path should descend below mid-screen; max y = ${maxY}`);
+    assert.ok(lastY < HEIGHT / 4, `last point should return near top; y = ${lastY}`);
+    path.forEach(step => {
+      assert.ok(step.x >= -100 && step.x <= WIDTH + 100, `x out of range: ${step.x}`);
+      assert.ok(step.y >= -100 && step.y <= HEIGHT + 100, `y out of range: ${step.y}`);
+    });
+  });
+  
+  it('applies pathSpreadX so neighboring ships do not share the exact same line', () => {
+    const behavior = resolveFormationBehavior({ pathSpreadX: 24 });
+    const left = buildFormationPath(behavior, 0, 5, () => 0.5);
+    const right = buildFormationPath(behavior, 4, 5, () => 0.5);
+
+    assert.notEqual(left[1].x, right[1].x);
   });
 
-  it('fires at least once per second (rate >= 1)', () => {
-    assert.ok(FORMATION_SHOOT_RATE >= 1, `rate should be >= 1; got ${FORMATION_SHOOT_RATE}`);
-  });
-});
+  it('uses opposite side anchors for launch and return', () => {
+    const path = buildFormationPath(DEFAULT_BEHAVIOR, 2, 6, false, () => 0.5);
+    const launchX = path[0].x;
+    const returnX = path.at(-1).x;
 
-// ---------------------------------------------------------------------------
-
-describe('FORMATION_CYCLE_MS', () => {
-  it('is a positive number', () => {
-    assert.ok(typeof FORMATION_CYCLE_MS === 'number' && FORMATION_CYCLE_MS > 0);
+    assert.ok(launchX < WIDTH / 2, `launch anchor should start on the left; x = ${launchX}`);
+    assert.ok(returnX > WIDTH / 2, `return anchor should finish on the right; x = ${returnX}`);
   });
 
-  it('gives players enough time to react (>= 5000 ms)', () => {
-    assert.ok(FORMATION_CYCLE_MS >= 5000,
-      `cycle should be at least 5 s; got ${FORMATION_CYCLE_MS} ms`);
+  it('resolveSideAnchorX mirrors anchors across left and right sides', () => {
+    const leftX = resolveSideAnchorX(DEFAULT_BEHAVIOR, 0, false);
+    const rightX = resolveSideAnchorX(DEFAULT_BEHAVIOR, 0, true);
+
+    assert.ok(leftX < WIDTH / 2);
+    assert.ok(rightX > WIDTH / 2);
   });
 });
 
@@ -190,8 +166,8 @@ describe('calcFormationSlots', () => {
     assert.equal(calcFormationSlots(8).length, 8);
   });
 
-  it('returns correct count for any n (1–8)', () => {
-    for (let n = 1; n <= 8; n++) {
+  it('returns correct count for any n (1–16)', () => {
+    for (let n = 1; n <= 16; n++) {
       assert.equal(calcFormationSlots(n).length, n, `expected ${n} slots for n=${n}`);
     }
   });
@@ -208,7 +184,7 @@ describe('calcFormationSlots', () => {
   });
 
   it('all slots stay within canvas bounds', () => {
-    for (let n = 1; n <= 8; n++) {
+    for (let n = 1; n <= 16; n++) {
       for (const s of calcFormationSlots(n)) {
         assert.ok(s.x >= 0 && s.x <= WIDTH,  `x=${s.x} out of bounds for n=${n}`);
         assert.ok(s.y >= 0 && s.y <= HEIGHT, `y=${s.y} out of bounds for n=${n}`);
@@ -217,7 +193,7 @@ describe('calcFormationSlots', () => {
   });
 
   it('uses at most 2 rows', () => {
-    for (let n = 1; n <= 8; n++) {
+    for (let n = 1; n <= 16; n++) {
       const rows = new Set(calcFormationSlots(n).map(s => s.y));
       assert.ok(rows.size <= 2, `n=${n} produced ${rows.size} rows`);
     }
@@ -231,13 +207,13 @@ describe('calcFormationSlots', () => {
   });
 
   it('slots are near the top of the screen (y < HEIGHT/4)', () => {
-    for (const s of calcFormationSlots(8)) {
+    for (const s of calcFormationSlots(16)) {
       assert.ok(s.y < HEIGHT / 4, `y=${s.y} is not in top quarter`);
     }
   });
 
   it('no duplicate (x, y) positions', () => {
-    for (let n = 1; n <= 8; n++) {
+    for (let n = 1; n <= 16; n++) {
       const seen = new Set();
       for (const s of calcFormationSlots(n)) {
         const key = `${s.x},${s.y}`;
@@ -247,14 +223,14 @@ describe('calcFormationSlots', () => {
     }
   });
 
-  it('n=8 produces same x positions as SLOTS (backward-compatible)', () => {
-    const computed = calcFormationSlots(8).map(s => s.x).sort((a, b) => a - b);
-    const original = SLOTS.map(s => s.x).sort((a, b) => a - b);
-    assert.deepEqual(computed, original);
+  it('16 ships distribute evenly into two 8-ship rows', () => {
+    const counts = {};
+    for (const slot of calcFormationSlots(16)) counts[slot.y] = (counts[slot.y] ?? 0) + 1;
+    assert.deepEqual(Object.values(counts).sort((a, b) => a - b), [8, 8]);
   });
 
   it('slots are horizontally centered (mean x ≈ WIDTH/2)', () => {
-    for (let n = 1; n <= 8; n++) {
+    for (let n = 1; n <= 16; n++) {
       const slots = calcFormationSlots(n);
       const meanX = slots.reduce((s, p) => s + p.x, 0) / slots.length;
       assert.ok(
@@ -269,15 +245,26 @@ describe('calcFormationSlots', () => {
 
 describe('DRIFT_RANGE_X / DRIFT_RANGE_Y', () => {
   it('both are positive numbers', () => {
-    assert.ok(typeof DRIFT_RANGE_X === 'number' && DRIFT_RANGE_X > 0);
-    assert.ok(typeof DRIFT_RANGE_Y === 'number' && DRIFT_RANGE_Y > 0);
+    assert.ok(typeof DEFAULT_BEHAVIOR.driftX === 'number' && DEFAULT_BEHAVIOR.driftX > 0);
+    assert.ok(typeof DEFAULT_BEHAVIOR.driftY === 'number' && DEFAULT_BEHAVIOR.driftY > 0);
   });
 
   it('drift ranges are small enough not to leave the top quarter of the screen', () => {
     const topQuarter = HEIGHT / 4;
-    const maxSlotY = Math.max(...SLOTS.map(s => s.y));
-    assert.ok(maxSlotY + DRIFT_RANGE_Y < topQuarter,
-      `max slot y (${maxSlotY}) + drift (${DRIFT_RANGE_Y}) would exit top quarter (${topQuarter})`);
+    const maxSlotY = Math.max(...calcFormationSlots(16).map(s => s.y));
+    assert.ok(maxSlotY + DEFAULT_BEHAVIOR.driftY < topQuarter,
+      `max slot y (${maxSlotY}) + drift (${DEFAULT_BEHAVIOR.driftY}) would exit top quarter (${topQuarter})`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('default Skirm durability against the player laser', () => {
+  it('laser kills a base skirm in exactly one hit', () => {
+    assert.ok(
+      WEAPONS.laser.damage >= SKIRM_STATS.hp,
+      `laser damage (${WEAPONS.laser.damage}) should be >= skirm hp (${SKIRM_STATS.hp})`
+    );
   });
 });
 

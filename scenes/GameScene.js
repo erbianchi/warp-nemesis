@@ -387,11 +387,18 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard.once('keydown-ENTER', () => this.scene.start('GameScene'));
   }
 
-  _onSquadronSpawned({ dance, count }) {
+  _onSquadronSpawned({ count, squadron }) {
     this._squadronScoreCheckpoint = RunState.score;
-    if (dance !== 'straight') return;
-    const ships = this._enemies.slice(-count);
-    const fc = new FormationController(this, ships);
+    const ships = this._enemies
+      .slice(-count)
+      .filter(enemy => enemy.dance === 'straight');
+    if (ships.length === 0) return;
+    const fc = new FormationController(
+      this,
+      ships,
+      squadron?.controller ?? {},
+      this._spawner?._rng ?? Math.random
+    );
     this._formations.push(fc);
   }
 

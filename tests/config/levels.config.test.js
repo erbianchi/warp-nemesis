@@ -104,6 +104,37 @@ describe('LEVELS', () => {
           `template "${sq.id}" needs a dance`);
       }
     });
+
+    it('every pool template spawns at most 16 skirms', () => {
+      for (const sq of wave.squadronPool) {
+        assert.ok(sq.planes.length <= 16,
+          `template "${sq.id}" exceeds the 16-skirm cap`);
+      }
+    });
+
+  });
+
+  describe('Level 1 pacing', () => {
+    it('contains exactly 16 waves', () => {
+      assert.equal(LEVELS[0].waves.length, 16);
+    });
+
+    it('keeps every wave transition under 2 seconds', () => {
+      for (const wave of LEVELS[0].waves) {
+        assert.ok(
+          wave.interSquadronDelay < 2,
+          `L1 W${wave.id}: transition delay must stay under 2 seconds`
+        );
+      }
+    });
+
+    it('includes at least one 16-skirm wave template somewhere in the level', () => {
+      const hasSixteenShipTemplate = LEVELS[0].waves.some((wave) => (
+        getSquadrons(wave).some((sq) => sq.planes.length === 16)
+      ));
+
+      assert.ok(hasSixteenShipTemplate, 'expected at least one 16-skirm template in Level 1');
+    });
   });
 
   describe('squadrons', () => {
@@ -120,6 +151,20 @@ describe('LEVELS', () => {
               `L${level.id} W${wave.id} "${sq.id}": unknown entryEdge "${sq.entryEdge}"`);
             assert.ok(Array.isArray(sq.planes) && sq.planes.length >= 1,
               `L${level.id} W${wave.id} "${sq.id}": needs ≥1 plane`);
+            assert.ok(sq.planes.length <= 16,
+              `L${level.id} W${wave.id} "${sq.id}": must not exceed 16 planes`);
+          }
+        }
+      }
+    });
+
+    it('controller configs, when present, define a usable path', () => {
+      for (const level of LEVELS) {
+        for (const wave of level.waves) {
+          for (const sq of getSquadrons(wave)) {
+            if (!sq.controller) continue;
+            assert.ok(Array.isArray(sq.controller.path) && sq.controller.path.length >= 1,
+              `L${level.id} W${wave.id} "${sq.id}": controller needs a path`);
           }
         }
       }
@@ -134,6 +179,10 @@ describe('LEVELS', () => {
             for (const plane of sq.planes) {
               assert.ok(plane.type in ENEMIES,
                 `L${level.id} W${wave.id} "${sq.id}": unknown enemy type "${plane.type}"`);
+              if ('dance' in plane) {
+                assert.ok(typeof plane.dance === 'string' && plane.dance.length > 0,
+                  `L${level.id} W${wave.id} "${sq.id}": plane.dance must be a non-empty string`);
+              }
             }
           }
         }

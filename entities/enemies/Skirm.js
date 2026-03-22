@@ -16,6 +16,8 @@ const { WIDTH: W, HEIGHT: H } = GAME_CONFIG;
  *   sweep_left  — arc in from top-right, curve left across screen, shoot, exit left
  *   sweep_right — arc in from top-left, curve right across screen, shoot, exit right
  *   zigzag      — enter from top, tween left/right in sharp zigzags while descending, shoot
+ *   drift_drop  — organic wandering descent with random lateral drift
+ *   jink_drop   — abrupt lateral snaps while descending
  *   side_cross  — enter from one side, arc across to other side, brief hover, dive at player
  *   fan_out     — enter clustered, spread outward, hold + shoot, all converge and dive
  */
@@ -33,6 +35,8 @@ export class Skirm extends EnemyBase {
       case 'sweep_left':  this._danceSweep(-1);   break;
       case 'sweep_right': this._danceSweep(1);    break;
       case 'zigzag':      this._danceZigzag();    break;
+      case 'drift_drop':  this._danceDriftDrop(); break;
+      case 'jink_drop':   this._danceJinkDrop();  break;
       case 'side_cross':  this._danceSideCross(); break;
       case 'fan_out':     this._danceFanOut();    break;
       default:            break;
@@ -110,12 +114,71 @@ export class Skirm extends EnemyBase {
   }
 
   /**
+   * drift_drop — softly wander down the screen, choosing a fresh random lane
+   * each step so the squadron feels organic and slightly different every run.
+   */
+  _danceDriftDrop() {
+    const scene = this.scene;
+
+    const drift = (x, y) => {
+      if (!this.alive) return;
+      if (y > H + 40) { this._exitSilent(); return; }
+
+      const nx = Phaser.Math.Clamp(x + (Math.random() - 0.5) * 120, 35, W - 35);
+      const ny = y + 55 + Math.random() * 65;
+
+      scene.tweens.add({
+        targets:  this,
+        x: nx, y: ny,
+        duration: 420 + Math.random() * 260,
+        ease:     'Sine.easeInOut',
+        onComplete: () => drift(nx, ny),
+      });
+    };
+
+    drift(this.x, this.y);
+  }
+
+  /**
+   * jink_drop — short, abrupt horizontal snaps with quick downward steps.
+   * Reads more aggressive than zigzag and works well as a flanker.
+   */
+  _danceJinkDrop() {
+    const scene = this.scene;
+
+    const jink = (x, y, dir) => {
+      if (!this.alive) return;
+      if (y > H + 40) { this._exitSilent(); return; }
+
+      const stepX = 48 + Math.random() * 42;
+      const nx = Phaser.Math.Clamp(x + dir * stepX, 28, W - 28);
+      const ny = y + 38 + Math.random() * 38;
+      const nextDir = nx <= 40 ? 1 : nx >= W - 40 ? -1 : -dir;
+
+      scene.tweens.add({
+        targets:  this,
+        x: nx, y: ny,
+        duration: 120 + Math.random() * 80,
+        ease:     'Expo.easeOut',
+        onComplete: () => {
+          if (!this.alive) return;
+          scene.time.delayedCall(
+            45 + Math.random() * 80,
+            () => jink(nx, ny, nextDir)
+          );
+        },
+      });
+    };
+
+    jink(this.x, this.y, Math.random() > 0.5 ? 1 : -1);
+  }
+
+  /**
    * side_cross — enter from one side, arc across to mid-screen,
    * brief hover, then dive toward the player.
    */
   _danceSideCross() {
     const scene    = this.scene;
-    const fromLeft = this.x < 0;
     const midX     = W * 0.35 + Math.random() * W * 0.30;
     const midY     = H * 0.28 + Math.random() * H * 0.18;
     const hoverMs  = 500 + Math.random() * 400;

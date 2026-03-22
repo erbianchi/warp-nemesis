@@ -86,7 +86,16 @@ describe('Skirm', () => {
   describe('movement dances', () => {
     // setVelocity/setVelocityX/setVelocityY are tracked by reading the mock body calls
     // We verify setupMovement runs without throwing for each dance.
-    const DANCES = ['straight', 'sweep_left', 'sweep_right', 'side_cross', 'fan_out', 'zigzag'];
+    const DANCES = [
+      'straight',
+      'sweep_left',
+      'sweep_right',
+      'side_cross',
+      'fan_out',
+      'zigzag',
+      'drift_drop',
+      'jink_drop',
+    ];
 
     for (const dance of DANCES) {
       it(`constructs without error for dance "${dance}"`, () => {
