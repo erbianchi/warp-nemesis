@@ -9,6 +9,8 @@ import { ScrollingBackground }   from '../systems/ScrollingBackground.js';
 import { EffectsSystem }         from '../systems/EffectsSystem.js';
 import { WaveSpawner }           from '../systems/WaveSpawner.js';
 import { FormationController }   from '../systems/FormationController.js';
+import { BonusSystem }           from '../systems/BonusSystem.js';
+import { ShieldController }      from '../systems/ShieldController.js';
 import { WeaponManager }         from '../weapons/WeaponManager.js';
 import { RunState }              from '../systems/RunState.js';
 import { Skirm }                 from '../entities/enemies/Skirm.js';
@@ -86,6 +88,7 @@ export class GameScene extends Phaser.Scene {
     this._rbVel    = 0;   // spring velocity
 
     RunState.reset();
+    RunState.lives = this._playerLives;
 
     this._buildWeaponDisplay();
     this._buildStatusBars();
@@ -128,6 +131,41 @@ export class GameScene extends Phaser.Scene {
       this._levelIndex,
       (type, x, y, stats, dance) => this._spawnEnemy(type, x, y, stats, dance)
     );
+    this._bonuses = new BonusSystem(this, {
+      effects: this._effects,
+      rng:     this._spawner._rng ?? Math.random,
+    });
+    this._playerShieldFx = new ShieldController(this, this._player, {
+      effects:    this._effects,
+      points:     this._playerShield,
+      maxPoints:  PLAYER_SHIELD_MAX,
+      radius:     24,
+      depthOffset: 2,
+      barPlacement: 'bottom',
+      onChange:   ({ points }) => {
+        this._playerShield = points;
+        this.events.emit(EVENTS.SHIELD_CHANGED, {
+          current: points,
+          max: PLAYER_SHIELD_MAX,
+        });
+        this._drawStatusBars();
+      },
+    });
+
+    this.physics.add.overlap(
+      this._weapons.pool,
+      this._bonuses.group,
+      this._onBulletHitBonus,
+      null,
+      this
+    );
+    this.physics.add.overlap(
+      this._player,
+      this._bonuses.group,
+      this._onPlayerCollectBonus,
+      null,
+      this
+    );
 
     this._squadronScoreCheckpoint = 0;   // score at the start of the current squadron attempt
 
@@ -157,6 +195,7 @@ export class GameScene extends Phaser.Scene {
     this._drawStatusBars(time);
 
     this._spawner.update(delta);
+    this._bonuses.update(delta);
 
     // Update enemies; cull anything that has gone off-screen
     for (let i = this._enemies.length - 1; i >= 0; i--) {
@@ -285,19 +324,33 @@ export class GameScene extends Phaser.Scene {
   _onPlayerHit(damage = 10) {
     if (this._gameOver || this._respawning) return;
 
-    // Shield absorbs damage first
-    if (this._playerShield > 0) {
-      this._playerShield = Math.max(0, this._playerShield - damage);
+    const shieldResult = this._playerShieldFx
+      ? this._playerShieldFx.takeDamage(damage)
+      : {
+          absorbed: Math.min(this._playerShield, damage),
+          overflow: Math.max(0, damage - this._playerShield),
+        };
+
+    if (!this._playerShieldFx && shieldResult.absorbed > 0) {
+      this._playerShield = Math.max(0, this._playerShield - shieldResult.absorbed);
       this._drawStatusBars();
+    }
+
+    if (shieldResult.overflow <= 0) {
       return;
     }
 
-    this._playerHp -= damage;
+    this._playerHp = Math.max(0, this._playerHp - shieldResult.overflow);
+    this.events.emit(EVENTS.HEALTH_CHANGED, {
+      current: this._playerHp,
+      max: PLAYER_HP_MAX,
+    });
     this._drawStatusBars();
 
     if (this._playerHp <= 0) {
       this._playerLives--;
-      this._livesText.setText(`× ${Math.max(0, this._playerLives)}`);
+      RunState.lives = this._playerLives;
+      this._livesText?.setText?.(`× ${Math.max(0, this._playerLives)}`);
       if (this._playerLives <= 0) {
         this._killPlayer();
       } else {
@@ -333,6 +386,7 @@ export class GameScene extends Phaser.Scene {
       // Clear enemy bullets
       for (const b of this._eBullets) { if (b.active) b.destroy(); }
       this._eBullets = [];
+      this._bonuses?.clear?.();
 
       // Reset player to starting position
       this._player.x = WIDTH / 2;
@@ -344,6 +398,10 @@ export class GameScene extends Phaser.Scene {
       }
 
       this._playerHp = PLAYER_HP_DEFAULT;
+      this.events.emit(EVENTS.HEALTH_CHANGED, {
+        current: this._playerHp,
+        max: PLAYER_HP_MAX,
+      });
       this._rbOffset = 0;
       this._rbVel    = 0;
       this._player.setScale(1, 1);
@@ -442,6 +500,16 @@ export class GameScene extends Phaser.Scene {
     enemy.takeDamage(damage, scoreMultiplier);
   }
 
+  _onBulletHitBonus(bullet, bonus) {
+    if (!bullet?.active || !bonus?.active) return;
+
+    const damage = bullet._shotPayload?.damage ?? bullet._damage ?? this._weapons.damage;
+    this._weapons.pool.killAndHide(bullet);
+    if (bullet.body) { bullet.body.stop(); bullet.body.enable = false; }
+
+    bonus.takeDamage(damage);
+  }
+
   _onEnemyTouchPlayer(player, enemy) {
     if (!enemy.alive) return;
     const dmg = enemy.damage ?? 10;
@@ -468,11 +536,88 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  _onEnemyDied({ x, y, type, vx, vy, score, scoreMultiplier = 1 }) {
+  _onEnemyDied({ x, y, type, vx, vy, score, scoreMultiplier = 1, dropChance = 0 }) {
     this._explodeForType(x, y, type, vx ?? 0, vy ?? 0);
     RunState.addScore(Math.round(score * scoreMultiplier));
     RunState.kills++;
     this._animateScore(RunState.score);
+    this._bonuses?.spawnRandomDrop(x, y, dropChance);
+  }
+
+  _onPlayerCollectBonus(player, bonus) {
+    const payload = this._bonuses.collectBonus(bonus);
+    if (!payload) return;
+    this._applyBonusEffect(payload);
+    this._playBonusPickupSound(payload.pickupSound);
+    this._effects?.showDamageNumber?.(
+      this._player?.x ?? bonus?.x ?? 0,
+      (this._player?.y ?? bonus?.y ?? 0) - 28,
+      payload.label?.toUpperCase?.() ?? payload.label ?? payload.key,
+      {
+        color: '#ffffff',
+        fontSize: '18px',
+        strokeThickness: 3,
+        glowColor: 0xffffff,
+        glowStrength: 6,
+        lift: 28,
+        duration: 520,
+        scaleTo: 1.08,
+      }
+    );
+  }
+
+  /**
+   * Play the configured pickup sound if the bonus defines one.
+   * @param {string} soundKey
+   */
+  _playBonusPickupSound(soundKey) {
+    if (!soundKey) return;
+    this.sound?.play?.(soundKey);
+  }
+
+  /**
+   * Apply a collected bonus to the current player state.
+   * @param {{key: string, kind: string, value: number, pending?: boolean}} bonus
+   */
+  _applyBonusEffect(bonus) {
+    if (!bonus) return;
+
+    switch (bonus.kind) {
+      case 'life':
+        this._playerLives += bonus.value;
+        RunState.lives = this._playerLives;
+        this._livesText?.setText?.(`× ${this._playerLives}`);
+        break;
+      case 'health':
+        this._playerHp = Math.min(PLAYER_HP_MAX, this._playerHp + bonus.value);
+        this.events.emit(EVENTS.HEALTH_CHANGED, {
+          current: this._playerHp,
+          max: PLAYER_HP_MAX,
+        });
+        break;
+      case 'shield':
+        if (this._playerShieldFx) {
+          this._playerShieldFx.addPoints(bonus.value);
+        } else {
+          this._playerShield = Math.min(PLAYER_SHIELD_MAX, this._playerShield + bonus.value);
+          this.events.emit(EVENTS.SHIELD_CHANGED, {
+            current: this._playerShield,
+            max: PLAYER_SHIELD_MAX,
+          });
+        }
+        break;
+      case 'weaponUpgrade':
+      case 'newWeapon':
+        this.events.emit(EVENTS.WEAPON_CHANGED, {
+          ...bonus,
+          pending: true,
+        });
+        break;
+      default:
+        break;
+    }
+
+    this._drawStatusBars();
   }
 
   _animateScore(target) {
@@ -508,14 +653,13 @@ export class GameScene extends Phaser.Scene {
   _buildStatusBars() {
     const BAR_H = 8, BAR_GAP = 5;
     const X0     = 8;   // left margin
-    const Y_TOP  = this._weaponDisplayY + (38 - (3 * BAR_H + 2 * BAR_GAP)) / 2;
+    const Y_TOP  = this._weaponDisplayY + (38 - (2 * BAR_H + BAR_GAP)) / 2;
     const BOX_W  = 62, GAP = 6;
     const nSlots = this._weapons.getSlots().length;
     const BAR_W  = nSlots * BOX_W + (nSlots - 1) * GAP;
 
     const defs = [
       { key: 'hp',     max: PLAYER_HP_MAX,    color: 0x00cc44 },
-      { key: 'shield', max: PLAYER_SHIELD_MAX, color: 0x2255ff },
       { key: 'heat',   max: this._weapons.maxHeatShots, color: HEAT_BAR_COLOR },
     ];
 
@@ -545,7 +689,6 @@ export class GameScene extends Phaser.Scene {
   _drawStatusBars(timeMs = this._hudTimeMs) {
     const vals = {
       hp:     this._playerHp,
-      shield: this._playerShield,
       heat:   this._weapons.heatShots,
     };
     for (const [key, { rect, max, fullW, color }] of Object.entries(this._barFills)) {

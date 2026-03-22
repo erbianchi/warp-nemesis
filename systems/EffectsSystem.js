@@ -7,6 +7,7 @@ const FRAGMENT_BASE_SIZE = 4;
 const FRAGMENT_GRAVITY_Y = 160;
 const FRAGMENT_DRAG      = 40;
 const FRAGMENT_DEPTH     = 15;
+const DAMAGE_TEXT_DEPTH  = 18;
 const PUSH_RADIUS        = 120;
 const MAX_PUSH           = 280;
 const DIRECTIONAL_SPEED_MIN = 40;
@@ -200,6 +201,87 @@ export class EffectsSystem {
       const tint  = [0xff2200, 0xff4400, 0xff6600, 0xffcc44][Phaser.Math.Between(0, 3)];
       this._spawnFragment(x, y, Math.cos(angle) * spd, Math.sin(angle) * spd, size, tint, life);
     }
+  }
+
+  /**
+   * Shield break burst — bright blue-white fireworks that pop outward from the shell.
+   * @param {number} x
+   * @param {number} y
+   * @param {number} [radius=20]
+   */
+  explodeShield(x, y, radius = 20) {
+    const emitter = this._scene.add?.particles?.(0, 0, FRAGMENT_TEXTURE, {
+      speed:    { min: radius * 6, max: radius * 12 },
+      lifespan: { min: 260, max: 520 },
+      scale:    { start: 1.4, end: 0 },
+      alpha:    { start: 1, end: 0 },
+      quantity: Math.max(12, Math.round(radius * 0.9)),
+      tint:     [0xd6f0ff, 0x9fdbff, 0x63bbff, 0x2e86ff, 0x1458ff],
+      blendMode: 'ADD',
+      emitting: false,
+    });
+
+    if (!emitter) return;
+
+    emitter.setDepth?.(FRAGMENT_DEPTH + 1);
+    emitter.explode?.(Math.max(12, Math.round(radius * 0.9)), x, y);
+    this._scene.time?.delayedCall?.(540, () => emitter.destroy?.());
+  }
+
+  /**
+   * Floating damage number that rises and fades out.
+   * @param {number} x
+   * @param {number} y
+   * @param {number|string} amount
+   * @param {object} [opts]
+   * @param {string} [opts.color='#bfe8ff']
+   * @param {string} [opts.fontSize='14px']
+   * @param {string} [opts.stroke='#001426']
+   * @param {number} [opts.strokeThickness=3]
+   * @param {number} [opts.glowColor=0xbfe8ff]
+   * @param {number} [opts.glowStrength=4]
+   * @param {number} [opts.lift=18]
+   * @param {number} [opts.duration=320]
+   * @param {number} [opts.scaleTo=1.12]
+   */
+  showDamageNumber(x, y, amount, opts = {}) {
+    const value = typeof amount === 'number'
+      ? `${Math.round(amount)}`
+      : `${amount ?? ''}`;
+    const lift = opts.lift ?? 18;
+    const duration = opts.duration ?? 320;
+    const scaleTo = opts.scaleTo ?? 1.12;
+    const text = this._scene.add?.text?.(x, y, value, {
+      fontSize: opts.fontSize ?? '14px',
+      fontFamily: 'monospace',
+      fontStyle: 'bold',
+      color: opts.color ?? '#bfe8ff',
+      stroke: opts.stroke ?? '#001426',
+      strokeThickness: opts.strokeThickness ?? 3,
+    });
+
+    if (!text) return null;
+
+    text.setOrigin?.(0.5);
+    text.setDepth?.(DAMAGE_TEXT_DEPTH);
+    text.setAlpha?.(1);
+    text.setScale?.(1, 1);
+
+    const fx = text.preFX ?? text.postFX;
+    fx?.addGlow?.(opts.glowColor ?? 0xbfe8ff, opts.glowStrength ?? 4, 0, false, 0.12, 12);
+
+    this._scene.tweens?.add?.({
+      targets:  text,
+      y:        y - lift,
+      alpha:    0,
+      scaleX:   scaleTo,
+      scaleY:   scaleTo,
+      duration,
+      ease:     'Cubic.easeOut',
+      onComplete: () => text.destroy?.(),
+    });
+
+    return text;
   }
 
   /**

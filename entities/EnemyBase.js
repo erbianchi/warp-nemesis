@@ -1,6 +1,7 @@
 /** @module EnemyBase */
 
 import { EVENTS } from '../config/events.config.js';
+import { ShieldController } from '../systems/ShieldController.js';
 
 /**
  * In-browser: Phaser is a CDN global, available before any ES module evaluates.
@@ -38,6 +39,7 @@ export class EnemyBase extends _BaseSprite {
    * @param {number} stats.score
    * @param {number} stats.dropChance
    * @param {number} stats.bulletSpeed
+   * @param {number} [stats.shield]
    */
   /**
    * @param {string} dance - Movement pattern key (see DANCES in levels.config.js)
@@ -57,6 +59,10 @@ export class EnemyBase extends _BaseSprite {
     this.maxHp = stats.hp;
     /** @type {number} */
     this.hp = stats.hp;
+    /** @type {number} */
+    this.maxShield = Math.max(0, stats.shield ?? 0);
+    /** @type {number} */
+    this.shield = this.maxShield;
     /** @type {number} */
     this.damage = stats.damage;
     /** @type {number} */
@@ -87,6 +93,16 @@ export class EnemyBase extends _BaseSprite {
     this._pushOffY = 0;
     this._pushVx   = 0; // velocity of the displacement
     this._pushVy   = 0;
+    this._shield   = new ShieldController(scene, this, {
+      effects:      scene._effects,
+      points:       this.shield,
+      radius:       16,
+      depthOffset:  1,
+      onChange:     ({ points, maxPoints }) => {
+        this.shield = points;
+        this.maxShield = maxPoints;
+      },
+    });
     this.setupMovement();
     this.setupWeapon();
   }
@@ -169,7 +185,10 @@ export class EnemyBase extends _BaseSprite {
    */
   takeDamage(amount, scoreMultiplier = 1) {
     if (!this.alive) return;
-    this.hp -= amount;
+    const shieldResult = this._shield.takeDamage(amount);
+    if (shieldResult.overflow <= 0) return;
+
+    this.hp -= shieldResult.overflow;
     if (this.hp <= 0) {
       this.hp = 0;
       this.die({ scoreMultiplier });
@@ -202,6 +221,7 @@ export class EnemyBase extends _BaseSprite {
   die(opts = {}) {
     if (!this.alive) return;
     this.alive = false;
+    this._shield.destroy();
     this.onDeath(opts);
     this.destroy();
   }

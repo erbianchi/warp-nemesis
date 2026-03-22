@@ -8,6 +8,7 @@ import { EnemyBase } from '../../entities/EnemyBase.js';
 
 const TEST_STATS = {
   hp:          10,
+  shield:      0,
   damage:      5,
   speed:       0,
   fireRate:    0,
@@ -62,5 +63,17 @@ describe('EnemyBase', () => {
 
     assert.ok(syncCalls > 0, 'body should sync after manual displacement');
     assert.deepEqual(enemy.body.lastSync, { x: enemy.x, y: enemy.y });
+  });
+
+  it('routes incoming damage through shield before hp when present', () => {
+    enemy = new TestEnemy(scene, 100, 100, { ...TEST_STATS, hp: 12, shield: 8 });
+
+    enemy.takeDamage(5);
+    assert.equal(enemy.shield, 3);
+    assert.equal(enemy.hp, 12);
+
+    enemy.takeDamage(6);
+    assert.equal(enemy.shield, 0);
+    assert.equal(enemy.hp, 9);
   });
 });

@@ -38,6 +38,30 @@ function createHeatWarningScene(heatShots) {
   return { scene, calls };
 }
 
+describe('GameScene create', () => {
+  it('creates the bonus system before wiring bonus overlaps', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+
+    const overlapCalls = [];
+    scene.physics.add.overlap = (...args) => {
+      overlapCalls.push(args);
+    };
+
+    scene.create();
+
+    assert.ok(scene._bonuses, 'bonus system should be created during scene setup');
+    assert.ok(
+      overlapCalls.some(([, target, callback]) => target === scene._bonuses.group && callback === scene._onBulletHitBonus),
+      'player bullets should overlap bonus pickups'
+    );
+    assert.ok(
+      overlapCalls.some(([, target, callback]) => target === scene._bonuses.group && callback === scene._onPlayerCollectBonus),
+      'player ship should overlap bonus pickups'
+    );
+  });
+});
+
 describe('isHeatWarningActive', () => {
   it('returns false below the warning threshold', () => {
     assert.equal(
@@ -423,3 +447,250 @@ describe('GameScene player explosion', () => {
   });
 });
 
+describe('GameScene player shield and bonuses', () => {
+  it('lets the shared shield absorb player damage before hp', () => {
+    const scene = new GameScene();
+    scene._gameOver = false;
+    scene._respawning = false;
+    scene._playerHp = 20;
+    scene._playerShield = 12;
+    scene._playerShieldFx = {
+      takeDamage: () => ({ absorbed: 8, overflow: 0 }),
+    };
+    scene.events = { emit: () => {} };
+    scene._drawStatusBars = () => {};
+
+    scene._onPlayerHit(8);
+
+    assert.equal(scene._playerHp, 20);
+  });
+
+  it('applies a shield bonus through the shared shield controller', () => {
+    const scene = new GameScene();
+    let addedShield = 0;
+    scene._playerShield = 0;
+    scene._playerShieldFx = {
+      addPoints: (value) => { addedShield += value; },
+    };
+    scene.events = { emit: () => {} };
+    scene._drawStatusBars = () => {};
+
+    scene._applyBonusEffect({ key: 'shield50', kind: 'shield', value: 50 });
+
+    assert.equal(addedShield, 50);
+  });
+
+  it('applies a life bonus to the HUD and run state', () => {
+    RunState.reset();
+    const scene = new GameScene();
+    let livesText = '';
+    scene._playerLives = 2;
+    scene._livesText = {
+      setText: (value) => { livesText = value; },
+    };
+    scene.events = { emit: () => {} };
+    scene._drawStatusBars = () => {};
+
+    scene._applyBonusEffect({ key: 'extraLife', kind: 'life', value: 1 });
+
+    assert.equal(scene._playerLives, 3);
+    assert.equal(RunState.lives, 3);
+    assert.equal(livesText, '× 3');
+  });
+
+  it('keeps only hp and heat in the bottom-left HUD status bars', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._weaponDisplayY = 594;
+    scene._weapons = {
+      maxHeatShots: GAME_CONFIG.PLAYER_HEAT_MAX,
+      heatShots: 0,
+      getSlots: () => [{ key: 'laser' }, null],
+    };
+    scene._playerHp = 10;
+    scene._hudTimeMs = 0;
+
+    scene._buildStatusBars();
+
+    assert.deepEqual(Object.keys(scene._barFills), ['hp', 'heat']);
+  });
+
+  it('does not collect a shielded bonus until the shield is broken', () => {
+    const scene = new GameScene();
+    let appliedBonus = null;
+    let collectCalls = 0;
+    const shieldedBonus = {
+      canCollect: () => false,
+    };
+
+    scene._bonuses = {
+      collectBonus: (bonus) => {
+        collectCalls++;
+        return bonus.canCollect() ? { kind: 'life', value: 1 } : null;
+      },
+    };
+    scene._applyBonusEffect = (payload) => {
+      appliedBonus = payload;
+    };
+
+    scene._onPlayerCollectBonus({}, shieldedBonus);
+
+    assert.equal(collectCalls, 1);
+    assert.equal(appliedBonus, null);
+  });
+
+  it('shows a large floating bonus label when the player collects a pickup', () => {
+    const scene = new GameScene();
+    let effectCall = null;
+    let playedSound = null;
+    scene._player = { x: 140, y: 560 };
+    scene._bonuses = {
+      collectBonus: () => ({
+        key: 'extraLife',
+        label: '1-Up',
+        kind: 'life',
+        value: 1,
+        pickupSound: 'forceField_001',
+      }),
+    };
+    scene._applyBonusEffect = () => {};
+    scene._effects = {
+      showDamageNumber: (...args) => {
+        effectCall = args;
+      },
+    };
+    scene.sound = {
+      play: (key) => {
+        playedSound = key;
+      },
+    };
+
+    scene._onPlayerCollectBonus({}, { x: 90, y: 120 });
+
+    assert.equal(playedSound, 'forceField_001');
+    assert.deepEqual(effectCall, [
+      140,
+      532,
+      '1-UP',
+      {
+        color: '#ffffff',
+        fontSize: '18px',
+        strokeThickness: 3,
+        glowColor: 0xffffff,
+        glowStrength: 6,
+        lift: 28,
+        duration: 520,
+        scaleTo: 1.08,
+      },
+    ]);
+  });
+
+  it('lets player bullets break a bonus shield before the player collects the pickup', () => {
+    const scene = new GameScene();
+    let appliedBonus = null;
+    let hiddenBullet = null;
+    let collectCalls = 0;
+    const bonus = {
+      active: true,
+      canCollect: () => bonus.shieldPoints <= 0,
+      shieldPoints: 12,
+      takeDamage: (damage) => {
+        bonus.shieldPoints = Math.max(0, bonus.shieldPoints - damage);
+      },
+    };
+    const bullet = {
+      active: true,
+      _damage: 12,
+      body: {
+        enable: true,
+        stop: () => {},
+      },
+    };
+
+    scene._weapons = {
+      damage: 10,
+      pool: {
+        killAndHide: (target) => {
+          hiddenBullet = target;
+        },
+      },
+    };
+    scene._bonuses = {
+      collectBonus: (target) => {
+        collectCalls++;
+        return target.canCollect()
+          ? { key: 'shield50', kind: 'shield', value: 50, label: '+50 Shield', pickupSound: '' }
+          : null;
+      },
+    };
+    scene._applyBonusEffect = (payload) => {
+      appliedBonus = payload;
+    };
+    scene._effects = { showDamageNumber: () => {} };
+
+    scene._onPlayerCollectBonus({}, bonus);
+    scene._onBulletHitBonus(bullet, bonus);
+    scene._onPlayerCollectBonus({}, bonus);
+
+    assert.equal(hiddenBullet, bullet);
+    assert.equal(bullet.body.enable, false);
+    assert.equal(bonus.shieldPoints, 0);
+    assert.equal(collectCalls, 2);
+    assert.deepEqual(appliedBonus, {
+      key: 'shield50',
+      kind: 'shield',
+      value: 50,
+      label: '+50 Shield',
+      pickupSound: '',
+    });
+  });
+
+  it('does not try to play a pickup sound when the bonus config leaves it empty', () => {
+    const scene = new GameScene();
+    let playCalls = 0;
+    scene.sound = {
+      play: () => {
+        playCalls++;
+      },
+    };
+
+    scene._playBonusPickupSound('');
+
+    assert.equal(playCalls, 0);
+  });
+
+  it('routes player bullet hits into bonus shields and consumes the bullet', () => {
+    const scene = new GameScene();
+    let hiddenBullet = null;
+    let bonusDamage = 0;
+    const bullet = {
+      active: true,
+      _damage: 14,
+      body: {
+        enable: true,
+        stop: () => {},
+      },
+    };
+    const bonus = {
+      active: true,
+      takeDamage: (damage) => {
+        bonusDamage = damage;
+      },
+    };
+
+    scene._weapons = {
+      damage: 10,
+      pool: {
+        killAndHide: (target) => {
+          hiddenBullet = target;
+        },
+      },
+    };
+
+    scene._onBulletHitBonus(bullet, bonus);
+
+    assert.equal(hiddenBullet, bullet);
+    assert.equal(bonusDamage, 14);
+    assert.equal(bullet.body.enable, false);
+  });
+});

@@ -79,8 +79,8 @@ export const ENEMIES = {
  * speedModifier is applied directly to the base speed (not difficulty-scaled).
  */
 export const PLANE_PRESETS = {
-  standard: { hpModifier: 1.0, damageModifier: 1.0, speedModifier: 1.0, fireRateModifier: 1.0 },
-  heavy:    { hpModifier: 1.5, damageModifier: 1.2, speedModifier: 0.8, fireRateModifier: 0.9 },
-  light:    { hpModifier: 0.7, damageModifier: 0.8, speedModifier: 1.3, fireRateModifier: 1.2 },
-  ace:      { hpModifier: 1.2, damageModifier: 1.2, speedModifier: 1.2, fireRateModifier: 0.8 },
+  standard: { hpModifier: 1.0, damageModifier: 1.0, speedModifier: 1.0, fireRateModifier: 1.0, shieldModifier: 1.0 },
+  heavy:    { hpModifier: 1.5, damageModifier: 1.2, speedModifier: 0.8, fireRateModifier: 0.9, shieldModifier: 1.0 },
+  light:    { hpModifier: 0.7, damageModifier: 0.8, speedModifier: 1.3, fireRateModifier: 1.2, shieldModifier: 1.0 },
+  ace:      { hpModifier: 1.2, damageModifier: 1.2, speedModifier: 1.2, fireRateModifier: 0.8, shieldModifier: 1.0 },
 };

@@ -74,6 +74,93 @@ describe('EffectsSystem', () => {
     }
   });
 
+  it('spawns a short-lived particle firework when a shield breaks', () => {
+    let exploded = null;
+    let destroyed = false;
+    let particleConfig = null;
+    scene.add.particles = (x, y, texture, config) => {
+      particleConfig = config;
+      return ({
+      setDepth: () => {},
+      explode: (count, x, y) => { exploded = { count, x, y }; },
+      destroy: () => { destroyed = true; },
+      });
+    };
+    scene.time.delayedCall = (delay, cb) => {
+      assert.equal(delay, 540);
+      cb();
+    };
+
+    effects.explodeShield(120, 160, 20);
+
+    assert.deepEqual(exploded, { count: 18, x: 120, y: 160 });
+    assert.deepEqual(particleConfig.tint, [0xd6f0ff, 0x9fdbff, 0x63bbff, 0x2e86ff, 0x1458ff]);
+    assert.equal(destroyed, true);
+  });
+
+  it('shows a floating damage number that rises and fades out', () => {
+    let tweenConfig = null;
+    let destroyed = false;
+    scene.tweens.add = (config) => {
+      tweenConfig = config;
+      return config;
+    };
+    scene.add.text = (x, y, value, style) => ({
+      x,
+      y,
+      value,
+      style,
+      preFX: { addGlow: () => ({}) },
+      setOrigin() { return this; },
+      setDepth() { return this; },
+      setAlpha() { return this; },
+      setScale() { return this; },
+      destroy() { destroyed = true; },
+    });
+
+    const text = effects.showDamageNumber(120, 150, 17);
+
+    assert.equal(text.value, '17');
+    assert.equal(tweenConfig.y, 132);
+    tweenConfig.onComplete();
+    assert.equal(destroyed, true);
+  });
+
+  it('can show large bonus text using the same floating-text effect', () => {
+    let tweenConfig = null;
+    let destroyed = false;
+    scene.tweens.add = (config) => {
+      tweenConfig = config;
+      return config;
+    };
+    scene.add.text = (x, y, value, style) => ({
+      x,
+      y,
+      value,
+      style,
+      preFX: { addGlow: () => ({}) },
+      setOrigin() { return this; },
+      setDepth() { return this; },
+      setAlpha() { return this; },
+      setScale() { return this; },
+      destroy() { destroyed = true; },
+    });
+
+    const text = effects.showDamageNumber(120, 150, '1-UP', {
+      fontSize: '26px',
+      lift: 28,
+      duration: 520,
+      scaleTo: 1.08,
+    });
+
+    assert.equal(text.value, '1-UP');
+    assert.equal(text.style.fontSize, '26px');
+    assert.equal(tweenConfig.y, 122);
+    assert.equal(tweenConfig.duration, 520);
+    tweenConfig.onComplete();
+    assert.equal(destroyed, true);
+  });
+
   it('applies shockwave push to nearby enemies and bullets', () => {
     const pushes = [];
     const enemy = {

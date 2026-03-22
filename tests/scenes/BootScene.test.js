@@ -7,7 +7,7 @@ installPhaserGlobal();
 const { BootScene } = await import('../../scenes/BootScene.js');
 
 describe('BootScene', () => {
-  it('preloads the laser and skirm explosion sounds', () => {
+  it('preloads the weapon, explosion, and bonus pickup sounds', () => {
     const scene = new BootScene();
     const calls = [];
     scene.load = {
@@ -27,6 +27,9 @@ describe('BootScene', () => {
     }, {
       key: 'explosionSkirm_000',
       path: 'assets/audio/sfx/explosionSkirm_000.ogg',
+    }, {
+      key: 'forceField_001',
+      path: 'assets/audio/sfx/forceField_001.ogg',
     }]);
   });
 });

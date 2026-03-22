@@ -15,6 +15,14 @@ export function installPhaserGlobal() {
       this.x       = x;
       this.y       = y;
       this.texture = texture;
+      this.depth   = 0;
+      this.width   = 0;
+      this.height  = 0;
+      this.displayWidth = 0;
+      this.displayHeight = 0;
+      this.scaleX  = 1;
+      this.scaleY  = 1;
+      this.rotation = 0;
       this.body    = {
         setVelocity:  () => {},
         setVelocityX: () => {},
@@ -30,12 +38,23 @@ export function installPhaserGlobal() {
     setVelocity()    { return this; }
     setVelocityX()   { return this; }
     setVelocityY()   { return this; }
-    setDepth()       { return this; }
+    setDepth(v)      { this.depth = v; return this; }
+    setOrigin()      { return this; }
     setAlpha(v)      { this.alpha = v; return this; }
     setTint(v)       { this.tint = v; return this; }
     clearTint()      { delete this.tint; return this; }
     setTexture(v)    { this.texture = v; return this; }
-    setScale(x, y = x) { this.scaleX = x; this.scaleY = y; return this; }
+    setScale(x, y = x) {
+      this.scaleX = x;
+      this.scaleY = y;
+      this.displayWidth = this.width * x;
+      this.displayHeight = this.height * y;
+      return this;
+    }
+    setStrokeStyle(width, color, alpha = 1) {
+      this.strokeStyle = { width, color, alpha };
+      return this;
+    }
   }
 
   globalThis.Phaser = {
@@ -58,7 +77,7 @@ export function installPhaserGlobal() {
 
     Input: {
       Keyboard: {
-        KeyCodes: { W: 87, A: 65, S: 83, D: 68 },
+        KeyCodes: { W: 87, A: 65, S: 83, D: 68, SPACE: 32 },
       },
     },
 
@@ -100,6 +119,7 @@ export function createMockScene() {
     setVelocityY:          function(v)    { this.velocity.y = v; },
     setAcceleration:       () => {},
     setDrag:               function(v)    { this.drag = v; },
+    setAllowGravity:       function(v)    { this.allowGravity = v; },
     reset:                 function(x, y) { this.x = x; this.y = y; this.velocity.x = 0; this.velocity.y = 0; },
     stop:                  function()     { this.velocity.x = 0; this.velocity.y = 0; },
     updateFromGameObject:  function() {
@@ -110,9 +130,12 @@ export function createMockScene() {
   });
 
   const mockGraphics = {
+    setDepth:  () => mockGraphics,
     clear:     () => {},
     fillStyle: () => {},
     fillRect:  () => {},
+    lineStyle: () => {},
+    strokeRect: () => {},
   };
 
   const mockGameObject = () => {
@@ -122,17 +145,40 @@ export function createMockScene() {
       active:         true,
       visible:        true,
       alpha:          1,
+      depth:          0,
+      width:          0,
+      height:         0,
+      displayWidth:   0,
+      displayHeight:  0,
+      scaleX:         1,
+      scaleY:         1,
+      rotation:       0,
       setInteractive: () => ({ on: () => {} }),
-      setDepth:       function() { return this; },
+      setDepth:       function(v) { this.depth = v; return this; },
+      setOrigin:      function() { return this; },
       setAlpha:       function(v) { this.alpha = v; return this; },
       setActive:      function(v) { this.active = v; return this; },
       setVisible:     function(v) { this.visible = v; return this; },
       setTint:        function(v) { this.tint = v; return this; },
       clearTint:      function() { delete this.tint; return this; },
       setTexture:     function(v) { this.texture = v; return this; },
-      setScale:       function(x, y = x) { this.scaleX = x; this.scaleY = y; return this; },
+      setScale:       function(x, y = x) {
+        this.scaleX = x;
+        this.scaleY = y;
+        this.displayWidth = this.width * x;
+        this.displayHeight = this.height * y;
+        return this;
+      },
+      setStrokeStyle: function(width, color, alpha = 1) {
+        this.strokeStyle = { width, color, alpha };
+        return this;
+      },
+      setText:        function(v) { this.text = v; return this; },
       on:             () => {},
       destroy:        function() { this.active = false; },
+    };
+    obj.preFX = {
+      addGlow: (color, outerStrength = 0) => ({ color, outerStrength }),
     };
     obj.body = makeMockBody();
     obj.body.gameObject = obj;
@@ -153,6 +199,11 @@ export function createMockScene() {
     return {
       _children: children,
       add: (obj) => { children.push(obj); return obj; },
+      remove: (obj) => {
+        const idx = children.indexOf(obj);
+        if (idx !== -1) children.splice(idx, 1);
+        return obj;
+      },
       getChildren: () => children,
       killAndHide: (obj) => {
         obj.setActive(false).setVisible(false);
@@ -186,10 +237,32 @@ export function createMockScene() {
   return {
     add: {
       graphics:  () => mockGraphics,
-      rectangle: () => mockGameObject(),
-      image:     () => mockGameObject(),
-      text:      () => ({ setOrigin: () => ({ setStyle: () => {} }), setStyle: () => {} }),
-      particles: () => ({ setDepth: () => ({ explode: () => {} }), explode: () => {}, destroy: () => {} }),
+      rectangle: (x = 0, y = 0, width = 0, height = 0) => Object.assign(mockGameObject(), {
+        x, y, width, height, displayWidth: width, displayHeight: height,
+      }),
+      circle:    (x = 0, y = 0, radius = 0) => Object.assign(mockGameObject(), {
+        x, y, width: radius * 2, height: radius * 2, displayWidth: radius * 2, displayHeight: radius * 2,
+      }),
+      triangle:  (x = 0, y = 0, x1 = 0, y1 = 0, x2 = 0, y2 = 0, x3 = 0, y3 = 0) => Object.assign(mockGameObject(), {
+        x,
+        y,
+        width: Math.max(x1, x2, x3) - Math.min(x1, x2, x3),
+        height: Math.max(y1, y2, y3) - Math.min(y1, y2, y3),
+        displayWidth: Math.max(x1, x2, x3) - Math.min(x1, x2, x3),
+        displayHeight: Math.max(y1, y2, y3) - Math.min(y1, y2, y3),
+      }),
+      image:     (x = 0, y = 0) => Object.assign(mockGameObject(), { x, y }),
+      text:      () => {
+        const text = mockGameObject();
+        text.setStyle = () => text;
+        return text;
+      },
+      particles: () => {
+        const emitter = mockGameObject();
+        emitter.explode = () => {};
+        emitter.destroy = function() { this.active = false; };
+        return emitter;
+      },
       existing:  () => {},
     },
     physics: {
@@ -230,6 +303,6 @@ export function createMockScene() {
       },
     },
     scene:  { start: () => {} },
-    events: { emit: () => {}, on: () => {} },
+    events: { emit: () => {}, on: () => {}, off: () => {} },
   };
 }

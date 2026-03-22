@@ -14,8 +14,8 @@ import { EVENTS } from '../config/events.config.js';
  * @param {string} type             - Key in ENEMIES config
  * @param {number} difficultyBase   - Level multiplier
  * @param {number} difficultyFactor - Wave multiplier
- * @param {object} planeOverrides   - { preset?, hpModifier?, damageModifier?, speedModifier?, fireRateModifier? }
- * @returns {{ hp, damage, speed, fireRate, score, dropChance, bulletSpeed }}
+ * @param {object} planeOverrides   - { preset?, hpModifier?, damageModifier?, speedModifier?, fireRateModifier?, shieldModifier? }
+ * @returns {{ hp, damage, speed, fireRate, score, dropChance, bulletSpeed, shield }}
  */
 export function resolveStats(type, difficultyBase, difficultyFactor, planeOverrides = {}) {
   const base = ENEMIES[type];
@@ -28,6 +28,7 @@ export function resolveStats(type, difficultyBase, difficultyFactor, planeOverri
   const damageMod   = planeOverrides.damageModifier    ?? preset.damageModifier;
   const speedMod    = planeOverrides.speedModifier     ?? preset.speedModifier;
   const fireRateMod = planeOverrides.fireRateModifier  ?? preset.fireRateModifier;
+  const shieldMod   = planeOverrides.shieldModifier    ?? preset.shieldModifier ?? 1;
 
   const difficulty = difficultyBase * difficultyFactor;
 
@@ -39,6 +40,7 @@ export function resolveStats(type, difficultyBase, difficultyFactor, planeOverri
     score:       Math.round(base.score      * difficulty),
     dropChance:  base.dropChance,
     bulletSpeed: base.bulletSpeed,
+    shield:      Math.round((base.shield ?? 0) * difficulty * shieldMod),
   };
 }
 

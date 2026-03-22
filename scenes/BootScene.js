@@ -11,6 +11,7 @@ export class BootScene extends Phaser.Scene {
     this.load.audio('laserSmall_000', 'assets/audio/sfx/laserSmall_000.ogg');
     this.load.audio('laserOverheat_000', 'assets/audio/sfx/laserOverheat_000..ogg');
     this.load.audio('explosionSkirm_000', 'assets/audio/sfx/explosionSkirm_000.ogg');
+    this.load.audio('forceField_001', 'assets/audio/sfx/forceField_001.ogg');
   }
 
   create() {
@@ -73,5 +74,24 @@ export class BootScene extends Phaser.Scene {
     pt.fillRect(0, 0, 4, 4);
     pt.generateTexture('particle', 4, 4);
     pt.destroy();
+
+    // Bonus pickup — white octagon
+    const bonus = this.make.graphics({ add: false });
+    bonus.fillStyle(0xffffff, 1);
+    bonus.lineStyle(2, 0xd8ecff, 1);
+    bonus.beginPath();
+    bonus.moveTo(8, 0);
+    bonus.lineTo(16, 0);
+    bonus.lineTo(24, 8);
+    bonus.lineTo(24, 16);
+    bonus.lineTo(16, 24);
+    bonus.lineTo(8, 24);
+    bonus.lineTo(0, 16);
+    bonus.lineTo(0, 8);
+    bonus.closePath();
+    bonus.fillPath();
+    bonus.strokePath();
+    bonus.generateTexture('bonus_octagon', 24, 24);
+    bonus.destroy();
   }
 }

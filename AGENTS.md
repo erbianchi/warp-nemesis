@@ -48,6 +48,7 @@ No npm, no webpack, no Vite. Keep the dev loop frictionless. A simple `python -m
 │
 ├── entities/
 │   ├── PlayerShip.js           # Player entity, state machine
+│   ├── BonusPickup.js          # White octagon pickup entity
 │   ├── EnemyBase.js            # Abstract base class for enemies
 │   ├── enemies/
 │   │   ├── Fighter.js
@@ -70,6 +71,7 @@ No npm, no webpack, no Vite. Keep the dev loop frictionless. A simple `python -m
 │   ├── ScrollingBackground.js  # Parallax starfield layers
 │   ├── CollisionSystem.js      # All overlap/collider registrations
 │   ├── BonusSystem.js          # Bonus drop logic, pickup handling
+│   ├── ShieldController.js     # Reusable shield logic + shield bar visuals
 │   ├── RunState.js             # Roguelike run state (singleton): score, lives, active weapons, upgrades
 │   └── EffectsSystem.js        # Explosions, screen flash, particles
 │
@@ -374,30 +376,35 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 
 ---
 
-## Current State (as of 2026-03-21)
+## Current State (as of 2026-03-22)
 
 ### What is implemented and working
-- `BootScene` — generates all placeholder textures (player, skirm, bullets, particles)
+- `BootScene` — generates placeholder textures (player, skirm, bullets, particles, bonus octagon) and preloads the current SFX set
 - `MenuScene` — Start button, transitions to GameScene
-- `GameScene` — main loop: player movement, weapon firing, enemy management, bullet AABB, particle explosions, collision (bullets → enemy, enemy body → player)
+- `GameScene` — main loop: player movement, weapon firing, enemy management, player/enemy/bonus collision, bonus pickups, shared shield handling, score/lives/status HUD
 - `ScrollingBackground` — scrolling starfield
-- `WeaponManager` — laser weapon, bullet pool, 2-slot display
+- `WeaponManager` — laser weapon, bullet pool, 2-slot display, heat / warning-shot behavior
 - `RunState` — score and kill tracking
-- `EnemyBase` — abstract base class for enemies (Phaser sprite + stats + fire cooldown)
-- `Skirm` — first enemy type; 5 tween-driven dances: `sweep_left`, `sweep_right`, `zigzag`, `side_cross`, `fan_out`
-- `FormationController` — the "straight" dance: 8 ships fly the loop path together, settle into a 2-row slot formation, drift + shoot in sequence, do pattern runs every 10s
+- `EnemyBase` — abstract base class for enemies with optional reusable shield support
+- `Skirm` — first enemy type; formation and organic dances including abrupt/jinking motion
+- `FormationController` — squadron dance controller with alternating side entries, reforming, drift, moving fire, and top-side returns
 - `WaveSpawner` — roguelike pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning
-- `levels.config.js` — currently **1 level, 1 wave, 1 squadron** (8 Skirms, straight/formation dance). Expand when new enemies and dances are ready.
-- `enemies.config.js` — `skirm` stats + `standard`, `heavy`, `light`, `ace` plane presets
+- `BonusSystem` — weighted bonus drops, shielded pickups, collection payloads, pickup-sound routing
+- `BonusPickup` — white octagon pickup entity with slower drift and optional shield shell
+- `ShieldController` — reusable shield ring, local shield bar, shield damage routing, break animation hook
+- `EffectsSystem` — explosions, shield break blasts, floating damage / pickup text
+- `levels.config.js` — currently **1 playable level** with **16 Skirm waves** and short wave-to-wave pacing
+- `bonuses.config.js` — live bonus definitions, pickup motion tuning, pickup sounds, random bonus shield roll config
+- `enemies.config.js` — `skirm` stats + `standard`, `heavy`, `light`, `ace` plane presets with shield modifiers
 
 ### What is stub / not yet implemented
 - `PlayerShip.js` — empty; player is currently a plain rectangle in GameScene
 - All enemy types except Skirm (`Fighter`, `Bomber`, `Interceptor`, `Kamikaze`, `TurretDrone`)
 - All bosses (`BossBase`, `Boss_L1` … `Boss_L7`)
 - All weapons except laser (`SpreadShot`, `Missile`, `Plasma`, `Railgun`, `DualLaser`, `Bomb`)
-- `BonusSystem`, `CollisionSystem`, `EffectsSystem` — inline in GameScene for now
+- `CollisionSystem` — overlap/collider setup still lives in `GameScene`
 - `HUDScene`, `LevelTransitionScene`, `GameOverScene`, `VictoryScene` — empty stubs
-- `ships.config.js`, `bonuses.config.js` — empty
+- `ships.config.js` — still empty
 - Levels 2–7 — not defined
 
 ### Key architectural rules

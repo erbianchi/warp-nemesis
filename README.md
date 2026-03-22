@@ -15,6 +15,15 @@ Built with **Phaser 3** — no build toolchain, no npm, runs directly in a brows
 - **Permadeath** — 3 lives per run by default
 - **Boss modifiers** from level 3 onward (enraged speed, double projectiles, extra shield)
 
+## Current Implemented Slice
+
+- **Level 1 is playable** with 16 Skirm waves and short handoffs between waves.
+- **Skirm formations mix scripted and organic motion** — some ships drift, some snap into sharper dances, and formation runs replay from alternating sides.
+- **Bonuses are live** as white octagons: `1-Up`, `+50 Life`, `+50 Shield`, `Weapon Upgrade`, and `New Weapon`.
+- **Bonuses can roll a random shield** from `100` to `200`; shielded bonuses must be shot open before the player can collect them.
+- **Shields are shared tech** for player, enemies, bonuses, and future objects. They absorb damage first, show local shield bars on the holder, and burst with a blue blast when depleted.
+- **Bonus pickup sounds are config-driven** so each bonus can define its own sound key or stay silent.
+
 ## Current Laser Heat
 
 - The default laser uses a `30`-shot heat bar.
@@ -116,11 +125,11 @@ node --test --experimental-test-coverage tests/**/*.test.js
 | Phase | Status | Description |
 |---|---|---|
 | 1 | ✅ Done | Skeleton — menu, starfield, moveable ship |
-| 2 | Planned | Player entity, laser, bullet pool, HUD |
-| 3 | Planned | Enemies, collisions, effects, RunState |
-| 4 | Planned | Level config, progression, game over |
+| 2 | In Progress | Playable ship, laser heat, bullet pool, HUD slice |
+| 3 | In Progress | Skirm enemies, collisions, explosions, RunState |
+| 4 | In Progress | Level config, wave progression, level-clear flow |
 | 5 | Planned | Bosses and boss health bar |
-| 6 | Planned | All weapons, bonuses, upgrade UI |
+| 6 | In Progress | Bonuses, shared shields, pickup audio, upgrade hooks |
 | 7 | Planned | Ship select, passives, boss modifiers |
 | 8 | Planned | Sprites, audio, parallax, polish |
 
