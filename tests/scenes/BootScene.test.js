@@ -7,18 +7,26 @@ installPhaserGlobal();
 const { BootScene } = await import('../../scenes/BootScene.js');
 
 describe('BootScene', () => {
-  it('preloads the weapon, explosion, and bonus pickup sounds', () => {
+  it('preloads the player sprite and current audio set', () => {
     const scene = new BootScene();
-    const calls = [];
+    const imageCalls = [];
+    const audioCalls = [];
     scene.load = {
+      image: (key, path) => {
+        imageCalls.push({ key, path });
+      },
       audio: (key, path) => {
-        calls.push({ key, path });
+        audioCalls.push({ key, path });
       },
     };
 
     scene.preload();
 
-    assert.deepEqual(calls, [{
+    assert.deepEqual(imageCalls, [{
+      key: 'spacecraft1',
+      path: 'assets/sprites/spacecraft1.png',
+    }]);
+    assert.deepEqual(audioCalls, [{
       key: 'laserSmall_000',
       path: 'assets/audio/sfx/laserSmall_000.ogg',
     }, {

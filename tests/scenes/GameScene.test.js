@@ -39,6 +39,20 @@ function createHeatWarningScene(heatShots) {
 }
 
 describe('GameScene create', () => {
+  it('creates the player from the spacecraft1 sprite', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+
+    const player = scene._createPlayer();
+
+    assert.equal(player.texture, 'spacecraft1');
+    assert.equal(player.displayWidth, 34);
+    assert.equal(player.displayHeight, 42);
+    assert.equal(player.x, GAME_CONFIG.WIDTH / 2);
+    assert.equal(player.y, GAME_CONFIG.HEIGHT - 80);
+    assert.ok(player.body, 'player should get an Arcade body');
+  });
+
   it('creates the bonus system before wiring bonus overlaps', () => {
     const scene = new GameScene();
     Object.assign(scene, createMockScene());
@@ -59,6 +73,27 @@ describe('GameScene create', () => {
       overlapCalls.some(([, target, callback]) => target === scene._bonuses.group && callback === scene._onPlayerCollectBonus),
       'player ship should overlap bonus pickups'
     );
+  });
+
+  it('keeps the spacecraft sprite at its configured size when rubber-band animation is idle', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._player = scene._createPlayer();
+    scene._cursors = {
+      up: { isDown: false },
+      down: { isDown: false },
+    };
+    scene._wasd = {
+      up: { isDown: false },
+      down: { isDown: false },
+    };
+    scene._rbOffset = 0;
+    scene._rbVel = 0;
+
+    scene._updateRubberBand(16);
+
+    assert.equal(scene._player.displayWidth, 34);
+    assert.equal(scene._player.displayHeight, 42);
   });
 });
 
@@ -252,6 +287,72 @@ describe('GameScene bullet damage', () => {
 
     assert.equal(hitCount, 0);
   });
+
+  it('lets a player laser destroy an enemy laser before it reaches the player', () => {
+    const scene = new GameScene();
+    let hiddenBullet = null;
+    let playerHit = false;
+    const playerBullet = {
+      active: true,
+      x: 220,
+      y: 180,
+      texture: 'bullet_laser',
+      body: {
+        enable: true,
+        stop: () => {},
+      },
+    };
+    const enemyBullet = {
+      active: true,
+      x: 220,
+      y: 180,
+      width: 3,
+      height: 10,
+      displayWidth: 3,
+      displayHeight: 10,
+      destroy() {
+        this.active = false;
+      },
+    };
+
+    scene._gameOver = false;
+    scene._respawning = false;
+    scene._bg = { update: () => {} };
+    scene._movePlayer = () => {};
+    scene._updateRubberBand = () => {};
+    scene._updateHeatWarningShake = () => {};
+    scene._drawStatusBars = () => {};
+    scene._spawner = { update: () => {}, isWaveActive: false, pendingSquadrons: 0 };
+    scene._bonuses = { update: () => {} };
+    scene._enemies = [];
+    scene._player = { x: 220, y: 520 };
+    scene._space = { isDown: false };
+    scene._eBullets = [enemyBullet];
+    scene._weapons = {
+      damage: 10,
+      update: () => {},
+      tryFire: () => false,
+      pool: {
+        getChildren: () => [playerBullet],
+        killAndHide: (target) => {
+          hiddenBullet = target;
+          target.active = false;
+          target.visible = false;
+        },
+      },
+    };
+    scene._onPlayerHit = () => {
+      playerHit = true;
+    };
+
+    scene.update(0, 16);
+
+    assert.equal(hiddenBullet, playerBullet);
+    assert.equal(playerBullet.body.enable, false);
+    assert.equal(enemyBullet.active, false);
+    assert.equal(scene._eBullets.length, 0);
+    assert.equal(playerHit, false);
+  });
 });
 
 describe('GameScene enemy score awards', () => {
@@ -444,6 +545,51 @@ describe('GameScene player explosion', () => {
 
     assert.equal(explodePlayerCalled, true, 'explodePlayer must be called');
     assert.equal(flashCalled, true, 'camera flash must be called');
+  });
+});
+
+describe('GameScene player death', () => {
+  it('resets weapon heat when the player loses a life', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    let drawCalls = 0;
+    let livesText = '';
+
+    scene._gameOver = false;
+    scene._respawning = false;
+    scene._player = scene.add.image(180, 420, 'spacecraft1');
+    scene._playerHp = 6;
+    scene._playerLives = 2;
+    scene._playerShield = 0;
+    scene._playerShieldFx = {
+      takeDamage: () => ({ absorbed: 0, overflow: 6 }),
+    };
+    scene._weapons = {
+      heatShots: 17,
+      maxHeatShots: GAME_CONFIG.PLAYER_HEAT_MAX,
+      resetHeat() {
+        this.heatShots = 0;
+      },
+    };
+    scene._formations = [];
+    scene._explode = () => {};
+    scene._drawStatusBars = () => {
+      drawCalls++;
+    };
+    scene._livesText = {
+      setText: (value) => {
+        livesText = value;
+      },
+    };
+    scene.events = { emit: () => {} };
+
+    scene._onPlayerHit(6);
+
+    assert.equal(scene._weapons.heatShots, 0);
+    assert.equal(scene._playerLives, 1);
+    assert.equal(scene._respawning, true);
+    assert.equal(livesText, '× 1');
+    assert.ok(drawCalls >= 2, 'status bars should redraw after death and reset');
   });
 });
 

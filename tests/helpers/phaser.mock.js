@@ -55,6 +55,11 @@ export function installPhaserGlobal() {
       this.strokeStyle = { width, color, alpha };
       return this;
     }
+    setDisplaySize(width, height) {
+      this.displayWidth = width;
+      this.displayHeight = height;
+      return this;
+    }
   }
 
   globalThis.Phaser = {
@@ -173,6 +178,11 @@ export function createMockScene() {
         this.strokeStyle = { width, color, alpha };
         return this;
       },
+      setDisplaySize: function(width, height) {
+        this.displayWidth = width;
+        this.displayHeight = height;
+        return this;
+      },
       setText:        function(v) { this.text = v; return this; },
       on:             () => {},
       destroy:        function() { this.active = false; },
@@ -251,7 +261,7 @@ export function createMockScene() {
         displayWidth: Math.max(x1, x2, x3) - Math.min(x1, x2, x3),
         displayHeight: Math.max(y1, y2, y3) - Math.min(y1, y2, y3),
       }),
-      image:     (x = 0, y = 0) => Object.assign(mockGameObject(), { x, y }),
+      image:     (x = 0, y = 0, texture = '') => Object.assign(mockGameObject(), { x, y, texture }),
       text:      () => {
         const text = mockGameObject();
         text.setStyle = () => text;

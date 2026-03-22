@@ -8,6 +8,7 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload() {
+    this.load.image('spacecraft1', 'assets/sprites/spacecraft1.png');
     this.load.audio('laserSmall_000', 'assets/audio/sfx/laserSmall_000.ogg');
     this.load.audio('laserOverheat_000', 'assets/audio/sfx/laserOverheat_000..ogg');
     this.load.audio('explosionSkirm_000', 'assets/audio/sfx/explosionSkirm_000.ogg');

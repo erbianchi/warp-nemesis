@@ -27,6 +27,11 @@ const {
 const HEAT_BAR_COLOR = 0xff3300;
 const HEAT_WARNING_COLOR = 0xffdd33;
 const HEAT_WARNING_DIM_ALPHA = 0.3;
+const PLAYER_BULLET_WIDTH = 3;
+const PLAYER_WARNING_BULLET_WIDTH = 11;
+const PLAYER_BULLET_HEIGHT = 16;
+const ENEMY_BULLET_WIDTH = 3;
+const ENEMY_BULLET_HEIGHT = 10;
 
 /**
  * True while the weapon heat sits in the warning zone.
@@ -224,10 +229,15 @@ export class GameScene extends Phaser.Scene {
         if (Math.abs(b._pushVx) < 0.5) b._pushVx = 0;
       }
 
+      const playerBullet = this._findCollidingPlayerBullet(b);
+      if (playerBullet) {
+        this._onBulletHitEnemyBullet(playerBullet, b, i);
+        continue;
+      }
+
       if (Math.abs(b.x - px) < 15.5 && Math.abs(b.y - py) < 23) {
         const dmg = b._damage ?? 10;
-        b.destroy();
-        this._eBullets.splice(i, 1);
+        this._destroyEnemyBullet(b, i);
         this._onPlayerHit(dmg);
       }
     }
@@ -243,26 +253,19 @@ export class GameScene extends Phaser.Scene {
   // ── Player ────────────────────────────────────────────────────────────────
 
   _createPlayer() {
-    // Triangle pointing up — nose at top-center, base at bottom.
-    // Vertices span 28×36: bounding box matches the old rectangle exactly.
-    // Physics body stays rectangular (Arcade AABB) — same collision footprint.
-    const p = this.add.triangle(
-      WIDTH / 2, HEIGHT - 80,
-      14, 0,   // nose
-      0,  36,  // bottom-left
-      28, 36,  // bottom-right
-      0x00ff88
-    );
-    p.setOrigin(0.5, 0.5);
+    const p = this.add.image(WIDTH / 2, HEIGHT - 80, 'spacecraft1');
+    p.setOrigin?.(0.5, 0.5);
+    p._baseDisplayWidth = 34;
+    p._baseDisplayHeight = 42;
+    p.setDisplaySize?.(p._baseDisplayWidth, p._baseDisplayHeight);
     this.physics.add.existing(p);
-    p.body.setCollideWorldBounds(true);
+    p.body.setCollideWorldBounds?.(true);
+    p.body.setSize?.(p._baseDisplayWidth, p._baseDisplayHeight, true);
     return p;
   }
 
   /**
-   * Spring-damper rubber-band — one spring, two axes:
-   *   offset > 0  (moving back)    → setScale stretches X, compresses Y
-   *   offset < 0  (moving forward) → setTo moves the nose vertex up
+   * Spring-damper rubber-band for the player sprite.
    * Visual only — physics body is unaffected.
    * @param {number} delta - ms since last frame
    */
@@ -278,16 +281,16 @@ export class GameScene extends Phaser.Scene {
     this._rbVel    += ((target - this._rbOffset) * SPRING - this._rbVel * DAMPING) * dt;
     this._rbOffset += this._rbVel * dt;
 
-    if (this._rbOffset > 0) {
-      // Moving back: horizontal stretch via setScale.
-      this._player.setScale(1 + this._rbOffset, 1 - this._rbOffset * 0.5);
-      this._player.setTo(14, 0, 0, 36, 28, 36);   // reset vertices
-    } else {
-      // Moving forward: extend nose vertex upward via setTo.
-      const noseUp = -this._rbOffset * 18;         // px the nose travels up
-      this._player.setScale(1, 1);
-      this._player.setTo(14, -noseUp, 0, 36, 28, 36);
-    }
+    const backwardStretch = Math.max(0, this._rbOffset);
+    const forwardStretch = Math.max(0, -this._rbOffset);
+    const widthFactor = 1 + backwardStretch * 0.55 - forwardStretch * 0.08;
+    const heightFactor = 1 - backwardStretch * 0.26 + forwardStretch * 0.18;
+    const baseWidth = this._player._baseDisplayWidth ?? this._player.displayWidth ?? 34;
+    const baseHeight = this._player._baseDisplayHeight ?? this._player.displayHeight ?? 42;
+    this._player.setDisplaySize(
+      baseWidth * widthFactor,
+      baseHeight * heightFactor
+    );
   }
 
   _createWASD() {
@@ -359,8 +362,14 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  _respawnAfterDeath() {
+  _resetPlayerHeat() {
+    this._weapons?.resetHeat?.();
     this._stopHeatWarningShake();
+    this._drawStatusBars?.();
+  }
+
+  _respawnAfterDeath() {
+    this._resetPlayerHeat();
     this._respawning = true;
 
     this._explode(this._player.x, this._player.y);
@@ -404,7 +413,10 @@ export class GameScene extends Phaser.Scene {
       });
       this._rbOffset = 0;
       this._rbVel    = 0;
-      this._player.setScale(1, 1);
+      this._player.setDisplaySize(
+        this._player._baseDisplayWidth ?? 34,
+        this._player._baseDisplayHeight ?? 42
+      );
       this._drawStatusBars();
 
       // Roll back score to the start of this squadron — replayed enemies
@@ -424,7 +436,7 @@ export class GameScene extends Phaser.Scene {
 
   _killPlayer() {
     if (this._gameOver) return;
-    this._stopHeatWarningShake();
+    this._resetPlayerHeat();
     this._gameOver = true;
 
     this._explode(this._player.x, this._player.y);
@@ -493,8 +505,7 @@ export class GameScene extends Phaser.Scene {
       ? 0
       : (shotPayload ? shotPayload.damage : (bullet._damage ?? this._weapons.damage));
     const scoreMultiplier = shotPayload?.scoreMultiplier ?? bullet._scoreMultiplier ?? 1;
-    this._weapons.pool.killAndHide(bullet);
-    if (bullet.body) { bullet.body.stop(); bullet.body.enable = false; }
+    this._consumePlayerBullet(bullet);
     if (!enemy.alive || damage <= 0) return;
     if (shotPayload) shotPayload.hitEnemies.add(enemy);
     enemy.takeDamage(damage, scoreMultiplier);
@@ -504,10 +515,15 @@ export class GameScene extends Phaser.Scene {
     if (!bullet?.active || !bonus?.active) return;
 
     const damage = bullet._shotPayload?.damage ?? bullet._damage ?? this._weapons.damage;
-    this._weapons.pool.killAndHide(bullet);
-    if (bullet.body) { bullet.body.stop(); bullet.body.enable = false; }
+    this._consumePlayerBullet(bullet);
 
     bonus.takeDamage(damage);
+  }
+
+  _onBulletHitEnemyBullet(playerBullet, enemyBullet, enemyBulletIdx = this._eBullets.indexOf(enemyBullet)) {
+    if (!playerBullet?.active || !enemyBullet?.active) return;
+    this._consumePlayerBullet(playerBullet);
+    this._destroyEnemyBullet(enemyBullet, enemyBulletIdx);
   }
 
   _onEnemyTouchPlayer(player, enemy) {
@@ -534,6 +550,58 @@ export class GameScene extends Phaser.Scene {
         if (bullet.active) bullet.destroy();
       },
     });
+  }
+
+  _consumePlayerBullet(bullet) {
+    this._weapons.pool.killAndHide(bullet);
+    if (bullet.body) {
+      bullet.body.stop?.();
+      bullet.body.enable = false;
+    }
+  }
+
+  _destroyEnemyBullet(bullet, idx = this._eBullets.indexOf(bullet)) {
+    if (idx !== -1) this._eBullets.splice(idx, 1);
+    bullet.destroy?.();
+  }
+
+  _findCollidingPlayerBullet(enemyBullet) {
+    const bullets = this._weapons?.pool?.getChildren?.() ?? [];
+    for (const playerBullet of bullets) {
+      if (!playerBullet?.active) continue;
+      if (this._doBulletsOverlap(playerBullet, enemyBullet)) return playerBullet;
+    }
+    return null;
+  }
+
+  _doBulletsOverlap(playerBullet, enemyBullet) {
+    const playerHitbox = this._resolvePlayerBulletHitbox(playerBullet);
+    const enemyHitbox = this._resolveEnemyBulletHitbox(enemyBullet);
+    return Math.abs((playerBullet?.x ?? 0) - (enemyBullet?.x ?? 0)) < (playerHitbox.halfW + enemyHitbox.halfW)
+      && Math.abs((playerBullet?.y ?? 0) - (enemyBullet?.y ?? 0)) < (playerHitbox.halfH + enemyHitbox.halfH);
+  }
+
+  _resolvePlayerBulletHitbox(bullet) {
+    const textureKey = bullet?.texture?.key ?? bullet?.texture ?? '';
+    const width = bullet?.displayWidth
+      ?? bullet?.width
+      ?? (textureKey === 'bullet_laser_warning' ? PLAYER_WARNING_BULLET_WIDTH : PLAYER_BULLET_WIDTH);
+    const height = bullet?.displayHeight
+      ?? bullet?.height
+      ?? PLAYER_BULLET_HEIGHT;
+    return {
+      halfW: Math.max(1, width * 0.5),
+      halfH: Math.max(1, height * 0.5),
+    };
+  }
+
+  _resolveEnemyBulletHitbox(bullet) {
+    const width = bullet?.displayWidth ?? bullet?.width ?? ENEMY_BULLET_WIDTH;
+    const height = bullet?.displayHeight ?? bullet?.height ?? ENEMY_BULLET_HEIGHT;
+    return {
+      halfW: Math.max(1, width * 0.5),
+      halfH: Math.max(1, height * 0.5),
+    };
   }
 
   _onEnemyDied({ x, y, type, vx, vy, score, scoreMultiplier = 1, dropChance = 0 }) {
@@ -815,8 +883,9 @@ export class GameScene extends Phaser.Scene {
       fontSize: '12px', fill: '#ffffff', fontFamily: 'monospace',
     }).setOrigin(1, 0).setDepth(10);
 
-    // Small ship triangle (same shape/color as player) + "× N" life count
-    this.add.triangle(14, 17, 6, 0, 0, 14, 12, 14, 0x00ff88).setDepth(10);
+    this.add.image(14, 17, 'spacecraft1')
+      .setDisplaySize?.(11, 10)
+      .setDepth(10);
     this._livesText = this.add.text(24, 9, `× ${this._playerLives}`, {
       fontSize: '12px', fill: '#ffffff', fontFamily: 'monospace',
     }).setDepth(10);

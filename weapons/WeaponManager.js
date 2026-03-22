@@ -68,6 +68,16 @@ export class WeaponManager {
   }
 
   /**
+   * Clear the current heat state without changing the equipped weapons.
+   * Used when the player loses a life.
+   */
+  resetHeat() {
+    this._heatShots = 0;
+    this._isOverheated = false;
+    this._lastShotInfo = null;
+  }
+
+  /**
    * Returns a snapshot of all slots for UI rendering.
    * Populated slots return `{ key, name, color }`; empty slots return `null`.
    * @returns {Array<{key: string, name: string, color: number}|null>}

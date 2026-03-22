@@ -98,6 +98,18 @@ describe('WeaponManager', () => {
     assert.equal(manager._cooldown, 0);
   });
 
+  it('resetHeat clears heat and the overheat lock', () => {
+    manager._heatShots = manager.maxHeatShots;
+    manager._isOverheated = true;
+    manager._lastShotInfo = { warningShot: true };
+
+    manager.resetHeat();
+
+    assert.equal(manager.heatShots, 0);
+    assert.equal(manager.isOverheated, false);
+    assert.equal(manager.lastShotInfo, null);
+  });
+
   it('has exactly WEAPON_SLOTS slots', async () => {
     const { GAME_CONFIG } = await import('../../config/game.config.js');
     assert.equal(manager._slots.length, GAME_CONFIG.WEAPON_SLOTS);
