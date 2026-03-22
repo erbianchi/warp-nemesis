@@ -553,16 +553,23 @@ describe('GameScene player death', () => {
     const scene = new GameScene();
     Object.assign(scene, createMockScene());
     let drawCalls = 0;
+    let weaponHudRedraws = 0;
     let livesText = '';
+    let shieldReset = null;
+    let weaponReset = false;
 
     scene._gameOver = false;
     scene._respawning = false;
     scene._player = scene.add.image(180, 420, 'spacecraft1');
     scene._playerHp = 6;
     scene._playerLives = 2;
-    scene._playerShield = 0;
+    scene._playerShield = 150;
     scene._playerShieldFx = {
       takeDamage: () => ({ absorbed: 0, overflow: 6 }),
+      setPoints: (value) => {
+        shieldReset = value;
+        scene._playerShield = value;
+      },
     };
     scene._weapons = {
       heatShots: 17,
@@ -570,11 +577,17 @@ describe('GameScene player death', () => {
       resetHeat() {
         this.heatShots = 0;
       },
+      resetPrimaryWeapon() {
+        weaponReset = true;
+      },
     };
     scene._formations = [];
     scene._explode = () => {};
     scene._drawStatusBars = () => {
       drawCalls++;
+    };
+    scene._drawWeaponDisplay = () => {
+      weaponHudRedraws++;
     };
     scene._livesText = {
       setText: (value) => {
@@ -586,6 +599,10 @@ describe('GameScene player death', () => {
     scene._onPlayerHit(6);
 
     assert.equal(scene._weapons.heatShots, 0);
+    assert.equal(shieldReset, GAME_CONFIG.PLAYER_SHIELD_DEFAULT);
+    assert.equal(scene._playerShield, GAME_CONFIG.PLAYER_SHIELD_DEFAULT);
+    assert.equal(weaponReset, true);
+    assert.equal(weaponHudRedraws, 1);
     assert.equal(scene._playerLives, 1);
     assert.equal(scene._respawning, true);
     assert.equal(livesText, '× 1');

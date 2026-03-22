@@ -368,8 +368,24 @@ export class GameScene extends Phaser.Scene {
     this._drawStatusBars?.();
   }
 
+  _resetPlayerBonuses() {
+    if (this._playerShieldFx?.setPoints) {
+      this._playerShieldFx.setPoints(PLAYER_SHIELD_DEFAULT);
+    } else {
+      this._playerShield = PLAYER_SHIELD_DEFAULT;
+      this.events.emit(EVENTS.SHIELD_CHANGED, {
+        current: this._playerShield,
+        max: PLAYER_SHIELD_MAX,
+      });
+    }
+
+    this._weapons?.resetPrimaryWeapon?.();
+    this._drawWeaponDisplay?.();
+  }
+
   _respawnAfterDeath() {
     this._resetPlayerHeat();
+    this._resetPlayerBonuses();
     this._respawning = true;
 
     this._explode(this._player.x, this._player.y);
@@ -437,6 +453,7 @@ export class GameScene extends Phaser.Scene {
   _killPlayer() {
     if (this._gameOver) return;
     this._resetPlayerHeat();
+    this._resetPlayerBonuses();
     this._gameOver = true;
 
     this._explode(this._player.x, this._player.y);

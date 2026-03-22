@@ -111,6 +111,18 @@ describe('WeaponManager', () => {
     assert.equal(manager.lastShotInfo, null);
   });
 
+  it('resetPrimaryWeapon restores the base laser and clears live bullets', () => {
+    manager.equipPrimaryWeapon('tLaser');
+    manager.tryFire(240, 500);
+
+    manager.resetPrimaryWeapon();
+
+    assert.equal(manager._slots[0], 'laser');
+    assert.equal(manager.getSlots()[0].name, 'LASER');
+    assert.ok(pool._children.every(bullet => bullet.active === false));
+    assert.ok(pool._children.every(bullet => bullet.rotation === 0));
+  });
+
   it('has exactly WEAPON_SLOTS slots', async () => {
     const { GAME_CONFIG } = await import('../../config/game.config.js');
     assert.equal(manager._slots.length, GAME_CONFIG.WEAPON_SLOTS);

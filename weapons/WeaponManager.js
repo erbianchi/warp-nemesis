@@ -82,6 +82,21 @@ export class WeaponManager {
   }
 
   /**
+   * Reset slot 1 back to the default laser and clear live player shots.
+   * @returns {string}
+   */
+  resetPrimaryWeapon() {
+    this._slots[0] = DEFAULT_PRIMARY_WEAPON;
+    this._cfg = WEAPONS[this._slots[0]];
+
+    for (const bullet of this._pool.getChildren()) {
+      if (bullet?.active) this._releaseBullet(bullet);
+    }
+
+    return this._slots[0];
+  }
+
+  /**
    * Equip a new weapon into slot 1.
    * @param {string} weaponKey
    * @returns {string}
