@@ -119,12 +119,15 @@ export class GameScene extends Phaser.Scene {
     this.events.on(EVENTS.SQUADRON_SPAWNED, this._onSquadronSpawned, this);
 
     // ── WaveSpawner ─────────────────────────────────────────────────────────
+    this._levelIndex = 0;   // Level 1
+
     this._spawner = new WaveSpawner(
       this,
-      0,   // Level 1
+      this._levelIndex,
       (type, x, y, stats, dance) => this._spawnEnemy(type, x, y, stats, dance)
     );
 
+    this._showLevelBanner(this._levelIndex + 1);
     this.time.delayedCall(2000, () => this._spawner.start());
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.start('MenuScene'));
@@ -551,6 +554,34 @@ export class GameScene extends Phaser.Scene {
     this._nextHeatWarningShakeAt = 0;
     const camera = this.cameras?.main;
     if (camera?.stopShake) camera.stopShake();
+  }
+
+  /**
+   * Flash "LEVEL N" centered on screen for ~1 second, then fade out.
+   * @param {number} levelNumber - 1-based level number
+   */
+  _showLevelBanner(levelNumber) {
+    const text = this.add.text(WIDTH / 2, HEIGHT / 2, `LEVEL ${levelNumber}`, {
+      fontSize: '36px', fill: '#ffffff', fontFamily: 'monospace', fontStyle: 'bold',
+    }).setOrigin(0.5).setDepth(30).setAlpha(0);
+
+    this.tweens.add({
+      targets:  text,
+      alpha:    1,
+      duration: 150,
+      ease:     'Linear',
+      onComplete: () => {
+        this.time.delayedCall(1000, () => {
+          this.tweens.add({
+            targets:  text,
+            alpha:    0,
+            duration: 300,
+            ease:     'Linear',
+            onComplete: () => text.destroy(),
+          });
+        });
+      },
+    });
   }
 
   _buildWeaponDisplay() {
