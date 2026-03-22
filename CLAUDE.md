@@ -379,23 +379,27 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 ### What is implemented and working
 - `BootScene` — generates all placeholder textures (player, skirm, bullets, particles)
 - `MenuScene` — Start button, transitions to GameScene
-- `GameScene` — main loop: player movement, weapon firing, enemy management, bullet AABB, particle explosions, collision (bullets → enemy, enemy body → player)
+- `GameScene` — main loop: player movement, weapon firing with heat system, enemy management, bullet AABB, physics-driven fragment explosions, collision (bullets → enemy, enemy body → player); exports `isHeatWarningActive`, `resolveHeatBarStyle`
 - `ScrollingBackground` — scrolling starfield
-- `WeaponManager` — laser weapon, bullet pool, 2-slot display
+- `WeaponManager` — laser weapon, bullet pool, 2-slot display; weapon heat accumulates per shot, recovers when not firing, hard-locks on overheat and resumes after `PLAYER_OVERHEAT_RECOVERY_SHOTS` cool down; in the warning zone, fires ONE bullet using the `bullet_laser_warning` texture (two thin beams baked into a single 11 px sprite, centered on the ship) — one damage event, no double-dip
+- `EffectsSystem` — physics-driven fragment explosions (real Arcade bodies, gravity, drag); directional momentum inheritance; directional shockwave push on nearby enemies and bullets
 - `RunState` — score and kill tracking
-- `EnemyBase` — abstract base class for enemies (Phaser sprite + stats + fire cooldown)
+- `EnemyBase` — abstract base class: Phaser sprite + stats + fire cooldown + spring-damper push system (`applyPush`) + velocity tracking for directional explosions
 - `Skirm` — first enemy type; 5 tween-driven dances: `sweep_left`, `sweep_right`, `zigzag`, `side_cross`, `fan_out`
 - `FormationController` — the "straight" dance: 8 ships fly the loop path together, settle into a 2-row slot formation, drift + shoot in sequence, do pattern runs every 10s
-- `WaveSpawner` — roguelike pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning
+- `WaveSpawner` — roguelike pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning; `replayLastSquadron()` for respawn
 - `levels.config.js` — currently **1 level, 1 wave, 1 squadron** (8 Skirms, straight/formation dance). Expand when new enemies and dances are ready.
 - `enemies.config.js` — `skirm` stats + `standard`, `heavy`, `light`, `ace` plane presets
+- **Player ship** — green triangle (28×36, same AABB as old rectangle); 3 lives displayed top-left as triangle icon + "× N"; respawn on life loss (1.5 s pause, screen clear, replay last squadron)
+- **HUD** — score (animated count-up), lives (top-left), weapon slot boxes (bottom-right), status bars (bottom-left): HP bar green 0–200 init 10, shield bar blue 0–400 init 0, heat bar red/yellow-blinking 0–`PLAYER_HEAT_MAX` shots
+- **Damage model** — shield absorbs hits first; HP decreases by damage; HP ≤ 0 costs 1 life; HP resets to `PLAYER_HP_DEFAULT` on respawn
 
 ### What is stub / not yet implemented
-- `PlayerShip.js` — empty; player is currently a plain rectangle in GameScene
+- `PlayerShip.js` — empty; player is currently a plain triangle in `GameScene`
 - All enemy types except Skirm (`Fighter`, `Bomber`, `Interceptor`, `Kamikaze`, `TurretDrone`)
 - All bosses (`BossBase`, `Boss_L1` … `Boss_L7`)
 - All weapons except laser (`SpreadShot`, `Missile`, `Plasma`, `Railgun`, `DualLaser`, `Bomb`)
-- `BonusSystem`, `CollisionSystem`, `EffectsSystem` — inline in GameScene for now
+- `BonusSystem`, `CollisionSystem` — not yet extracted from GameScene
 - `HUDScene`, `LevelTransitionScene`, `GameOverScene`, `VictoryScene` — empty stubs
 - `ships.config.js`, `bonuses.config.js` — empty
 - Levels 2–7 — not defined

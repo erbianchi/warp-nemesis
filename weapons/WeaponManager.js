@@ -6,6 +6,8 @@
 import { GAME_CONFIG } from '../config/game.config.js';
 import { WEAPONS }     from '../config/weapons.config.js';
 
+const PLAYER_LASER_SPAWN_Y_OFFSET = 18;
+
 export class WeaponManager {
   /**
    * @param {Phaser.Scene} scene
@@ -26,10 +28,12 @@ export class WeaponManager {
     this._overheatRecoveryShots = GAME_CONFIG.PLAYER_OVERHEAT_RECOVERY_SHOTS;
     this._heatWarningRatio = GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO;
     this._heatWarningBonusPerShot = GAME_CONFIG.PLAYER_HEAT_WARNING_BONUS_PER_SHOT;
-    this._heatWarningLaserCount = GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_COUNT;
-    this._heatWarningLaserSpacing = GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_SPACING;
-    this._defaultLaserSfxKey = 'laserSmall_000';
-    this._warningLaserSfxKey = 'laserOverheat_000';
+    this._heatWarningShotShakeMs = GAME_CONFIG.PLAYER_HEAT_WARNING_SHOT_SHAKE_MS;
+    this._heatWarningShotShakeMsStep = GAME_CONFIG.PLAYER_HEAT_WARNING_SHOT_SHAKE_MS_STEP;
+    this._heatWarningShotShakeIntensity = GAME_CONFIG.PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY;
+    this._heatWarningShotShakeIntensityStep = GAME_CONFIG.PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY_STEP;
+    this._laserTextureKey = 'bullet_laser';
+    this._lastShotInfo = null;
 
     this._pool = scene.physics.add.group({
       classType:      Phaser.Physics.Arcade.Image,
@@ -45,6 +49,9 @@ export class WeaponManager {
 
   /** Damage dealt per bullet by the currently active weapon. */
   get damage() { return this._cfg.damage; }
+
+  /** Snapshot of the most recent shot fired this frame. */
+  get lastShotInfo() { return this._lastShotInfo; }
 
   /** Current heat measured in shots. Can be fractional while cooling. */
   get heatShots() { return this._heatShots; }
@@ -107,19 +114,20 @@ export class WeaponManager {
    * @returns {boolean} true when a shot is fired
    */
   tryFire(x, y) {
+    this._lastShotInfo = null;
     if (this._cooldown > 0 || !this._slots[0] || this._isOverheated) return false;
 
     const nextHeatShots = Math.min(this._maxHeatShots, this._heatShots + 1);
-    const warningShot = this._slots[0] === 'laser' && this._isHeatWarningActive(nextHeatShots);
+    const warningShot = this._isHeatWarningActive(nextHeatShots);
+    const warningStep = warningShot ? this._getHeatBonusStepCount(nextHeatShots) : 0;
     const scoreMultiplier = warningShot ? this._getHeatBonusMultiplier(nextHeatShots) : 1;
     const totalDamage = Math.round(this._cfg.damage * scoreMultiplier);
-    const shotPayload = this._createShotPayload(totalDamage, scoreMultiplier);
+    const shotPayload = this._createShotPayload(totalDamage, scoreMultiplier, warningStep);
 
-    if (warningShot) {
-      if (!this._fireWarningLaserPair(x, y, shotPayload)) return false;
-    } else if (!this._fireSingleBullet(x, y, shotPayload)) {
-      return false;
-    }
+    const textureKey = (warningShot && this._cfg.warningTextureKey)
+      ? this._cfg.warningTextureKey
+      : this._laserTextureKey;
+    if (!this._fireSingleBullet(x, y, shotPayload, textureKey)) return false;
 
     this._cooldown = this._cfg.fireRate;
     this._heatShots = nextHeatShots;
@@ -128,51 +136,43 @@ export class WeaponManager {
       this._isOverheated = true;
     }
 
-    if (this._slots[0] === 'laser') {
-      const laserSfxKey = warningShot ? this._warningLaserSfxKey : this._defaultLaserSfxKey;
-      this._scene.sound?.play(laserSfxKey);
+    if (this._cfg.sfxDefault) {
+      this._scene.sound?.play(warningShot ? (this._cfg.sfxWarning ?? this._cfg.sfxDefault) : this._cfg.sfxDefault);
     }
 
+    this._lastShotInfo = shotPayload;
     return true;
   }
 
-  _createShotPayload(damage, scoreMultiplier = 1) {
+  _createShotPayload(damage, scoreMultiplier = 1, warningStep = 0) {
+    const warningShot = warningStep > 0;
+    const extraSteps = Math.max(0, warningStep - 1);
     return {
       damage,
-      remainingDamage: damage,
+      hitEnemies: new Set(),
       scoreMultiplier,
+      warningShot,
+      shotShakeMs: warningShot
+        ? this._heatWarningShotShakeMs + extraSteps * this._heatWarningShotShakeMsStep
+        : 0,
+      shotShakeIntensity: warningShot
+        ? this._heatWarningShotShakeIntensity + extraSteps * this._heatWarningShotShakeIntensityStep
+        : 0,
     };
   }
 
-  _fireSingleBullet(x, y, shotPayload) {
-    const bullet = this._pool.get(x, y - 18);
+  _fireSingleBullet(x, y, shotPayload, textureKey = this._laserTextureKey) {
+    const bullet = this._pool.get(x, y - PLAYER_LASER_SPAWN_Y_OFFSET);
     if (!bullet) return false;
-    this._armBullet(bullet, x, y, shotPayload);
+    this._armBullet(bullet, x, y, shotPayload, textureKey);
     return true;
   }
 
-  _fireWarningLaserPair(x, y, shotPayload) {
-    const halfSpacing = this._heatWarningLaserSpacing / 2;
-    const leftX = x - halfSpacing;
-    const rightX = x + halfSpacing;
-
-    const leftBullet = this._pool.get(leftX, y - 18);
-    if (!leftBullet) return false;
-
-    const rightBullet = this._pool.get(rightX, y - 18);
-    if (!rightBullet || this._heatWarningLaserCount < 2) {
-      this._armBullet(leftBullet, x, y, shotPayload);
-      return true;
-    }
-
-    this._armBullet(leftBullet, leftX, y, shotPayload);
-    this._armBullet(rightBullet, rightX, y, shotPayload);
-    return true;
-  }
-
-  _armBullet(bullet, x, y, shotPayload) {
-    bullet.setActive(true).setVisible(true).setScale(1, 1);
-    bullet.body.reset(x, y - 18);
+  _armBullet(bullet, x, y, shotPayload, textureKey = this._laserTextureKey) {
+    bullet.setActive(true).setVisible(true);
+    if (bullet.setTexture) bullet.setTexture(textureKey);
+    bullet.setScale(1, 1);
+    bullet.body.reset(x, y - PLAYER_LASER_SPAWN_Y_OFFSET);
     bullet.body.enable = true;
     bullet.body.setVelocityY(-this._cfg.speed);
     bullet.body.allowGravity = false;
@@ -182,15 +182,33 @@ export class WeaponManager {
     bullet.body.updateFromGameObject?.();
   }
 
+  _releaseBullet(bullet) {
+    if (!bullet) return;
+
+    if (bullet.setTexture) bullet.setTexture(this._laserTextureKey);
+    bullet.setScale?.(1, 1);
+    bullet._damage = this._cfg.damage;
+    bullet._scoreMultiplier = 1;
+    bullet._shotPayload = null;
+    this._pool.killAndHide(bullet);
+    if (bullet.body) {
+      bullet.body.stop();
+      bullet.body.enable = false;
+    }
+  }
+
   _isHeatWarningActive(heatShots = this._heatShots) {
     return this._maxHeatShots > 0 && (heatShots / this._maxHeatShots) >= this._heatWarningRatio;
   }
 
-  _getHeatBonusMultiplier(heatShots = this._heatShots) {
-    if (!this._isHeatWarningActive(heatShots)) return 1;
+  _getHeatBonusStepCount(heatShots = this._heatShots) {
+    if (!this._isHeatWarningActive(heatShots)) return 0;
 
     const warningStartHeat = Math.ceil(this._maxHeatShots * this._heatWarningRatio);
-    const warningShotIndex = Math.max(1, Math.floor(heatShots) - warningStartHeat + 1);
-    return 1 + warningShotIndex * this._heatWarningBonusPerShot;
+    return Math.max(1, Math.floor(heatShots) - warningStartHeat + 1);
+  }
+
+  _getHeatBonusMultiplier(heatShots = this._heatShots) {
+    return 1 + this._getHeatBonusStepCount(heatShots) * this._heatWarningBonusPerShot;
   }
 }

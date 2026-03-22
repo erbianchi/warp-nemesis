@@ -3,11 +3,14 @@
 
 export const WEAPONS = {
   laser: {
-    fireRate: 100,    // ms between shots (10 shots/sec)
-    speed:    700,    // px/s upward
-    damage:   10,
-    color:    0x00ffff,
-    poolSize: 80,
+    fireRate:          100,   // ms between shots (10 shots/sec)
+    speed:             700,   // px/s upward
+    damage:            10,
+    color:             0x00ffff,
+    poolSize:          80,
+    warningTextureKey: 'bullet_laser_warning',  // single bullet, wider texture showing 2 beams
+    sfxDefault:        'laserSmall_000',
+    sfxWarning:        'laserOverheat_000',
   },
   spreadShot: { fireRate: 250, speed: 550, damage: 7,  color: 0xffff00, poolSize: 60 },
   missile:    { fireRate: 600, speed: 320, damage: 40, color: 0xff6600, poolSize: 20, homing: true },

@@ -19,9 +19,9 @@ Built with **Phaser 3** — no build toolchain, no npm, runs directly in a brows
 
 - The default laser uses a `30`-shot heat bar.
 - The bar turns yellow at `70%` heat.
-- Yellow shots fire as two side-by-side lasers, but they behave as one shared hot shot.
+- Yellow shots are one beam that visually shows as two thin parallel lasers with a gap — one bullet, one damage event, fired from the center of the ship.
 - Each yellow shot adds `+10%` damage and `+10%` score over base, stacking one step per shot while the bar stays yellow.
-- Either yellow beam can apply the full boosted shot, but the pair does not double-dip if both beams overlap the same target.
+- Score keeps the bonus from hot damage already dealt, even if a later non-hot shot gets the final hit.
 - A full overheat locks firing until `20` shots of heat have cooled off.
 
 ---

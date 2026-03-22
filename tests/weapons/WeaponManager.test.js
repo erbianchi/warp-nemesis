@@ -8,7 +8,9 @@ installPhaserGlobal();
 const { WEAPONS } = await import('../../config/weapons.config.js');
 
 const LASER = WEAPONS.laser;
-
+const assertClose = (actual, expected, epsilon = 1e-9) => {
+  assert.ok(Math.abs(actual - expected) <= epsilon, `expected ${actual} to be within ${epsilon} of ${expected}`);
+};
 // ---------------------------------------------------------------------------
 // Minimal pool mock — mirrors the Phaser arcade physics group API
 // ---------------------------------------------------------------------------
@@ -28,9 +30,10 @@ function createMockPool(maxSize = 80) {
       }
       if (children.length >= maxSize) return null;
       const b = {
-        active: true, visible: true, x, y,
+        active: true, visible: true, x, y, texture: 'bullet_laser',
         setActive:  (v) => { b.active  = v; return b; },
         setVisible: (v) => { b.visible = v; return b; },
+        setTexture: (v) => { b.texture = v; return b; },
         setScale:   (sx, sy = sx) => { b.scaleX = sx; b.scaleY = sy; return b; },
         body: {
           _vx: 0, _vy: 0, enable: true,
@@ -153,6 +156,11 @@ describe('WeaponManager', () => {
     assert.ok(b.y < 500, `bullet y (${b.y}) should be above player y (500)`);
   });
 
+  it('fires the normal laser from the centered ship muzzle', () => {
+    manager.tryFire(240, 500);
+    assert.equal(pool._children[0].x, 240);
+  });
+
   it('bullet travels upward (negative Y velocity)', () => {
     manager.tryFire(240, 500);
     assert.ok(pool._children[0].body._vy < 0, 'bullet should have negative Y velocity');
@@ -166,12 +174,12 @@ describe('WeaponManager', () => {
   it('normal laser shots keep the default thickness and base damage', () => {
     manager.tryFire(240, 500);
     const bullet = pool._children[0];
+    assert.equal(bullet.texture, 'bullet_laser');
     assert.equal(bullet.scaleX, 1);
     assert.equal(bullet.scaleY, 1);
     assert.equal(bullet._damage, LASER.damage);
     assert.equal(bullet._scoreMultiplier, 1);
     assert.equal(bullet._shotPayload.damage, LASER.damage);
-    assert.equal(bullet._shotPayload.remainingDamage, LASER.damage);
   });
 
   it('sets cooldown after firing', () => {
@@ -196,60 +204,59 @@ describe('WeaponManager', () => {
     assert.deepEqual(scene.soundCalls, ['laserOverheat_000']);
   });
 
-  it('the first yellow-bar shot splits into two small beams with a 10 percent bonus', () => {
+  it('the first yellow-bar shot fires ONE bullet centered on the ship with a 10 percent bonus', () => {
     manager._heatShots = manager.maxHeatShots * 0.7 - 1;
     manager.tryFire(240, 500);
-    assert.equal(pool._children.length, 2);
+    assert.equal(pool._children.length, 1);
 
-    const bullets = [...pool._children].sort((a, b) => a.x - b.x);
-    assert.equal(bullets[0].x, 238);
-    assert.equal(bullets[1].x, 242);
-    assert.equal(bullets[0]._damage, 11);
-    assert.equal(bullets[1]._damage, 11);
-    assert.equal(bullets[0]._scoreMultiplier, 1.1);
-    assert.equal(bullets[1]._scoreMultiplier, 1.1);
-    assert.strictEqual(bullets[0]._shotPayload, bullets[1]._shotPayload);
-    assert.equal(bullets[0]._shotPayload.remainingDamage, 11);
+    const bullet = pool._children[0];
+    assert.equal(bullet.x, 240);
+    assert.equal(bullet.texture, 'bullet_laser_warning');
+    assert.equal(bullet._damage, 11);
+    assert.equal(bullet._scoreMultiplier, 1.1);
+    assert.equal(bullet.scaleX, 1);
+    assert.equal(manager.lastShotInfo.warningShot, true);
+    assert.equal(manager.lastShotInfo.shotShakeMs, 24);
+    assertClose(manager.lastShotInfo.shotShakeIntensity, 0.0018);
   });
 
   it('fractional cooling near the threshold still keeps the next yellow shot at 10 percent', () => {
     manager._heatShots = manager.maxHeatShots * 0.7 - 0.1;
     manager.tryFire(240, 500);
 
-    const bullets = [...pool._children];
-    assert.equal(bullets[0]._damage, 11);
-    assert.equal(bullets[1]._damage, 11);
-    assert.equal(bullets[0]._scoreMultiplier, 1.1);
-    assert.equal(bullets[1]._scoreMultiplier, 1.1);
+    assert.equal(pool._children.length, 1);
+    assert.equal(pool._children[0]._damage, 11);
+    assert.equal(pool._children[0]._scoreMultiplier, 1.1);
   });
 
-  it('warning-zone laser shots keep ramping by 10 percent per extra yellow-bar shot', () => {
+  it('warning-zone shots keep ramping by 10 percent per extra yellow-bar shot', () => {
     manager._heatShots = manager.maxHeatShots * 0.7;
     manager.tryFire(240, 500);
-    assert.equal(pool._children.length, 2);
+    assert.equal(pool._children.length, 1);
 
-    const bullets = [...pool._children].sort((a, b) => a.x - b.x);
-    assert.equal(bullets[0].x, 238);
-    assert.equal(bullets[1].x, 242);
-    assert.equal(bullets[0].scaleX, 1);
-    assert.equal(bullets[1].scaleX, 1);
-    assert.equal(bullets[0].scaleY, 1);
-    assert.equal(bullets[1].scaleY, 1);
-    assert.equal(bullets[0]._damage, 12);
-    assert.equal(bullets[1]._damage, 12);
-    assert.equal(bullets[0]._scoreMultiplier, 1.2);
-    assert.equal(bullets[1]._scoreMultiplier, 1.2);
+    const bullet = pool._children[0];
+    assert.equal(bullet.x, 240);
+    assert.equal(bullet.texture, 'bullet_laser_warning');
+    assert.equal(bullet.scaleX, 1);
+    assert.equal(bullet._damage, 12);
+    assert.equal(bullet._scoreMultiplier, 1.2);
+    assert.equal(manager.lastShotInfo.shotShakeMs, 26);
+    assertClose(manager.lastShotInfo.shotShakeIntensity, 0.002);
   });
 
   it('the final pre-overheat shot carries the full stacked yellow-bar bonus', () => {
     manager._heatShots = manager.maxHeatShots - 1;
     manager.tryFire(240, 500);
+    assert.equal(pool._children.length, 1);
 
-    const bullets = [...pool._children].sort((a, b) => a.x - b.x);
-    assert.equal(bullets[0]._damage, 20);
-    assert.equal(bullets[1]._damage, 20);
-    assert.equal(bullets[0]._scoreMultiplier, 2);
-    assert.equal(bullets[1]._scoreMultiplier, 2);
+    const bullet = pool._children[0];
+    assert.equal(bullet.x, 240);
+    assert.equal(bullet.texture, 'bullet_laser_warning');
+    assert.equal(bullet._damage, 20);
+    assert.equal(bullet._scoreMultiplier, 2);
+    assert.equal(bullet.scaleX, 1);
+    assert.equal(manager.lastShotInfo.shotShakeMs, 42);
+    assertClose(manager.lastShotInfo.shotShakeIntensity, 0.0036);
     assert.equal(manager.isOverheated, true);
   });
 

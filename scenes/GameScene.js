@@ -142,7 +142,8 @@ export class GameScene extends Phaser.Scene {
     this._weapons.update(delta, wantsToFire);
 
     if (wantsToFire) {
-      this._weapons.tryFire(this._player.x, this._player.y);
+      const didFire = this._weapons.tryFire(this._player.x, this._player.y);
+      if (didFire) this._playPlayerShotFeedback(this._weapons.lastShotInfo);
     }
     this._updateHeatWarningShake(time);
     this._drawStatusBars(time);
@@ -205,6 +206,7 @@ export class GameScene extends Phaser.Scene {
       28, 36,  // bottom-right
       0x00ff88
     );
+    p.setOrigin(0.5, 0.5);
     this.physics.add.existing(p);
     p.body.setCollideWorldBounds(true);
     return p;
@@ -370,14 +372,15 @@ export class GameScene extends Phaser.Scene {
 
   _onBulletHitEnemy(bullet, enemy) {
     const shotPayload = bullet._shotPayload;
-    const damage = shotPayload
-      ? Math.max(0, shotPayload.remainingDamage)
-      : (bullet._damage ?? this._weapons.damage);
+    const alreadyHit = shotPayload?.hitEnemies?.has(enemy);
+    const damage = alreadyHit
+      ? 0
+      : (shotPayload ? shotPayload.damage : (bullet._damage ?? this._weapons.damage));
     const scoreMultiplier = shotPayload?.scoreMultiplier ?? bullet._scoreMultiplier ?? 1;
     this._weapons.pool.killAndHide(bullet);
     if (bullet.body) { bullet.body.stop(); bullet.body.enable = false; }
     if (!enemy.alive || damage <= 0) return;
-    if (shotPayload) shotPayload.remainingDamage = 0;
+    if (shotPayload) shotPayload.hitEnemies.add(enemy);
     enemy.takeDamage(damage, scoreMultiplier);
   }
 
@@ -422,7 +425,10 @@ export class GameScene extends Phaser.Scene {
       val:      target,
       duration: 600,
       ease:     'Linear',
-      onUpdate: () => this._scoreText.setText(`SCORE  ${Math.floor(obj.val)}`),
+      onUpdate: () => {
+        this._displayedScore = obj.val;
+        this._scoreText.setText(`SCORE  ${Math.floor(obj.val)}`);
+      },
       onComplete: () => { this._displayedScore = target; },
     });
   }
@@ -496,6 +502,19 @@ export class GameScene extends Phaser.Scene {
       if (rect.setFillStyle) rect.setFillStyle(color, 1);
       rect.setAlpha(1);
     }
+  }
+
+  _playPlayerShotFeedback(shotInfo = this._weapons?.lastShotInfo) {
+    if (!shotInfo?.warningShot) return;
+
+    const camera = this.cameras?.main;
+    if (!camera?.shake) return;
+
+    camera.shake(
+      shotInfo.shotShakeMs,
+      shotInfo.shotShakeIntensity,
+      true
+    );
   }
 
   _updateHeatWarningShake(timeMs = this._hudTimeMs) {
