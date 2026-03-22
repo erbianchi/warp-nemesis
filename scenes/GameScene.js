@@ -369,11 +369,16 @@ export class GameScene extends Phaser.Scene {
   // ── Collision handlers ────────────────────────────────────────────────────
 
   _onBulletHitEnemy(bullet, enemy) {
-    const damage = bullet._damage ?? this._weapons.damage;
+    const shotPayload = bullet._shotPayload;
+    const damage = shotPayload
+      ? Math.max(0, shotPayload.remainingDamage)
+      : (bullet._damage ?? this._weapons.damage);
+    const scoreMultiplier = shotPayload?.scoreMultiplier ?? bullet._scoreMultiplier ?? 1;
     this._weapons.pool.killAndHide(bullet);
     if (bullet.body) { bullet.body.stop(); bullet.body.enable = false; }
-    if (!enemy.alive) return;
-    enemy.takeDamage(damage, bullet._scoreMultiplier ?? 1);
+    if (!enemy.alive || damage <= 0) return;
+    if (shotPayload) shotPayload.remainingDamage = 0;
+    enemy.takeDamage(damage, scoreMultiplier);
   }
 
   _onEnemyTouchPlayer(player, enemy) {

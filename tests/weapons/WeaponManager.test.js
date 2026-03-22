@@ -170,6 +170,8 @@ describe('WeaponManager', () => {
     assert.equal(bullet.scaleY, 1);
     assert.equal(bullet._damage, LASER.damage);
     assert.equal(bullet._scoreMultiplier, 1);
+    assert.equal(bullet._shotPayload.damage, LASER.damage);
+    assert.equal(bullet._shotPayload.remainingDamage, LASER.damage);
   });
 
   it('sets cooldown after firing', () => {
@@ -202,9 +204,12 @@ describe('WeaponManager', () => {
     const bullets = [...pool._children].sort((a, b) => a.x - b.x);
     assert.equal(bullets[0].x, 238);
     assert.equal(bullets[1].x, 242);
-    assert.equal(bullets[0]._damage + bullets[1]._damage, 11);
+    assert.equal(bullets[0]._damage, 11);
+    assert.equal(bullets[1]._damage, 11);
     assert.equal(bullets[0]._scoreMultiplier, 1.1);
     assert.equal(bullets[1]._scoreMultiplier, 1.1);
+    assert.strictEqual(bullets[0]._shotPayload, bullets[1]._shotPayload);
+    assert.equal(bullets[0]._shotPayload.remainingDamage, 11);
   });
 
   it('fractional cooling near the threshold still keeps the next yellow shot at 10 percent', () => {
@@ -212,7 +217,8 @@ describe('WeaponManager', () => {
     manager.tryFire(240, 500);
 
     const bullets = [...pool._children];
-    assert.equal(bullets[0]._damage + bullets[1]._damage, 11);
+    assert.equal(bullets[0]._damage, 11);
+    assert.equal(bullets[1]._damage, 11);
     assert.equal(bullets[0]._scoreMultiplier, 1.1);
     assert.equal(bullets[1]._scoreMultiplier, 1.1);
   });
@@ -229,7 +235,8 @@ describe('WeaponManager', () => {
     assert.equal(bullets[1].scaleX, 1);
     assert.equal(bullets[0].scaleY, 1);
     assert.equal(bullets[1].scaleY, 1);
-    assert.equal(bullets[0]._damage + bullets[1]._damage, 12);
+    assert.equal(bullets[0]._damage, 12);
+    assert.equal(bullets[1]._damage, 12);
     assert.equal(bullets[0]._scoreMultiplier, 1.2);
     assert.equal(bullets[1]._scoreMultiplier, 1.2);
   });
@@ -239,7 +246,8 @@ describe('WeaponManager', () => {
     manager.tryFire(240, 500);
 
     const bullets = [...pool._children].sort((a, b) => a.x - b.x);
-    assert.equal(bullets[0]._damage + bullets[1]._damage, 20);
+    assert.equal(bullets[0]._damage, 20);
+    assert.equal(bullets[1]._damage, 20);
     assert.equal(bullets[0]._scoreMultiplier, 2);
     assert.equal(bullets[1]._scoreMultiplier, 2);
     assert.equal(manager.isOverheated, true);

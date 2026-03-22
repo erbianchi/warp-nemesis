@@ -87,7 +87,6 @@ export class EnemyBase extends _BaseSprite {
     this._pushOffY = 0;
     this._pushVx   = 0; // velocity of the displacement
     this._pushVy   = 0;
-
     this.setupMovement();
     this.setupWeapon();
   }

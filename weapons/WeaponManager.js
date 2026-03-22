@@ -113,10 +113,11 @@ export class WeaponManager {
     const warningShot = this._slots[0] === 'laser' && this._isHeatWarningActive(nextHeatShots);
     const scoreMultiplier = warningShot ? this._getHeatBonusMultiplier(nextHeatShots) : 1;
     const totalDamage = Math.round(this._cfg.damage * scoreMultiplier);
+    const shotPayload = this._createShotPayload(totalDamage, scoreMultiplier);
 
     if (warningShot) {
-      if (!this._fireWarningLaserPair(x, y, totalDamage, scoreMultiplier)) return false;
-    } else if (!this._fireSingleBullet(x, y, totalDamage, scoreMultiplier)) {
+      if (!this._fireWarningLaserPair(x, y, shotPayload)) return false;
+    } else if (!this._fireSingleBullet(x, y, shotPayload)) {
       return false;
     }
 
@@ -135,14 +136,22 @@ export class WeaponManager {
     return true;
   }
 
-  _fireSingleBullet(x, y, damage, scoreMultiplier = 1) {
+  _createShotPayload(damage, scoreMultiplier = 1) {
+    return {
+      damage,
+      remainingDamage: damage,
+      scoreMultiplier,
+    };
+  }
+
+  _fireSingleBullet(x, y, shotPayload) {
     const bullet = this._pool.get(x, y - 18);
     if (!bullet) return false;
-    this._armBullet(bullet, x, y, damage, scoreMultiplier);
+    this._armBullet(bullet, x, y, shotPayload);
     return true;
   }
 
-  _fireWarningLaserPair(x, y, totalDamage, scoreMultiplier = 1) {
+  _fireWarningLaserPair(x, y, shotPayload) {
     const halfSpacing = this._heatWarningLaserSpacing / 2;
     const leftX = x - halfSpacing;
     const rightX = x + halfSpacing;
@@ -152,31 +161,25 @@ export class WeaponManager {
 
     const rightBullet = this._pool.get(rightX, y - 18);
     if (!rightBullet || this._heatWarningLaserCount < 2) {
-      this._armBullet(leftBullet, x, y, totalDamage, scoreMultiplier);
+      this._armBullet(leftBullet, x, y, shotPayload);
       return true;
     }
 
-    const damages = this._splitDamage(totalDamage, this._heatWarningLaserCount);
-    this._armBullet(leftBullet, leftX, y, damages[0], scoreMultiplier);
-    this._armBullet(rightBullet, rightX, y, damages[1], scoreMultiplier);
+    this._armBullet(leftBullet, leftX, y, shotPayload);
+    this._armBullet(rightBullet, rightX, y, shotPayload);
     return true;
   }
 
-  _armBullet(bullet, x, y, damage, scoreMultiplier = 1) {
+  _armBullet(bullet, x, y, shotPayload) {
     bullet.setActive(true).setVisible(true).setScale(1, 1);
     bullet.body.reset(x, y - 18);
     bullet.body.enable = true;
     bullet.body.setVelocityY(-this._cfg.speed);
     bullet.body.allowGravity = false;
-    bullet._damage = damage;
-    bullet._scoreMultiplier = scoreMultiplier;
+    bullet._damage = shotPayload.damage;
+    bullet._scoreMultiplier = shotPayload.scoreMultiplier;
+    bullet._shotPayload = shotPayload;
     bullet.body.updateFromGameObject?.();
-  }
-
-  _splitDamage(totalDamage, count) {
-    const baseDamage = Math.floor(totalDamage / count);
-    const remainder = totalDamage - baseDamage * count;
-    return Array.from({ length: count }, (_, idx) => baseDamage + (idx < remainder ? 1 : 0));
   }
 
   _isHeatWarningActive(heatShots = this._heatShots) {

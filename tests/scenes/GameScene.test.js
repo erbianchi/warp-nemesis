@@ -121,14 +121,20 @@ describe('GameScene heat warning shake', () => {
 });
 
 describe('GameScene bullet damage', () => {
-  it('uses the bullet stored damage and score multiplier when a warning shot hits an enemy', () => {
+  it('uses the shared hot-shot payload when a warning beam hits an enemy', () => {
     const scene = new GameScene();
     let hitDamage = 0;
     let hitScoreMultiplier = 0;
     let hiddenBullet = null;
+    const shotPayload = {
+      damage: 12,
+      remainingDamage: 12,
+      scoreMultiplier: 1.2,
+    };
     const bullet = {
       _damage: 12,
       _scoreMultiplier: 1.2,
+      _shotPayload: shotPayload,
       body: {
         enable: true,
         stop: () => {},
@@ -156,7 +162,44 @@ describe('GameScene bullet damage', () => {
     assert.equal(hiddenBullet, bullet);
     assert.equal(hitDamage, 12);
     assert.equal(hitScoreMultiplier, 1.2);
+    assert.equal(shotPayload.remainingDamage, 0);
     assert.equal(bullet.body.enable, false);
+  });
+
+  it('does not let the sister warning beam spend the shared hot-shot damage twice', () => {
+    const scene = new GameScene();
+    let hitCount = 0;
+    const shotPayload = {
+      damage: 12,
+      remainingDamage: 0,
+      scoreMultiplier: 1.2,
+    };
+    const bullet = {
+      _damage: 12,
+      _scoreMultiplier: 1.2,
+      _shotPayload: shotPayload,
+      body: {
+        enable: true,
+        stop: () => {},
+      },
+    };
+    const enemy = {
+      alive: true,
+      takeDamage: () => {
+        hitCount++;
+      },
+    };
+
+    scene._weapons = {
+      damage: 10,
+      pool: {
+        killAndHide: () => {},
+      },
+    };
+
+    scene._onBulletHitEnemy(bullet, enemy);
+
+    assert.equal(hitCount, 0);
   });
 });
 
@@ -193,6 +236,11 @@ describe('GameScene enemy score awards', () => {
     const bullet = {
       _damage: 11,
       _scoreMultiplier: 1.1,
+      _shotPayload: {
+        damage: 11,
+        remainingDamage: 11,
+        scoreMultiplier: 1.1,
+      },
       body: {
         enable: true,
         stop: () => {},
