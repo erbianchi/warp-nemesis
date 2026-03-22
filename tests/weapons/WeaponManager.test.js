@@ -169,6 +169,7 @@ describe('WeaponManager', () => {
     assert.equal(bullet.scaleX, 1);
     assert.equal(bullet.scaleY, 1);
     assert.equal(bullet._damage, LASER.damage);
+    assert.equal(bullet._scoreMultiplier, 1);
   });
 
   it('sets cooldown after firing', () => {
@@ -193,7 +194,30 @@ describe('WeaponManager', () => {
     assert.deepEqual(scene.soundCalls, ['laserOverheat_000']);
   });
 
-  it('warning-zone laser shots split into two small beams that total 20 percent more damage', () => {
+  it('the first yellow-bar shot splits into two small beams with a 10 percent bonus', () => {
+    manager._heatShots = manager.maxHeatShots * 0.7 - 1;
+    manager.tryFire(240, 500);
+    assert.equal(pool._children.length, 2);
+
+    const bullets = [...pool._children].sort((a, b) => a.x - b.x);
+    assert.equal(bullets[0].x, 238);
+    assert.equal(bullets[1].x, 242);
+    assert.equal(bullets[0]._damage + bullets[1]._damage, 11);
+    assert.equal(bullets[0]._scoreMultiplier, 1.1);
+    assert.equal(bullets[1]._scoreMultiplier, 1.1);
+  });
+
+  it('fractional cooling near the threshold still keeps the next yellow shot at 10 percent', () => {
+    manager._heatShots = manager.maxHeatShots * 0.7 - 0.1;
+    manager.tryFire(240, 500);
+
+    const bullets = [...pool._children];
+    assert.equal(bullets[0]._damage + bullets[1]._damage, 11);
+    assert.equal(bullets[0]._scoreMultiplier, 1.1);
+    assert.equal(bullets[1]._scoreMultiplier, 1.1);
+  });
+
+  it('warning-zone laser shots keep ramping by 10 percent per extra yellow-bar shot', () => {
     manager._heatShots = manager.maxHeatShots * 0.7;
     manager.tryFire(240, 500);
     assert.equal(pool._children.length, 2);
@@ -206,6 +230,19 @@ describe('WeaponManager', () => {
     assert.equal(bullets[0].scaleY, 1);
     assert.equal(bullets[1].scaleY, 1);
     assert.equal(bullets[0]._damage + bullets[1]._damage, 12);
+    assert.equal(bullets[0]._scoreMultiplier, 1.2);
+    assert.equal(bullets[1]._scoreMultiplier, 1.2);
+  });
+
+  it('the final pre-overheat shot carries the full stacked yellow-bar bonus', () => {
+    manager._heatShots = manager.maxHeatShots - 1;
+    manager.tryFire(240, 500);
+
+    const bullets = [...pool._children].sort((a, b) => a.x - b.x);
+    assert.equal(bullets[0]._damage + bullets[1]._damage, 20);
+    assert.equal(bullets[0]._scoreMultiplier, 2);
+    assert.equal(bullets[1]._scoreMultiplier, 2);
+    assert.equal(manager.isOverheated, true);
   });
 
   it('does not fire again while cooldown is active', () => {

@@ -166,13 +166,14 @@ export class EnemyBase extends _BaseSprite {
   /**
    * Apply damage to this enemy.
    * @param {number} amount
+   * @param {number} [scoreMultiplier=1]
    */
-  takeDamage(amount) {
+  takeDamage(amount, scoreMultiplier = 1) {
     if (!this.alive) return;
     this.hp -= amount;
     if (this.hp <= 0) {
       this.hp = 0;
-      this.die();
+      this.die({ scoreMultiplier });
     }
   }
 
@@ -195,11 +196,14 @@ export class EnemyBase extends _BaseSprite {
     this.body.updateFromGameObject();
   }
 
-  /** Kill this enemy immediately (e.g., nuke / screen-clear). */
-  die() {
+  /**
+   * Kill this enemy immediately (e.g., nuke / screen-clear).
+   * @param {{scoreMultiplier?: number}} [opts]
+   */
+  die(opts = {}) {
     if (!this.alive) return;
     this.alive = false;
-    this.onDeath();
+    this.onDeath(opts);
     this.destroy();
   }
 
@@ -217,8 +221,9 @@ export class EnemyBase extends _BaseSprite {
   /**
    * Called on death before destroy(). Override for custom VFX / drops.
    * Always call super.onDeath() when overriding.
+   * @param {{scoreMultiplier?: number}} [opts]
    */
-  onDeath() {
+  onDeath(opts = {}) {
     this.scene.events.emit(EVENTS.ENEMY_DIED, {
       x:          this.x,
       y:          this.y,
@@ -226,6 +231,7 @@ export class EnemyBase extends _BaseSprite {
       vx:         this._velX,
       vy:         this._velY,
       score:      this.scoreValue,
+      scoreMultiplier: opts.scoreMultiplier ?? 1,
       dropChance: this.dropChance,
     });
   }

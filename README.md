@@ -15,6 +15,14 @@ Built with **Phaser 3** — no build toolchain, no npm, runs directly in a brows
 - **Permadeath** — 3 lives per run by default
 - **Boss modifiers** from level 3 onward (enraged speed, double projectiles, extra shield)
 
+## Current Laser Heat
+
+- The default laser uses a `30`-shot heat bar.
+- The bar turns yellow at `70%` heat.
+- Yellow shots fire as two side-by-side lasers.
+- Each yellow shot adds `+10%` damage and `+10%` score over base, stacking one step per shot while the bar stays yellow.
+- A full overheat locks firing until `20` shots of heat have cooled off.
+
 ---
 
 ## Controls

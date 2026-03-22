@@ -373,7 +373,7 @@ export class GameScene extends Phaser.Scene {
     this._weapons.pool.killAndHide(bullet);
     if (bullet.body) { bullet.body.stop(); bullet.body.enable = false; }
     if (!enemy.alive) return;
-    enemy.takeDamage(damage);
+    enemy.takeDamage(damage, bullet._scoreMultiplier ?? 1);
   }
 
   _onEnemyTouchPlayer(player, enemy) {
@@ -402,9 +402,9 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  _onEnemyDied({ x, y, type, vx, vy, score }) {
+  _onEnemyDied({ x, y, type, vx, vy, score, scoreMultiplier = 1 }) {
     this._explodeForType(x, y, type, vx ?? 0, vy ?? 0);
-    RunState.addScore(score);
+    RunState.addScore(Math.round(score * scoreMultiplier));
     RunState.kills++;
     this._animateScore(RunState.score);
   }

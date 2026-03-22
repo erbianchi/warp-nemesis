@@ -154,6 +154,17 @@ describe('Skirm', () => {
       const died = events.find(e => e.event === EVENTS.ENEMY_DIED);
       assert.ok(died);
       assert.equal(died.data.score, BASE_STATS.score);
+      assert.equal(died.data.scoreMultiplier, 1);
+    });
+
+    it('lethal weapon hits carry their score multiplier into ENEMY_DIED', () => {
+      const { skirm, scene } = makeSkirm();
+      const events = [];
+      scene.events.emit = (e, d) => events.push({ event: e, data: d });
+      skirm.takeDamage(BASE_STATS.hp, 1.4);
+      const died = events.find(e => e.event === EVENTS.ENEMY_DIED);
+      assert.ok(died);
+      assert.equal(died.data.scoreMultiplier, 1.4);
     });
   });
 });

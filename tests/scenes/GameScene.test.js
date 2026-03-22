@@ -1,15 +1,20 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { installPhaserGlobal } from '../helpers/phaser.mock.js';
+import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js';
 
 installPhaserGlobal();
 
 const { GAME_CONFIG } = await import('../../config/game.config.js');
+const { RunState } = await import('../../systems/RunState.js');
+const { EVENTS } = await import('../../config/events.config.js');
+const { resolveStats } = await import('../../systems/WaveSpawner.js');
+const { Skirm } = await import('../../entities/enemies/Skirm.js');
 const {
   GameScene,
   isHeatWarningActive,
   resolveHeatBarStyle,
 } = await import('../../scenes/GameScene.js');
+const SKIRM_STATS = resolveStats('skirm', 1.0, 1.0, {});
 
 function createHeatWarningScene(heatShots) {
   const calls = [];
@@ -116,12 +121,14 @@ describe('GameScene heat warning shake', () => {
 });
 
 describe('GameScene bullet damage', () => {
-  it('uses the bullet stored damage when a warning shot hits an enemy', () => {
+  it('uses the bullet stored damage and score multiplier when a warning shot hits an enemy', () => {
     const scene = new GameScene();
     let hitDamage = 0;
+    let hitScoreMultiplier = 0;
     let hiddenBullet = null;
     const bullet = {
       _damage: 12,
+      _scoreMultiplier: 1.2,
       body: {
         enable: true,
         stop: () => {},
@@ -129,8 +136,9 @@ describe('GameScene bullet damage', () => {
     };
     const enemy = {
       alive: true,
-      takeDamage: (damage) => {
+      takeDamage: (damage, scoreMultiplier) => {
         hitDamage = damage;
+        hitScoreMultiplier = scoreMultiplier;
       },
     };
 
@@ -147,7 +155,54 @@ describe('GameScene bullet damage', () => {
 
     assert.equal(hiddenBullet, bullet);
     assert.equal(hitDamage, 12);
+    assert.equal(hitScoreMultiplier, 1.2);
     assert.equal(bullet.body.enable, false);
+  });
+});
+
+describe('GameScene enemy score awards', () => {
+  it('applies the killing shot score multiplier to the awarded score', () => {
+    RunState.reset();
+    const scene = new GameScene();
+    scene._explodeForType = () => {};
+    scene._animateScore = () => {};
+
+    scene._onEnemyDied({ x: 0, y: 0, type: 'skirm', score: 10, scoreMultiplier: 1.4 });
+
+    assert.equal(RunState.score, 14);
+    assert.equal(RunState.kills, 1);
+  });
+
+  it('awards the hotter kill score through the real bullet-hit to enemy-death path', () => {
+    RunState.reset();
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._explodeForType = () => {};
+    scene._animateScore = () => {};
+    scene._weapons = {
+      damage: 10,
+      pool: {
+        killAndHide: () => {},
+      },
+    };
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_DIED) scene._onEnemyDied(data);
+    };
+
+    const skirm = new Skirm(scene, 120, 80, SKIRM_STATS, 'straight');
+    const bullet = {
+      _damage: 11,
+      _scoreMultiplier: 1.1,
+      body: {
+        enable: true,
+        stop: () => {},
+      },
+    };
+
+    scene._onBulletHitEnemy(bullet, skirm);
+
+    assert.equal(RunState.score, 55);
+    assert.equal(RunState.kills, 1);
   });
 });
 

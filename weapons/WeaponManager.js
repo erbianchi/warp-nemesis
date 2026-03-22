@@ -25,7 +25,7 @@ export class WeaponManager {
     this._heatRecoveryStepMs = GAME_CONFIG.PLAYER_HEAT_RECOVERY_MS;
     this._overheatRecoveryShots = GAME_CONFIG.PLAYER_OVERHEAT_RECOVERY_SHOTS;
     this._heatWarningRatio = GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO;
-    this._heatWarningDamageMultiplier = GAME_CONFIG.PLAYER_HEAT_WARNING_DAMAGE_MULTIPLIER;
+    this._heatWarningBonusPerShot = GAME_CONFIG.PLAYER_HEAT_WARNING_BONUS_PER_SHOT;
     this._heatWarningLaserCount = GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_COUNT;
     this._heatWarningLaserSpacing = GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_SPACING;
     this._defaultLaserSfxKey = 'laserSmall_000';
@@ -111,13 +111,12 @@ export class WeaponManager {
 
     const nextHeatShots = Math.min(this._maxHeatShots, this._heatShots + 1);
     const warningShot = this._slots[0] === 'laser' && this._isHeatWarningActive(nextHeatShots);
-    const totalDamage = warningShot
-      ? Math.round(this._cfg.damage * this._heatWarningDamageMultiplier)
-      : this._cfg.damage;
+    const scoreMultiplier = warningShot ? this._getHeatBonusMultiplier(nextHeatShots) : 1;
+    const totalDamage = Math.round(this._cfg.damage * scoreMultiplier);
 
     if (warningShot) {
-      if (!this._fireWarningLaserPair(x, y, totalDamage)) return false;
-    } else if (!this._fireSingleBullet(x, y, totalDamage)) {
+      if (!this._fireWarningLaserPair(x, y, totalDamage, scoreMultiplier)) return false;
+    } else if (!this._fireSingleBullet(x, y, totalDamage, scoreMultiplier)) {
       return false;
     }
 
@@ -136,14 +135,14 @@ export class WeaponManager {
     return true;
   }
 
-  _fireSingleBullet(x, y, damage) {
+  _fireSingleBullet(x, y, damage, scoreMultiplier = 1) {
     const bullet = this._pool.get(x, y - 18);
     if (!bullet) return false;
-    this._armBullet(bullet, x, y, damage);
+    this._armBullet(bullet, x, y, damage, scoreMultiplier);
     return true;
   }
 
-  _fireWarningLaserPair(x, y, totalDamage) {
+  _fireWarningLaserPair(x, y, totalDamage, scoreMultiplier = 1) {
     const halfSpacing = this._heatWarningLaserSpacing / 2;
     const leftX = x - halfSpacing;
     const rightX = x + halfSpacing;
@@ -153,23 +152,24 @@ export class WeaponManager {
 
     const rightBullet = this._pool.get(rightX, y - 18);
     if (!rightBullet || this._heatWarningLaserCount < 2) {
-      this._armBullet(leftBullet, x, y, totalDamage);
+      this._armBullet(leftBullet, x, y, totalDamage, scoreMultiplier);
       return true;
     }
 
     const damages = this._splitDamage(totalDamage, this._heatWarningLaserCount);
-    this._armBullet(leftBullet, leftX, y, damages[0]);
-    this._armBullet(rightBullet, rightX, y, damages[1]);
+    this._armBullet(leftBullet, leftX, y, damages[0], scoreMultiplier);
+    this._armBullet(rightBullet, rightX, y, damages[1], scoreMultiplier);
     return true;
   }
 
-  _armBullet(bullet, x, y, damage) {
+  _armBullet(bullet, x, y, damage, scoreMultiplier = 1) {
     bullet.setActive(true).setVisible(true).setScale(1, 1);
     bullet.body.reset(x, y - 18);
     bullet.body.enable = true;
     bullet.body.setVelocityY(-this._cfg.speed);
     bullet.body.allowGravity = false;
     bullet._damage = damage;
+    bullet._scoreMultiplier = scoreMultiplier;
     bullet.body.updateFromGameObject?.();
   }
 
@@ -181,5 +181,13 @@ export class WeaponManager {
 
   _isHeatWarningActive(heatShots = this._heatShots) {
     return this._maxHeatShots > 0 && (heatShots / this._maxHeatShots) >= this._heatWarningRatio;
+  }
+
+  _getHeatBonusMultiplier(heatShots = this._heatShots) {
+    if (!this._isHeatWarningActive(heatShots)) return 1;
+
+    const warningStartHeat = Math.ceil(this._maxHeatShots * this._heatWarningRatio);
+    const warningShotIndex = Math.max(1, Math.floor(heatShots) - warningStartHeat + 1);
+    return 1 + warningShotIndex * this._heatWarningBonusPerShot;
   }
 }
