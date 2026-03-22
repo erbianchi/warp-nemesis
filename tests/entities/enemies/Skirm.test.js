@@ -153,6 +153,21 @@ describe('Skirm', () => {
       assert.equal(skirm.hp, 0);
       assert.equal(skirm.alive, false);
     });
+
+    it('shielded skirm loses shield before hp and keeps firing stats intact', () => {
+      const { skirm } = makeSkirm('straight', { hp: 10, shield: 6, damage: 13, bulletSpeed: 260 });
+
+      skirm.takeDamage(4);
+      assert.equal(skirm.shield, 2);
+      assert.equal(skirm.hp, 10);
+      assert.equal(skirm.damage, 13);
+      assert.equal(skirm.bulletSpeed, 260);
+
+      skirm.takeDamage(5);
+      assert.equal(skirm.shield, 0);
+      assert.equal(skirm.hp, 7);
+      assert.equal(skirm.alive, true);
+    });
   });
 
   describe('fire()', () => {

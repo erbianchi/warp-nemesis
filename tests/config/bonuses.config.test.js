@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   BONUSES,
+  BONUS_EFFECT_VALUES,
   BONUS_PICKUP_MOTION,
   BONUS_PICKUP_SOUNDS,
   BONUS_SHIELD_ROLL,
@@ -15,6 +16,8 @@ describe('BONUSES', () => {
       'HEALTH_50',
       'SHIELD_50',
       'WEAPON_UPGRADE',
+      'COOLING_BOOST',
+      'LASER_POWER_2X',
       'T_LASER',
       'Y_LASER',
     ]);
@@ -34,6 +37,8 @@ describe('BONUSES', () => {
 
   it('keeps weapon upgrades pending but ships concrete laser pickups live', () => {
     assert.equal(BONUSES.weaponUpgrade.pending, true);
+    assert.equal(BONUSES.coolingBoost.pending, false);
+    assert.equal(BONUSES.laserPower2x.pending, false);
     assert.equal(BONUSES.tLaser.pending, false);
     assert.equal(BONUSES.yLaser.pending, false);
     assert.equal(BONUSES.extraLife.pending, false);
@@ -64,6 +69,8 @@ describe('BONUSES', () => {
     assert.equal(BONUSES.health50.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
     assert.equal(BONUSES.shield50.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
     assert.equal(BONUSES.weaponUpgrade.pickupSound, BONUS_PICKUP_SOUNDS.NONE);
+    assert.equal(BONUSES.coolingBoost.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
+    assert.equal(BONUSES.laserPower2x.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
     assert.equal(BONUSES.tLaser.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
     assert.equal(BONUSES.yLaser.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
   });
@@ -75,5 +82,20 @@ describe('BONUSES', () => {
     assert.equal(BONUSES.yLaser.kind, 'newWeapon');
     assert.equal(BONUSES.yLaser.weaponKey, 'yLaser');
     assert.equal(BONUSES.yLaser.label, 'Y-Laser');
+  });
+
+  it('defines the timed cooling boost in readable config values', () => {
+    assert.equal(BONUS_EFFECT_VALUES.COOLING_BOOST.recoveryMs, 50);
+    assert.equal(BONUS_EFFECT_VALUES.COOLING_BOOST.durationMs, 30000);
+    assert.equal(BONUSES.coolingBoost.kind, 'coolingBoost');
+    assert.equal(BONUSES.coolingBoost.recoveryMs, BONUS_EFFECT_VALUES.COOLING_BOOST.recoveryMs);
+    assert.equal(BONUSES.coolingBoost.durationMs, BONUS_EFFECT_VALUES.COOLING_BOOST.durationMs);
+  });
+
+  it('defines the stackable laser power multiplier in readable config values', () => {
+    assert.equal(BONUS_EFFECT_VALUES.LASER_POWER_2X.multiplier, 2);
+    assert.equal(BONUSES.laserPower2x.kind, 'laserPower');
+    assert.equal(BONUSES.laserPower2x.multiplier, BONUS_EFFECT_VALUES.LASER_POWER_2X.multiplier);
+    assert.equal(BONUSES.laserPower2x.label, 'Laser x2');
   });
 });

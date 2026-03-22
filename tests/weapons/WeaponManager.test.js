@@ -5,6 +5,7 @@ import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js'
 installPhaserGlobal();
 
 // Extend mock to support the physics group pool pattern WeaponManager uses
+const { GAME_CONFIG } = await import('../../config/game.config.js');
 const { WEAPONS } = await import('../../config/weapons.config.js');
 
 const LASER = WEAPONS.laser;
@@ -109,6 +110,38 @@ describe('WeaponManager', () => {
     assert.equal(manager.heatShots, 0);
     assert.equal(manager.isOverheated, false);
     assert.equal(manager.lastShotInfo, null);
+  });
+
+  it('can temporarily speed up heat recovery to 50 ms per shot and restore the default later', () => {
+    manager._heatShots = 8;
+
+    manager.setHeatRecoveryStepMs(50);
+    manager.update(50, false);
+
+    assert.equal(manager.heatRecoveryStepMs, 50);
+    assert.equal(manager.heatShots, 7);
+
+    manager.resetHeatRecoveryStepMs();
+    manager.update(GAME_CONFIG.PLAYER_HEAT_RECOVERY_MS, false);
+
+    assert.equal(manager.heatRecoveryStepMs, GAME_CONFIG.PLAYER_HEAT_RECOVERY_MS);
+    assert.equal(manager.heatShots, 6);
+  });
+
+  it('stacks slot-1 laser power bonuses and exposes the multiplier in the HUD snapshot', () => {
+    assert.equal(manager.primaryDamageMultiplier, 1);
+
+    manager.multiplyPrimaryDamage(2);
+    manager.multiplyPrimaryDamage(2);
+
+    assert.equal(manager.primaryDamageMultiplier, 4);
+    assert.equal(manager.damage, LASER.damage * 4);
+    assert.equal(manager.getSlots()[0].multiplierLabel, 'x4');
+
+    manager.resetPrimaryDamageMultiplier();
+
+    assert.equal(manager.primaryDamageMultiplier, 1);
+    assert.equal(manager.getSlots()[0].multiplierLabel, '');
   });
 
   it('resetPrimaryWeapon restores the base laser and clears live bullets', () => {

@@ -164,7 +164,10 @@ export class BonusSystem {
       x:           bonus.x,
       y:           bonus.y,
     };
-    if (bonus.bonusConfig.weaponKey) payload.weaponKey = bonus.bonusConfig.weaponKey;
+
+    ['weaponKey', 'recoveryMs', 'durationMs', 'multiplier'].forEach((field) => {
+      if (bonus.bonusConfig[field] !== undefined) payload[field] = bonus.bonusConfig[field];
+    });
 
     this._removeTrackedBonus(bonus);
     bonus.remove();

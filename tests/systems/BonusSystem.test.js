@@ -178,4 +178,45 @@ describe('BonusSystem', () => {
       y: 80,
     });
   });
+
+  it('includes the timed cooling payload fields when collecting a cooling boost', () => {
+    const bonus = bonusSystem.spawnBonus('coolingBoost', 100, 80, {
+      shieldRoll: { chance: 0 },
+    });
+
+    const payload = bonusSystem.collectBonus(bonus);
+
+    assert.deepEqual(payload, {
+      key: 'coolingBoost',
+      kind: 'coolingBoost',
+      value: 50,
+      label: 'Cooling Boost',
+      pickupSound: 'forceField_001',
+      pending: false,
+      recoveryMs: 50,
+      durationMs: 30000,
+      x: 100,
+      y: 80,
+    });
+  });
+
+  it('includes the stackable laser multiplier when collecting a laser power bonus', () => {
+    const bonus = bonusSystem.spawnBonus('laserPower2x', 100, 80, {
+      shieldRoll: { chance: 0 },
+    });
+
+    const payload = bonusSystem.collectBonus(bonus);
+
+    assert.deepEqual(payload, {
+      key: 'laserPower2x',
+      kind: 'laserPower',
+      value: 2,
+      label: 'Laser x2',
+      pickupSound: 'forceField_001',
+      pending: false,
+      multiplier: 2,
+      x: 100,
+      y: 80,
+    });
+  });
 });

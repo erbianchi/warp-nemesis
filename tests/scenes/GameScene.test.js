@@ -353,6 +353,81 @@ describe('GameScene bullet damage', () => {
     assert.equal(scene._eBullets.length, 0);
     assert.equal(playerHit, false);
   });
+
+  it('spawns an enemy laser with the configured damage and culls it after it leaves the screen', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    const tweenConfigs = [];
+
+    scene._eBullets = [];
+    scene.tweens = {
+      add: (config) => {
+        tweenConfigs.push(config);
+        return { stop: () => {} };
+      },
+    };
+
+    scene._onEnemyFire({ x: 120, y: 90, vy: 220, damage: 14 });
+
+    assert.equal(scene._eBullets.length, 1);
+    assert.equal(scene._eBullets[0]._damage, 14);
+    assert.equal(scene._eBullets[0].x, 120);
+    assert.equal(scene._eBullets[0].y, 90);
+    assert.equal(tweenConfigs.length, 1);
+    assert.equal(tweenConfigs[0].duration, Math.round(((GAME_CONFIG.HEIGHT + 30 - 90) / 220) * 1000));
+
+    scene._eBullets[0].active = true;
+    tweenConfigs[0].onComplete();
+
+    assert.equal(scene._eBullets.length, 0);
+    assert.equal(scene._eBullets[0], undefined);
+  });
+
+  it('enemy laser overflow reaches player hp after the shield absorbs what it can', () => {
+    const scene = new GameScene();
+    let playerHitDamage = null;
+    const enemyBullet = {
+      active: true,
+      x: 220,
+      y: 520,
+      width: 3,
+      height: 10,
+      displayWidth: 3,
+      displayHeight: 10,
+      _damage: 17,
+      destroy() {
+        this.active = false;
+      },
+    };
+
+    scene._gameOver = false;
+    scene._respawning = false;
+    scene._bg = { update: () => {} };
+    scene._movePlayer = () => {};
+    scene._updateRubberBand = () => {};
+    scene._updateHeatWarningShake = () => {};
+    scene._drawStatusBars = () => {};
+    scene._spawner = { update: () => {}, isWaveActive: false, pendingSquadrons: 0 };
+    scene._bonuses = { update: () => {} };
+    scene._enemies = [];
+    scene._player = { x: 220, y: 520 };
+    scene._space = { isDown: false };
+    scene._eBullets = [enemyBullet];
+    scene._weapons = {
+      update: () => {},
+      tryFire: () => false,
+      pool: { getChildren: () => [] },
+    };
+    scene._onPlayerHit = (damage) => {
+      playerHitDamage = damage;
+    };
+
+    scene.update(0, 16);
+
+    assert.equal(playerHitDamage, 17);
+    assert.equal(enemyBullet.active, false);
+    assert.equal(scene._eBullets.length, 0);
+  });
 });
 
 describe('GameScene enemy score awards', () => {
@@ -557,6 +632,8 @@ describe('GameScene player death', () => {
     let livesText = '';
     let shieldReset = null;
     let weaponReset = false;
+    let heatRecoveryReset = false;
+    let laserPowerReset = false;
 
     scene._gameOver = false;
     scene._respawning = false;
@@ -564,6 +641,18 @@ describe('GameScene player death', () => {
     scene._playerHp = 6;
     scene._playerLives = 2;
     scene._playerShield = 150;
+    scene._hudTimeMs = 1200;
+    scene._coolingBoostEndsAt = 20000;
+    scene._heatCountdownText = {
+      visible: true,
+      setVisible(value) {
+        this.visible = value;
+        return this;
+      },
+      setText() {
+        return this;
+      },
+    };
     scene._playerShieldFx = {
       takeDamage: () => ({ absorbed: 0, overflow: 6 }),
       setPoints: (value) => {
@@ -579,6 +668,12 @@ describe('GameScene player death', () => {
       },
       resetPrimaryWeapon() {
         weaponReset = true;
+      },
+      resetHeatRecoveryStepMs() {
+        heatRecoveryReset = true;
+      },
+      resetPrimaryDamageMultiplier() {
+        laserPowerReset = true;
       },
     };
     scene._formations = [];
@@ -601,6 +696,10 @@ describe('GameScene player death', () => {
     assert.equal(scene._weapons.heatShots, 0);
     assert.equal(shieldReset, GAME_CONFIG.PLAYER_SHIELD_DEFAULT);
     assert.equal(scene._playerShield, GAME_CONFIG.PLAYER_SHIELD_DEFAULT);
+    assert.equal(scene._coolingBoostEndsAt, 0);
+    assert.equal(scene._heatCountdownText.visible, false);
+    assert.equal(heatRecoveryReset, true);
+    assert.equal(laserPowerReset, true);
     assert.equal(weaponReset, true);
     assert.equal(weaponHudRedraws, 1);
     assert.equal(scene._playerLives, 1);
@@ -689,6 +788,91 @@ describe('GameScene player shield and bonuses', () => {
     });
   });
 
+  it('applies a 30-second cooling boost and shows the countdown next to the heat bar', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    let boostedRecoveryMs = null;
+    let resetRecovery = false;
+
+    scene._weaponDisplayY = 594;
+    scene._weapons = {
+      maxHeatShots: GAME_CONFIG.PLAYER_HEAT_MAX,
+      heatShots: 0,
+      getSlots: () => [{ key: 'laser', name: 'LASER', color: 0x00ffff, multiplierLabel: '' }, null],
+      setHeatRecoveryStepMs: (value) => {
+        boostedRecoveryMs = value;
+      },
+      resetHeatRecoveryStepMs: () => {
+        resetRecovery = true;
+      },
+    };
+    scene._playerHp = 10;
+    scene._hudTimeMs = 1200;
+    scene._buildStatusBars();
+    scene.events = { emit: () => {} };
+
+    scene._applyBonusEffect({
+      key: 'coolingBoost',
+      kind: 'coolingBoost',
+      value: 50,
+      recoveryMs: 50,
+      durationMs: 30000,
+    });
+
+    assert.equal(boostedRecoveryMs, 50);
+    assert.equal(scene._coolingBoostEndsAt, 31200);
+    assert.equal(scene._heatCountdownText.text, '30s');
+    assert.equal(scene._heatCountdownText.visible, true);
+
+    scene._updateTimedBonuses(31200);
+
+    assert.equal(resetRecovery, true);
+    assert.equal(scene._heatCountdownText.visible, false);
+  });
+
+  it('stacks a laser power bonus on weapon 1 and emits the total multiplier', () => {
+    const scene = new GameScene();
+    let redrawCalls = 0;
+    let weaponEvent = null;
+
+    scene._weapons = {
+      multiplyPrimaryDamage: () => 4,
+    };
+    scene._drawWeaponDisplay = () => {
+      redrawCalls++;
+    };
+    scene._drawStatusBars = () => {};
+    scene.events = {
+      emit: (event, payload) => {
+        weaponEvent = { event, payload };
+      },
+    };
+
+    scene._applyBonusEffect({
+      key: 'laserPower2x',
+      kind: 'laserPower',
+      value: 2,
+      multiplier: 2,
+      label: 'Laser x2',
+      pending: false,
+    });
+
+    assert.equal(redrawCalls, 1);
+    assert.deepEqual(weaponEvent, {
+      event: EVENTS.WEAPON_CHANGED,
+      payload: {
+        key: 'laserPower2x',
+        kind: 'laserPower',
+        value: 2,
+        multiplier: 2,
+        label: 'Laser x2',
+        pending: false,
+        slot: 0,
+        totalMultiplier: 4,
+      },
+    });
+  });
+
   it('can redraw the weapon HUD after a bonus equip without breaking text styling', () => {
     const scene = new GameScene();
     Object.assign(scene, createMockScene());
@@ -705,6 +889,20 @@ describe('GameScene player shield and bonuses', () => {
     assert.doesNotThrow(() => scene._drawWeaponDisplay());
     assert.equal(scene._weaponSlotNameTexts[0].text, 'T-LASER');
     assert.equal(scene._weaponSlotNameTexts[0].style.values.fill, '#00ffff');
+  });
+
+  it('shows the stacked slot-1 power multiplier in the weapon box using the weapon color', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._weapons = {
+      getSlots: () => [{ key: 'laser', name: 'LASER', color: 0x00ffff, multiplierLabel: 'x4' }, null],
+    };
+
+    scene._buildWeaponDisplay();
+
+    assert.doesNotThrow(() => scene._drawWeaponDisplay());
+    assert.equal(scene._weaponSlotMultiplierTexts[0].text, 'x4');
+    assert.equal(scene._weaponSlotMultiplierTexts[0].style.values.fill, '#00ffff');
   });
 
   it('applies a life bonus to the HUD and run state', () => {

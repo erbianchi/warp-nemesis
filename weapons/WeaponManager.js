@@ -28,7 +28,8 @@ export class WeaponManager {
     this._heatShots = 0;
     this._isOverheated = false;
     this._maxHeatShots = GAME_CONFIG.PLAYER_HEAT_MAX;
-    this._heatRecoveryStepMs = GAME_CONFIG.PLAYER_HEAT_RECOVERY_MS;
+    this._baseHeatRecoveryStepMs = GAME_CONFIG.PLAYER_HEAT_RECOVERY_MS;
+    this._heatRecoveryStepMs = this._baseHeatRecoveryStepMs;
     this._overheatRecoveryShots = GAME_CONFIG.PLAYER_OVERHEAT_RECOVERY_SHOTS;
     this._heatWarningRatio = GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO;
     this._heatWarningBonusPerShot = GAME_CONFIG.PLAYER_HEAT_WARNING_BONUS_PER_SHOT;
@@ -36,6 +37,7 @@ export class WeaponManager {
     this._heatWarningShotShakeMsStep = GAME_CONFIG.PLAYER_HEAT_WARNING_SHOT_SHAKE_MS_STEP;
     this._heatWarningShotShakeIntensity = GAME_CONFIG.PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY;
     this._heatWarningShotShakeIntensityStep = GAME_CONFIG.PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY_STEP;
+    this._primaryDamageMultiplier = 1;
     this._laserTextureKey = 'bullet_laser';
     this._lastShotInfo = null;
 
@@ -52,7 +54,7 @@ export class WeaponManager {
   get pool() { return this._pool; }
 
   /** Damage dealt per bullet by the currently active weapon. */
-  get damage() { return this._cfg.damage; }
+  get damage() { return Math.round(this._cfg.damage * this._primaryDamageMultiplier); }
 
   /** Snapshot of the most recent shot fired this frame. */
   get lastShotInfo() { return this._lastShotInfo; }
@@ -65,6 +67,12 @@ export class WeaponManager {
 
   /** True while the weapon is hard-locked by overheat. */
   get isOverheated() { return this._isOverheated; }
+
+  /** Current player bonus multiplier applied to slot 1 damage. */
+  get primaryDamageMultiplier() { return this._primaryDamageMultiplier; }
+
+  /** Current heat recovery step in milliseconds per recovered heat shot. */
+  get heatRecoveryStepMs() { return this._heatRecoveryStepMs; }
 
   /** Heat level below which firing is allowed again after overheat. */
   get unlockHeatShots() {
@@ -79,6 +87,44 @@ export class WeaponManager {
     this._heatShots = 0;
     this._isOverheated = false;
     this._lastShotInfo = null;
+  }
+
+  /**
+   * Temporarily override the heat recovery timing.
+   * @param {number} recoveryMs
+   * @returns {number}
+   */
+  setHeatRecoveryStepMs(recoveryMs) {
+    this._heatRecoveryStepMs = Math.max(1, recoveryMs ?? this._baseHeatRecoveryStepMs);
+    return this._heatRecoveryStepMs;
+  }
+
+  /**
+   * Restore the default heat recovery timing from config.
+   * @returns {number}
+   */
+  resetHeatRecoveryStepMs() {
+    this._heatRecoveryStepMs = this._baseHeatRecoveryStepMs;
+    return this._heatRecoveryStepMs;
+  }
+
+  /**
+   * Multiply the current slot 1 damage bonus.
+   * @param {number} factor
+   * @returns {number}
+   */
+  multiplyPrimaryDamage(factor = 1) {
+    this._primaryDamageMultiplier = Math.max(1, this._primaryDamageMultiplier * Math.max(1, factor));
+    return this._primaryDamageMultiplier;
+  }
+
+  /**
+   * Clear all stackable slot 1 power bonuses.
+   * @returns {number}
+   */
+  resetPrimaryDamageMultiplier() {
+    this._primaryDamageMultiplier = 1;
+    return this._primaryDamageMultiplier;
   }
 
   /**
@@ -115,9 +161,17 @@ export class WeaponManager {
    * @returns {Array<{key: string, name: string, color: number}|null>}
    */
   getSlots() {
-    return this._slots.map(key =>
-      key ? { key, name: WEAPONS[key].name ?? key.toUpperCase(), color: WEAPONS[key].color } : null
-    );
+    return this._slots.map((key, index) => {
+      if (!key) return null;
+      return {
+        key,
+        name: WEAPONS[key].name ?? key.toUpperCase(),
+        color: WEAPONS[key].color,
+        multiplierLabel: index === 0 && this._primaryDamageMultiplier > 1
+          ? `x${this._primaryDamageMultiplier}`
+          : '',
+      };
+    });
   }
 
   /**
@@ -168,7 +222,7 @@ export class WeaponManager {
     const warningShot = this._isHeatWarningActive(nextHeatShots);
     const warningStep = warningShot ? this._getHeatBonusStepCount(nextHeatShots) : 0;
     const scoreMultiplier = warningShot ? this._getHeatBonusMultiplier(nextHeatShots) : 1;
-    const totalDamage = Math.round(this._cfg.damage * scoreMultiplier);
+    const totalDamage = Math.round(this.damage * scoreMultiplier);
     const shotPayload = this._createShotPayload(totalDamage, scoreMultiplier, warningStep);
 
     const textureKey = (warningShot && this._cfg.warningTextureKey)
@@ -282,7 +336,7 @@ export class WeaponManager {
     if (bullet.setTexture) bullet.setTexture(this._laserTextureKey);
     bullet.setScale?.(1, 1);
     this._setBulletRotation(bullet, 0);
-    bullet._damage = this._cfg.damage;
+    bullet._damage = this.damage;
     bullet._scoreMultiplier = 1;
     bullet._shotPayload = null;
     this._pool.killAndHide(bullet);

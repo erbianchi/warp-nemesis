@@ -87,6 +87,7 @@ export class GameScene extends Phaser.Scene {
     this._displayedScore = 0;
     this._scoreTween     = null;
     this._hudTimeMs      = 0;
+    this._coolingBoostEndsAt = 0;
     this._heatWarningActive = false;
     this._nextHeatWarningShakeAt = 0;
     this._rbOffset = 0;   // rubber-band spring displacement (0 = neutral)
@@ -189,6 +190,7 @@ export class GameScene extends Phaser.Scene {
     this._bg.update(delta);
     this._movePlayer();
     this._updateRubberBand(delta);
+    this._updateTimedBonuses(time);
     const wantsToFire = this._space.isDown;
     this._weapons.update(delta, wantsToFire);
 
@@ -368,6 +370,23 @@ export class GameScene extends Phaser.Scene {
     this._drawStatusBars?.();
   }
 
+  _updateTimedBonuses(timeMs = this._hudTimeMs) {
+    const remainingMs = Math.max(0, (this._coolingBoostEndsAt ?? 0) - timeMs);
+
+    if (this._coolingBoostEndsAt > 0 && remainingMs <= 0) {
+      this._coolingBoostEndsAt = 0;
+      this._weapons?.resetHeatRecoveryStepMs?.();
+    }
+
+    if (!this._heatCountdownText) return;
+
+    const active = remainingMs > 0;
+    this._heatCountdownText.setVisible?.(active);
+    if (active) {
+      this._heatCountdownText.setText?.(`${Math.ceil(remainingMs / 1000)}s`);
+    }
+  }
+
   _resetPlayerBonuses() {
     if (this._playerShieldFx?.setPoints) {
       this._playerShieldFx.setPoints(PLAYER_SHIELD_DEFAULT);
@@ -379,7 +398,11 @@ export class GameScene extends Phaser.Scene {
       });
     }
 
+    this._coolingBoostEndsAt = 0;
+    this._weapons?.resetHeatRecoveryStepMs?.();
+    this._weapons?.resetPrimaryDamageMultiplier?.();
     this._weapons?.resetPrimaryWeapon?.();
+    this._updateTimedBonuses?.(this._hudTimeMs);
     this._drawWeaponDisplay?.();
   }
 
@@ -691,6 +714,22 @@ export class GameScene extends Phaser.Scene {
           });
         }
         break;
+      case 'coolingBoost':
+        this._weapons?.setHeatRecoveryStepMs?.(bonus.recoveryMs ?? bonus.value);
+        this._coolingBoostEndsAt = (this._hudTimeMs ?? 0) + (bonus.durationMs ?? 0);
+        this._updateTimedBonuses?.(this._hudTimeMs);
+        break;
+      case 'laserPower': {
+        const totalMultiplier = this._weapons?.multiplyPrimaryDamage?.(bonus.multiplier ?? bonus.value) ?? 1;
+        this._drawWeaponDisplay?.();
+        this.events.emit(EVENTS.WEAPON_CHANGED, {
+          ...bonus,
+          pending: false,
+          slot: 0,
+          totalMultiplier,
+        });
+        break;
+      }
       case 'newWeapon':
         if (bonus.weaponKey) {
           this._weapons?.equipPrimaryWeapon?.(bonus.weaponKey);
@@ -782,6 +821,13 @@ export class GameScene extends Phaser.Scene {
       gfx.lineStyle(1, 0x444444, 1);
       gfx.strokeRect(X0, y, BAR_W, BAR_H);
     });
+
+    const heatY = Y_TOP + (BAR_H + BAR_GAP);
+    this._heatCountdownText = this.add.text(X0 + BAR_W + 6, heatY + BAR_H / 2, '', {
+      fontSize: '11px',
+      fill: '#ffffff',
+      fontFamily: 'monospace',
+    }).setDepth(12).setOrigin(0, 0.5).setVisible(false);
 
     this._drawStatusBars();
   }
@@ -892,6 +938,7 @@ export class GameScene extends Phaser.Scene {
     this._weaponDisplayGraphics = this.add.graphics();
     this._weaponSlotNumberTexts = [];
     this._weaponSlotNameTexts = [];
+    this._weaponSlotMultiplierTexts = [];
 
     slots.forEach((slot, i) => {
       const x      = X0 + i * (BOX_W + GAP);
@@ -904,6 +951,9 @@ export class GameScene extends Phaser.Scene {
       this._weaponSlotNameTexts.push(this.add.text(x + BOX_W / 2, Y0 + BOX_H / 2 + 3, slot?.name ?? '----', {
         fontSize: '11px', fill: nameFill, fontFamily: 'monospace',
       }).setOrigin(0.5));
+      this._weaponSlotMultiplierTexts.push(this.add.text(x + BOX_W - 4, Y0 + BOX_H - 3, slot?.multiplierLabel ?? '', {
+        fontSize: '9px', fill: nameFill, fontFamily: 'monospace',
+      }).setOrigin(1, 1));
     });
 
     this._drawWeaponDisplay();
@@ -938,6 +988,10 @@ export class GameScene extends Phaser.Scene {
       const nameText = this._weaponSlotNameTexts?.[i];
       nameText?.setText?.(filled ? slot.name : '----');
       nameText?.setStyle?.({ fill: nameFill, fontFamily: 'monospace', fontSize: '11px' });
+
+      const multiplierText = this._weaponSlotMultiplierTexts?.[i];
+      multiplierText?.setText?.(filled ? (slot.multiplierLabel ?? '') : '');
+      multiplierText?.setStyle?.({ fill: nameFill, fontFamily: 'monospace', fontSize: '9px' });
     });
   }
 

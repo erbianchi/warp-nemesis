@@ -6,6 +6,8 @@ export const BONUS_TYPES = Object.freeze({
   HEALTH_50:      'health50',
   SHIELD_50:      'shield50',
   WEAPON_UPGRADE: 'weaponUpgrade',
+  COOLING_BOOST:  'coolingBoost',
+  LASER_POWER_2X: 'laserPower2x',
   T_LASER:        'tLaser',
   Y_LASER:        'yLaser',
 });
@@ -23,6 +25,16 @@ export const BONUS_PICKUP_MOTION = Object.freeze({
 export const BONUS_PICKUP_SOUNDS = Object.freeze({
   NONE:        '',
   FORCE_FIELD: 'forceField_001',
+});
+
+export const BONUS_EFFECT_VALUES = Object.freeze({
+  COOLING_BOOST: Object.freeze({
+    recoveryMs: 50,
+    durationMs: 30000,
+  }),
+  LASER_POWER_2X: Object.freeze({
+    multiplier: 2,
+  }),
 });
 
 export const BONUSES = Object.freeze({
@@ -61,6 +73,27 @@ export const BONUSES = Object.freeze({
     weight:      1,
     pickupSound: BONUS_PICKUP_SOUNDS.NONE,
     pending:     true,
+  },
+  [BONUS_TYPES.COOLING_BOOST]: {
+    key:         BONUS_TYPES.COOLING_BOOST,
+    label:       'Cooling Boost',
+    kind:        'coolingBoost',
+    value:       BONUS_EFFECT_VALUES.COOLING_BOOST.recoveryMs,
+    recoveryMs:  BONUS_EFFECT_VALUES.COOLING_BOOST.recoveryMs,
+    durationMs:  BONUS_EFFECT_VALUES.COOLING_BOOST.durationMs,
+    weight:      1,
+    pickupSound: BONUS_PICKUP_SOUNDS.FORCE_FIELD,
+    pending:     false,
+  },
+  [BONUS_TYPES.LASER_POWER_2X]: {
+    key:         BONUS_TYPES.LASER_POWER_2X,
+    label:       'Laser x2',
+    kind:        'laserPower',
+    value:       BONUS_EFFECT_VALUES.LASER_POWER_2X.multiplier,
+    multiplier:  BONUS_EFFECT_VALUES.LASER_POWER_2X.multiplier,
+    weight:      1,
+    pickupSound: BONUS_PICKUP_SOUNDS.FORCE_FIELD,
+    pending:     false,
   },
   [BONUS_TYPES.T_LASER]: {
     key:         BONUS_TYPES.T_LASER,

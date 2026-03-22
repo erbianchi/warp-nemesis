@@ -5,6 +5,7 @@ import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js'
 installPhaserGlobal();
 
 import { EnemyBase } from '../../entities/EnemyBase.js';
+import { EVENTS } from '../../config/events.config.js';
 
 const TEST_STATS = {
   hp:          10,
@@ -75,5 +76,32 @@ describe('EnemyBase', () => {
     enemy.takeDamage(6);
     assert.equal(enemy.shield, 0);
     assert.equal(enemy.hp, 9);
+  });
+
+  it('can die from shield overflow once the remaining damage reaches hp', () => {
+    const events = [];
+    scene.events.emit = (event, data) => {
+      events.push({ event, data });
+    };
+    enemy = new TestEnemy(scene, 100, 100, { ...TEST_STATS, hp: 12, shield: 8 });
+
+    enemy.takeDamage(20, 1.5);
+
+    assert.equal(enemy.shield, 0);
+    assert.equal(enemy.hp, 0);
+    assert.equal(enemy.alive, false);
+    assert.deepEqual(events.at(-1), {
+      event: EVENTS.ENEMY_DIED,
+      data: {
+        x: 100,
+        y: 100,
+        type: 'test_enemy',
+        vx: 0,
+        vy: 0,
+        score: 25,
+        scoreMultiplier: 1.5,
+        dropChance: 0,
+      },
+    });
   });
 });
