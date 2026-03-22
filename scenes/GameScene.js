@@ -640,17 +640,9 @@ export class GameScene extends Phaser.Scene {
     this._effects.explodeForType(x, y, type, vx, vy, this._enemies, this._eBullets);
   }
 
-  /** Player explosion — uses Skirm blast as placeholder. */
+  /** Player explosion — barrel blast with camera flash. */
   _explode(x, y) {
-    this._effects.explodeForType(
-      x,
-      y,
-      'skirm',
-      0,
-      0,
-      this._enemies,
-      this._eBullets,
-      { playSound: false }
-    );
+    this.cameras.main.flash(260, 255, 255, 255, true);
+    this._effects.explodePlayer(x, y);
   }
 }

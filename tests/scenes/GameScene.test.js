@@ -118,6 +118,35 @@ describe('GameScene heat warning shake', () => {
     assert.equal(scene._heatWarningActive, false);
     assert.deepEqual(calls.at(-1), { type: 'stopShake' });
   });
+
+  it('adds a short extra punch when a hot twin-laser shot fires', () => {
+    const { scene, calls } = createHeatWarningScene(0);
+
+    scene._playPlayerShotFeedback({
+      warningShot: true,
+      shotShakeMs: 24,
+      shotShakeIntensity: 0.0018,
+    });
+
+    assert.deepEqual(calls, [{
+      type: 'shake',
+      duration: 24,
+      intensity: 0.0018,
+      force: true,
+    }]);
+  });
+
+  it('does not add the hot-shot punch for normal laser shots', () => {
+    const { scene, calls } = createHeatWarningScene(0);
+
+    scene._playPlayerShotFeedback({
+      warningShot: false,
+      shotShakeMs: 24,
+      shotShakeIntensity: 0.0018,
+    });
+
+    assert.deepEqual(calls, []);
+  });
 });
 
 describe('GameScene bullet damage', () => {
@@ -126,9 +155,16 @@ describe('GameScene bullet damage', () => {
     let hitDamage = 0;
     let hitScoreMultiplier = 0;
     let hiddenBullet = null;
+    const enemy = {
+      alive: true,
+      takeDamage: (damage, scoreMultiplier) => {
+        hitDamage = damage;
+        hitScoreMultiplier = scoreMultiplier;
+      },
+    };
     const shotPayload = {
       damage: 12,
-      remainingDamage: 12,
+      hitEnemies: new Set(),
       scoreMultiplier: 1.2,
     };
     const bullet = {
@@ -138,13 +174,6 @@ describe('GameScene bullet damage', () => {
       body: {
         enable: true,
         stop: () => {},
-      },
-    };
-    const enemy = {
-      alive: true,
-      takeDamage: (damage, scoreMultiplier) => {
-        hitDamage = damage;
-        hitScoreMultiplier = scoreMultiplier;
       },
     };
 
@@ -162,16 +191,20 @@ describe('GameScene bullet damage', () => {
     assert.equal(hiddenBullet, bullet);
     assert.equal(hitDamage, 12);
     assert.equal(hitScoreMultiplier, 1.2);
-    assert.equal(shotPayload.remainingDamage, 0);
+    assert.ok(shotPayload.hitEnemies.has(enemy));
     assert.equal(bullet.body.enable, false);
   });
 
-  it('does not let the sister warning beam spend the shared hot-shot damage twice', () => {
+  it('does not let the sister warning beam hit the same enemy twice', () => {
     const scene = new GameScene();
     let hitCount = 0;
+    const enemy = {
+      alive: true,
+      takeDamage: () => { hitCount++; },
+    };
     const shotPayload = {
       damage: 12,
-      remainingDamage: 0,
+      hitEnemies: new Set([enemy]),  // enemy already recorded as hit
       scoreMultiplier: 1.2,
     };
     const bullet = {
@@ -181,12 +214,6 @@ describe('GameScene bullet damage', () => {
       body: {
         enable: true,
         stop: () => {},
-      },
-    };
-    const enemy = {
-      alive: true,
-      takeDamage: () => {
-        hitCount++;
       },
     };
 
@@ -238,8 +265,8 @@ describe('GameScene enemy score awards', () => {
       _scoreMultiplier: 1.1,
       _shotPayload: {
         damage: 11,
-        remainingDamage: 11,
         scoreMultiplier: 1.1,
+        hitEnemies: new Set(),
       },
       body: {
         enable: true,
@@ -252,31 +279,147 @@ describe('GameScene enemy score awards', () => {
     assert.equal(RunState.score, 55);
     assert.equal(RunState.kills, 1);
   });
-});
 
-describe('GameScene player explosion placeholder', () => {
-  it('uses the skirm blast without playing the skirm enemy sound', () => {
+  it('uses the killing shot multiplier for score even after earlier hot damage', () => {
+    RunState.reset();
     const scene = new GameScene();
-    let explodeArgs = null;
-    scene._effects = {
-      explodeForType: (...args) => {
-        explodeArgs = args;
+    Object.assign(scene, createMockScene());
+    scene._explodeForType = () => {};
+    scene._animateScore = () => {};
+    scene._weapons = {
+      damage: 10,
+      pool: {
+        killAndHide: () => {},
       },
     };
-    scene._enemies = [];
-    scene._eBullets = [];
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_DIED) scene._onEnemyDied(data);
+    };
+
+    const skirm = new Skirm(scene, 120, 80, { ...SKIRM_STATS, hp: 10 }, 'straight');
+    const hotBullet = {
+      _damage: 5,
+      _scoreMultiplier: 1.2,
+      _shotPayload: {
+        damage: 5,
+        scoreMultiplier: 1.2,
+        hitEnemies: new Set(),
+      },
+      body: {
+        enable: true,
+        stop: () => {},
+      },
+    };
+    const normalBullet = {
+      _damage: 5,
+      _scoreMultiplier: 1,
+      body: {
+        enable: true,
+        stop: () => {},
+      },
+    };
+
+    scene._onBulletHitEnemy(hotBullet, skirm);
+    scene._onBulletHitEnemy(normalBullet, skirm);
+
+    assert.equal(RunState.score, 50);
+    assert.equal(RunState.kills, 1);
+  });
+
+  it('a 1.5× hot bullet (damage=15) kills a 10-HP Skirm and awards 75 points (= round(50 × 1.5))', () => {
+    RunState.reset();
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._explodeForType = () => {};
+    scene._animateScore = () => {};
+    scene._weapons = { damage: 10, pool: { killAndHide: () => {} } };
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_DIED) scene._onEnemyDied(data);
+    };
+
+    const skirm = new Skirm(scene, 120, 80, SKIRM_STATS, 'straight');
+    const bullet = {
+      _damage: 15,
+      _scoreMultiplier: 1.5,
+      _shotPayload: { damage: 15, scoreMultiplier: 1.5, hitEnemies: new Set() },
+      body: { enable: true, stop: () => {} },
+    };
+
+    scene._onBulletHitEnemy(bullet, skirm);
+
+    assert.equal(skirm.hp, 0);
+    assert.equal(skirm.alive, false);
+    assert.equal(RunState.score, 75);
+    assert.equal(RunState.kills, 1);
+  });
+
+  it('a 1.5× hot bullet (damage=15) only reduces a 20-HP Skirm to 5 HP — no kill, no score', () => {
+    RunState.reset();
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._explodeForType = () => {};
+    scene._animateScore = () => {};
+    scene._weapons = { damage: 10, pool: { killAndHide: () => {} } };
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_DIED) scene._onEnemyDied(data);
+    };
+
+    const skirm = new Skirm(scene, 120, 80, { ...SKIRM_STATS, hp: 20 }, 'straight');
+    const bullet = {
+      _damage: 15,
+      _scoreMultiplier: 1.5,
+      _shotPayload: { damage: 15, scoreMultiplier: 1.5, hitEnemies: new Set() },
+      body: { enable: true, stop: () => {} },
+    };
+
+    scene._onBulletHitEnemy(bullet, skirm);
+
+    assert.equal(skirm.hp, 5);
+    assert.equal(skirm.alive, true);
+    assert.equal(RunState.score, 0);
+    assert.equal(RunState.kills, 0);
+  });
+
+  it('tracks the animated HUD score from the current tween value during rapid updates', () => {
+    const scene = new GameScene();
+    let tweenConfig = null;
+    let scoreText = '';
+    scene._displayedScore = 0;
+    scene._scoreText = {
+      setText: (value) => {
+        scoreText = value;
+      },
+    };
+    scene.tweens = {
+      add: (config) => {
+        tweenConfig = config;
+        return { stop: () => {} };
+      },
+    };
+
+    scene._animateScore(55);
+    tweenConfig.targets.val = 27.9;
+    tweenConfig.onUpdate();
+
+    assert.equal(scene._displayedScore, 27.9);
+    assert.equal(scoreText, 'SCORE  27');
+  });
+});
+
+describe('GameScene player explosion', () => {
+  it('calls explodePlayer on the effects system and flashes the camera', () => {
+    const scene = new GameScene();
+    let explodePlayerCalled = false;
+    let flashCalled = false;
+    scene._effects = {
+      explodePlayer: () => { explodePlayerCalled = true; },
+    };
+    scene.cameras = { main: { flash: () => { flashCalled = true; } } };
 
     scene._explode(120, 240);
 
-    assert.deepEqual(explodeArgs, [
-      120,
-      240,
-      'skirm',
-      0,
-      0,
-      scene._enemies,
-      scene._eBullets,
-      { playSound: false },
-    ]);
+    assert.equal(explodePlayerCalled, true, 'explodePlayer must be called');
+    assert.equal(flashCalled, true, 'camera flash must be called');
   });
 });
+

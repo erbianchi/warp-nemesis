@@ -159,6 +159,50 @@ export class EffectsSystem {
   }
 
   /**
+   * Player ship barrel-blast explosion — three concentric fragment waves with
+   * randomised counts, speeds, sizes, and tints so each death looks different.
+   * @param {number} x
+   * @param {number} y
+   */
+  explodePlayer(x, y) {
+    // Per-explosion random scale keeps the overall feel consistent while varying details.
+    const speedScale = Phaser.Math.FloatBetween(0.85, 1.25);
+
+    // Wave 1 — fast outer ring: ship-colour (green/white) splinters
+    const outerCount = Phaser.Math.Between(18, 28);
+    for (let i = 0; i < outerCount; i++) {
+      const angle = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
+      const spd   = Phaser.Math.FloatBetween(310, 520) * speedScale;
+      const size  = Phaser.Math.FloatBetween(2.5, 5.5);
+      const life  = Phaser.Math.Between(320, 560);
+      const tint  = [0x00ff88, 0x88ffcc, 0xffffff, 0x00ffcc][Phaser.Math.Between(0, 3)];
+      this._spawnFragment(x, y, Math.cos(angle) * spd, Math.sin(angle) * spd, size, tint, life);
+    }
+
+    // Wave 2 — medium shrapnel: fire colours
+    const midCount = Phaser.Math.Between(22, 34);
+    for (let i = 0; i < midCount; i++) {
+      const angle = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
+      const spd   = Phaser.Math.FloatBetween(120, 280) * speedScale;
+      const size  = Phaser.Math.FloatBetween(4, 9);
+      const life  = Phaser.Math.Between(460, 740);
+      const tint  = [0xff6600, 0xff8800, 0xffcc00, 0xff3300, 0xffaa00][Phaser.Math.Between(0, 4)];
+      this._spawnFragment(x, y, Math.cos(angle) * spd, Math.sin(angle) * spd, size, tint, life);
+    }
+
+    // Wave 3 — slow glowing embers that linger
+    const innerCount = Phaser.Math.Between(10, 18);
+    for (let i = 0; i < innerCount; i++) {
+      const angle = Phaser.Math.FloatBetween(-Math.PI, Math.PI);
+      const spd   = Phaser.Math.FloatBetween(20, 100) * speedScale;
+      const size  = Phaser.Math.FloatBetween(5, 12);
+      const life  = Phaser.Math.Between(580, 980);
+      const tint  = [0xff2200, 0xff4400, 0xff6600, 0xffcc44][Phaser.Math.Between(0, 3)];
+      this._spawnFragment(x, y, Math.cos(angle) * spd, Math.sin(angle) * spd, size, tint, life);
+    }
+  }
+
+  /**
    * Spawn an explosion for the given enemy type and push nearby objects.
    * @param {number} x
    * @param {number} y
