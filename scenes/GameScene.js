@@ -674,8 +674,23 @@ export class GameScene extends Phaser.Scene {
           });
         }
         break;
-      case 'weaponUpgrade':
       case 'newWeapon':
+        if (bonus.weaponKey) {
+          this._weapons?.equipPrimaryWeapon?.(bonus.weaponKey);
+          this._drawWeaponDisplay?.();
+          this.events.emit(EVENTS.WEAPON_CHANGED, {
+            ...bonus,
+            pending: false,
+            slot: 0,
+          });
+          break;
+        }
+        this.events.emit(EVENTS.WEAPON_CHANGED, {
+          ...bonus,
+          pending: true,
+        });
+        break;
+      case 'weaponUpgrade':
         this.events.emit(EVENTS.WEAPON_CHANGED, {
           ...bonus,
           pending: true,
@@ -857,24 +872,55 @@ export class GameScene extends Phaser.Scene {
     const Y0    = HEIGHT - BOX_H - 8;
     this._weaponDisplayX = X0;   // shared with _buildStatusBars
     this._weaponDisplayY = Y0;
-    const gfx   = this.add.graphics();
+    this._weaponDisplayGraphics = this.add.graphics();
+    this._weaponSlotNumberTexts = [];
+    this._weaponSlotNameTexts = [];
+
+    slots.forEach((slot, i) => {
+      const x      = X0 + i * (BOX_W + GAP);
+      const filled = slot !== null;
+      const slotFill = filled ? '#aaaaaa' : '#333333';
+      const nameFill = filled ? `#${slot.color.toString(16).padStart(6, '0')}` : '#2a2a2a';
+      this._weaponSlotNumberTexts.push(this.add.text(x + 4, Y0 + 3, `${i + 1}`, {
+        fontSize: '9px', fill: slotFill, fontFamily: 'monospace',
+      }));
+      this._weaponSlotNameTexts.push(this.add.text(x + BOX_W / 2, Y0 + BOX_H / 2 + 3, slot?.name ?? '----', {
+        fontSize: '11px', fill: nameFill, fontFamily: 'monospace',
+      }).setOrigin(0.5));
+    });
+
+    this._drawWeaponDisplay();
+  }
+
+  _drawWeaponDisplay() {
+    if (!this._weaponDisplayGraphics) return;
+
+    const BOX_W = 62, BOX_H = 38, GAP = 6;
+    const slots = this._weapons.getSlots();
+    const X0 = this._weaponDisplayX;
+    const Y0 = this._weaponDisplayY;
+    this._weaponDisplayGraphics.clear();
 
     slots.forEach((slot, i) => {
       const x      = X0 + i * (BOX_W + GAP);
       const filled = slot !== null;
       const border = filled ? slot.color : 0x2a2a2a;
       const bg     = filled ? 0x001428  : 0x080808;
-      const css    = filled ? `#${slot.color.toString(16).padStart(6, '0')}` : '#2a2a2a';
+      const slotFill = filled ? '#aaaaaa' : '#333333';
+      const nameFill = filled ? `#${slot.color.toString(16).padStart(6, '0')}` : '#2a2a2a';
 
-      gfx.fillStyle(bg, 1);      gfx.fillRect(x, Y0, BOX_W, BOX_H);
-      gfx.lineStyle(1, border, 1); gfx.strokeRect(x, Y0, BOX_W, BOX_H);
+      this._weaponDisplayGraphics.fillStyle(bg, 1);
+      this._weaponDisplayGraphics.fillRect(x, Y0, BOX_W, BOX_H);
+      this._weaponDisplayGraphics.lineStyle(1, border, 1);
+      this._weaponDisplayGraphics.strokeRect(x, Y0, BOX_W, BOX_H);
 
-      this.add.text(x + 4, Y0 + 3, `${i + 1}`, {
-        fontSize: '9px', fill: filled ? '#aaaaaa' : '#333333', fontFamily: 'monospace',
-      });
-      this.add.text(x + BOX_W / 2, Y0 + BOX_H / 2 + 3, filled ? slot.name : '----', {
-        fontSize: '11px', fill: css, fontFamily: 'monospace',
-      }).setOrigin(0.5);
+      const slotText = this._weaponSlotNumberTexts?.[i];
+      slotText?.setText?.(`${i + 1}`);
+      slotText?.setStyle?.({ fill: slotFill, fontFamily: 'monospace', fontSize: '9px' });
+
+      const nameText = this._weaponSlotNameTexts?.[i];
+      nameText?.setText?.(filled ? slot.name : '----');
+      nameText?.setStyle?.({ fill: nameFill, fontFamily: 'monospace', fontSize: '11px' });
     });
   }
 

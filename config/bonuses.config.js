@@ -6,7 +6,8 @@ export const BONUS_TYPES = Object.freeze({
   HEALTH_50:      'health50',
   SHIELD_50:      'shield50',
   WEAPON_UPGRADE: 'weaponUpgrade',
-  NEW_WEAPON:     'newWeapon',
+  T_LASER:        'tLaser',
+  Y_LASER:        'yLaser',
 });
 
 export const BONUS_SHIELD_ROLL = Object.freeze({
@@ -61,13 +62,24 @@ export const BONUSES = Object.freeze({
     pickupSound: BONUS_PICKUP_SOUNDS.NONE,
     pending:     true,
   },
-  [BONUS_TYPES.NEW_WEAPON]: {
-    key:         BONUS_TYPES.NEW_WEAPON,
-    label:       'New Weapon',
+  [BONUS_TYPES.T_LASER]: {
+    key:         BONUS_TYPES.T_LASER,
+    label:       'T-Laser',
     kind:        'newWeapon',
     value:       1,
+    weaponKey:   'tLaser',
     weight:      1,
-    pickupSound: BONUS_PICKUP_SOUNDS.NONE,
-    pending:     true,
+    pickupSound: BONUS_PICKUP_SOUNDS.FORCE_FIELD,
+    pending:     false,
+  },
+  [BONUS_TYPES.Y_LASER]: {
+    key:         BONUS_TYPES.Y_LASER,
+    label:       'Y-Laser',
+    kind:        'newWeapon',
+    value:       1,
+    weaponKey:   'yLaser',
+    weight:      1,
+    pickupSound: BONUS_PICKUP_SOUNDS.FORCE_FIELD,
+    pending:     false,
   },
 });

@@ -626,6 +626,70 @@ describe('GameScene player shield and bonuses', () => {
     assert.equal(addedShield, 50);
   });
 
+  it('equips a collected T-Laser into weapon 1 and redraws the weapon HUD', () => {
+    const scene = new GameScene();
+    let equippedWeapon = null;
+    let weaponEvent = null;
+    let redrawCalls = 0;
+
+    scene._weapons = {
+      equipPrimaryWeapon: (weaponKey) => {
+        equippedWeapon = weaponKey;
+      },
+    };
+    scene._drawWeaponDisplay = () => {
+      redrawCalls++;
+    };
+    scene._drawStatusBars = () => {};
+    scene.events = {
+      emit: (event, payload) => {
+        weaponEvent = { event, payload };
+      },
+    };
+
+    scene._applyBonusEffect({
+      key: 'tLaser',
+      kind: 'newWeapon',
+      value: 1,
+      label: 'T-Laser',
+      weaponKey: 'tLaser',
+      pending: false,
+    });
+
+    assert.equal(equippedWeapon, 'tLaser');
+    assert.equal(redrawCalls, 1);
+    assert.deepEqual(weaponEvent, {
+      event: EVENTS.WEAPON_CHANGED,
+      payload: {
+        key: 'tLaser',
+        kind: 'newWeapon',
+        value: 1,
+        label: 'T-Laser',
+        weaponKey: 'tLaser',
+        pending: false,
+        slot: 0,
+      },
+    });
+  });
+
+  it('can redraw the weapon HUD after a bonus equip without breaking text styling', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._weapons = {
+      getSlots: () => [{ key: 'laser', name: 'LASER', color: 0x00ffff }, null],
+    };
+
+    scene._buildWeaponDisplay();
+
+    scene._weapons = {
+      getSlots: () => [{ key: 'tLaser', name: 'T-LASER', color: 0x00ffff }, null],
+    };
+
+    assert.doesNotThrow(() => scene._drawWeaponDisplay());
+    assert.equal(scene._weaponSlotNameTexts[0].text, 'T-LASER');
+    assert.equal(scene._weaponSlotNameTexts[0].style.values.fill, '#00ffff');
+  });
+
   it('applies a life bonus to the HUD and run state', () => {
     RunState.reset();
     const scene = new GameScene();

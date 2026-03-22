@@ -44,6 +44,7 @@ export function installPhaserGlobal() {
     setTint(v)       { this.tint = v; return this; }
     clearTint()      { delete this.tint; return this; }
     setTexture(v)    { this.texture = v; return this; }
+    setRotation(v)   { this.rotation = v; return this; }
     setScale(x, y = x) {
       this.scaleX = x;
       this.scaleY = y;
@@ -167,6 +168,7 @@ export function createMockScene() {
       setTint:        function(v) { this.tint = v; return this; },
       clearTint:      function() { delete this.tint; return this; },
       setTexture:     function(v) { this.texture = v; return this; },
+      setRotation:    function(v) { this.rotation = v; return this; },
       setScale:       function(x, y = x) {
         this.scaleX = x;
         this.scaleY = y;
@@ -264,7 +266,16 @@ export function createMockScene() {
       image:     (x = 0, y = 0, texture = '') => Object.assign(mockGameObject(), { x, y, texture }),
       text:      () => {
         const text = mockGameObject();
-        text.setStyle = () => text;
+        text.style = {
+          values: {},
+          setStyle(style = {}) {
+            this.values = { ...this.values, ...style };
+          },
+        };
+        text.setStyle = (style = {}) => {
+          text.style.setStyle(style);
+          return text;
+        };
         return text;
       },
       particles: () => {

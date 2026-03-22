@@ -7,6 +7,10 @@ import { GAME_CONFIG } from '../config/game.config.js';
 import { WEAPONS }     from '../config/weapons.config.js';
 
 const PLAYER_LASER_SPAWN_Y_OFFSET = 18;
+const DEFAULT_PRIMARY_WEAPON = 'laser';
+const MAX_PLAYER_BULLET_POOL_SIZE = Math.max(
+  ...Object.values(WEAPONS).map(config => config.poolSize ?? 0)
+);
 
 export class WeaponManager {
   /**
@@ -17,7 +21,7 @@ export class WeaponManager {
 
     /** @type {Array<string|null>} weapon key per slot, null = empty */
     this._slots = Array(GAME_CONFIG.WEAPON_SLOTS).fill(null);
-    this._slots[0] = 'laser';
+    this._slots[0] = DEFAULT_PRIMARY_WEAPON;
 
     this._cooldown = 0;
     this._cfg      = WEAPONS[this._slots[0]];
@@ -38,7 +42,7 @@ export class WeaponManager {
     this._pool = scene.physics.add.group({
       classType:      Phaser.Physics.Arcade.Image,
       defaultKey:     'bullet_laser',
-      maxSize:        this._cfg.poolSize,
+      maxSize:        MAX_PLAYER_BULLET_POOL_SIZE,
       runChildUpdate: false,
       allowGravity:   false,
     });
@@ -78,13 +82,26 @@ export class WeaponManager {
   }
 
   /**
+   * Equip a new weapon into slot 1.
+   * @param {string} weaponKey
+   * @returns {string}
+   */
+  equipPrimaryWeapon(weaponKey) {
+    const config = WEAPONS[weaponKey];
+    if (!config) throw new Error(`WeaponManager: unknown primary weapon "${weaponKey}"`);
+    this._slots[0] = weaponKey;
+    this._cfg = config;
+    return weaponKey;
+  }
+
+  /**
    * Returns a snapshot of all slots for UI rendering.
    * Populated slots return `{ key, name, color }`; empty slots return `null`.
    * @returns {Array<{key: string, name: string, color: number}|null>}
    */
   getSlots() {
     return this._slots.map(key =>
-      key ? { key, name: key.toUpperCase(), color: WEAPONS[key].color } : null
+      key ? { key, name: WEAPONS[key].name ?? key.toUpperCase(), color: WEAPONS[key].color } : null
     );
   }
 
@@ -108,9 +125,14 @@ export class WeaponManager {
     }
 
     for (const b of this._pool.getChildren()) {
-      if (b.active && b.y < -20) {
+      if (b.active && (
+        b.y < -20
+        || b.y > GAME_CONFIG.HEIGHT + 20
+        || b.x < -20
+        || b.x > GAME_CONFIG.WIDTH + 20
+      )) {
         this._pool.killAndHide(b);
-        b.body.stop();
+        b.body.stop?.();
         b.body.enable = false;
       }
     }
@@ -137,7 +159,7 @@ export class WeaponManager {
     const textureKey = (warningShot && this._cfg.warningTextureKey)
       ? this._cfg.warningTextureKey
       : this._laserTextureKey;
-    if (!this._fireSingleBullet(x, y, shotPayload, textureKey)) return false;
+    if (!this._fireShotPattern(x, y, shotPayload, textureKey)) return false;
 
     this._cooldown = this._cfg.fireRate;
     this._heatShots = nextHeatShots;
@@ -151,6 +173,28 @@ export class WeaponManager {
     }
 
     this._lastShotInfo = shotPayload;
+    return true;
+  }
+
+  _fireShotPattern(x, y, shotPayload, textureKey) {
+    const firedBullets = [];
+    const shots = this._cfg.shots ?? [{ angle: 0, x: 0 }];
+
+    for (const shot of shots) {
+      const bullet = this._fireSingleBullet(
+        x + (shot.x ?? 0),
+        y + (shot.y ?? 0),
+        shotPayload,
+        textureKey,
+        shot.angle ?? 0
+      );
+      if (!bullet) {
+        for (const firedBullet of firedBullets) this._releaseBullet(firedBullet);
+        return false;
+      }
+      firedBullets.push(bullet);
+    }
+
     return true;
   }
 
@@ -171,20 +215,21 @@ export class WeaponManager {
     };
   }
 
-  _fireSingleBullet(x, y, shotPayload, textureKey = this._laserTextureKey) {
+  _fireSingleBullet(x, y, shotPayload, textureKey = this._laserTextureKey, angleDeg = 0) {
     const bullet = this._pool.get(x, y - PLAYER_LASER_SPAWN_Y_OFFSET);
-    if (!bullet) return false;
-    this._armBullet(bullet, x, y, shotPayload, textureKey);
-    return true;
+    if (!bullet) return null;
+    this._armBullet(bullet, x, y, shotPayload, textureKey, angleDeg);
+    return bullet;
   }
 
-  _armBullet(bullet, x, y, shotPayload, textureKey = this._laserTextureKey) {
+  _armBullet(bullet, x, y, shotPayload, textureKey = this._laserTextureKey, angleDeg = 0) {
     bullet.setActive(true).setVisible(true);
     if (bullet.setTexture) bullet.setTexture(textureKey);
     bullet.setScale(1, 1);
+    this._setBulletRotation(bullet, angleDeg);
     bullet.body.reset(x, y - PLAYER_LASER_SPAWN_Y_OFFSET);
     bullet.body.enable = true;
-    bullet.body.setVelocityY(-this._cfg.speed);
+    this._setBulletVelocity(bullet, angleDeg);
     bullet.body.allowGravity = false;
     bullet._damage = shotPayload.damage;
     bullet._scoreMultiplier = shotPayload.scoreMultiplier;
@@ -192,11 +237,36 @@ export class WeaponManager {
     bullet.body.updateFromGameObject?.();
   }
 
+  _setBulletVelocity(bullet, angleDeg = 0) {
+    const radians = angleDeg * (Math.PI / 180);
+    const vx = Math.sin(radians) * this._cfg.speed;
+    const vy = -Math.cos(radians) * this._cfg.speed;
+
+    if (bullet.body.setVelocity) {
+      bullet.body.setVelocity(vx, vy);
+    } else {
+      bullet.body.setVelocityX?.(vx);
+      bullet.body.setVelocityY?.(vy);
+    }
+    if ('_vx' in bullet.body) bullet.body._vx = vx;
+    if ('_vy' in bullet.body) bullet.body._vy = vy;
+  }
+
+  _setBulletRotation(bullet, angleDeg = 0) {
+    const radians = angleDeg * (Math.PI / 180);
+    if (bullet.setRotation) {
+      bullet.setRotation(radians);
+      return;
+    }
+    bullet.rotation = radians;
+  }
+
   _releaseBullet(bullet) {
     if (!bullet) return;
 
     if (bullet.setTexture) bullet.setTexture(this._laserTextureKey);
     bullet.setScale?.(1, 1);
+    this._setBulletRotation(bullet, 0);
     bullet._damage = this._cfg.damage;
     bullet._scoreMultiplier = 1;
     bullet._shotPayload = null;

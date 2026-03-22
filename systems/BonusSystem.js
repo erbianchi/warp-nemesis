@@ -164,6 +164,7 @@ export class BonusSystem {
       x:           bonus.x,
       y:           bonus.y,
     };
+    if (bonus.bonusConfig.weaponKey) payload.weaponKey = bonus.bonusConfig.weaponKey;
 
     this._removeTrackedBonus(bonus);
     bonus.remove();

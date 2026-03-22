@@ -15,7 +15,8 @@ describe('BONUSES', () => {
       'HEALTH_50',
       'SHIELD_50',
       'WEAPON_UPGRADE',
-      'NEW_WEAPON',
+      'T_LASER',
+      'Y_LASER',
     ]);
   });
 
@@ -31,9 +32,10 @@ describe('BONUSES', () => {
     }
   });
 
-  it('keeps weapon-related bonuses marked pending until their behavior is designed', () => {
+  it('keeps weapon upgrades pending but ships concrete laser pickups live', () => {
     assert.equal(BONUSES.weaponUpgrade.pending, true);
-    assert.equal(BONUSES.newWeapon.pending, true);
+    assert.equal(BONUSES.tLaser.pending, false);
+    assert.equal(BONUSES.yLaser.pending, false);
     assert.equal(BONUSES.extraLife.pending, false);
     assert.equal(BONUSES.health50.pending, false);
     assert.equal(BONUSES.shield50.pending, false);
@@ -62,6 +64,16 @@ describe('BONUSES', () => {
     assert.equal(BONUSES.health50.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
     assert.equal(BONUSES.shield50.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
     assert.equal(BONUSES.weaponUpgrade.pickupSound, BONUS_PICKUP_SOUNDS.NONE);
-    assert.equal(BONUSES.newWeapon.pickupSound, BONUS_PICKUP_SOUNDS.NONE);
+    assert.equal(BONUSES.tLaser.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
+    assert.equal(BONUSES.yLaser.pickupSound, BONUS_PICKUP_SOUNDS.FORCE_FIELD);
+  });
+
+  it('defines concrete slot-1 weapon pickups with explicit weapon keys', () => {
+    assert.equal(BONUSES.tLaser.kind, 'newWeapon');
+    assert.equal(BONUSES.tLaser.weaponKey, 'tLaser');
+    assert.equal(BONUSES.tLaser.label, 'T-Laser');
+    assert.equal(BONUSES.yLaser.kind, 'newWeapon');
+    assert.equal(BONUSES.yLaser.weaponKey, 'yLaser');
+    assert.equal(BONUSES.yLaser.label, 'Y-Laser');
   });
 });

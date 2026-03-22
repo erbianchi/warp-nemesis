@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { WEAPONS } from '../../config/weapons.config.js';
 
-const REQUIRED_WEAPONS = ['laser', 'spreadShot', 'missile', 'plasma', 'railgun', 'dualLaser', 'bomb'];
+const REQUIRED_WEAPONS = ['laser', 'tLaser', 'yLaser', 'spreadShot', 'missile', 'plasma', 'railgun', 'dualLaser', 'bomb'];
 const REQUIRED_KEYS    = ['fireRate', 'speed', 'damage', 'color', 'poolSize'];
 
 describe('WEAPONS config', () => {
@@ -66,5 +66,14 @@ describe('WEAPONS config', () => {
       assert.ok(def.speed <= railSpeed,
         `${id}.speed (${def.speed}) exceeds railgun (${railSpeed})`);
     }
+  });
+
+  it('laser variants define readable names and shot patterns', () => {
+    assert.equal(WEAPONS.laser.name, 'LASER');
+    assert.equal(WEAPONS.tLaser.name, 'T-LASER');
+    assert.equal(WEAPONS.yLaser.name, 'Y-LASER');
+    assert.deepEqual(WEAPONS.laser.shots, [{ angle: 0, x: 0 }]);
+    assert.deepEqual(WEAPONS.tLaser.shots, [{ angle: 0, x: 0 }, { angle: -90, x: -16 }, { angle: 90, x: 16 }]);
+    assert.deepEqual(WEAPONS.yLaser.shots, [{ angle: 0, x: 0 }, { angle: -45, x: -10 }, { angle: 45, x: 10 }]);
   });
 });

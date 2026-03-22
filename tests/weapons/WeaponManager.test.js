@@ -30,10 +30,11 @@ function createMockPool(maxSize = 80) {
       }
       if (children.length >= maxSize) return null;
       const b = {
-        active: true, visible: true, x, y, texture: 'bullet_laser',
+        active: true, visible: true, x, y, texture: 'bullet_laser', rotation: 0,
         setActive:  (v) => { b.active  = v; return b; },
         setVisible: (v) => { b.visible = v; return b; },
         setTexture: (v) => { b.texture = v; return b; },
+        setRotation: (v) => { b.rotation = v; return b; },
         setScale:   (sx, sy = sx) => { b.scaleX = sx; b.scaleY = sy; return b; },
         body: {
           _vx: 0, _vy: 0, enable: true,
@@ -121,6 +122,13 @@ describe('WeaponManager', () => {
 
   it('slot 1 is empty (null)', () => {
     assert.equal(manager._slots[1], null);
+  });
+
+  it('can equip a different slot-1 laser and expose its HUD name', () => {
+    manager.equipPrimaryWeapon('tLaser');
+
+    assert.equal(manager._slots[0], 'tLaser');
+    assert.equal(manager.getSlots()[0].name, 'T-LASER');
   });
 
   // --- getSlots ---
@@ -291,6 +299,55 @@ describe('WeaponManager', () => {
     assert.equal(pool._children.filter(b => b.active).length, 2);
   });
 
+  it('fires the T-Laser forward plus both 90-degree side shots', () => {
+    manager.equipPrimaryWeapon('tLaser');
+
+    manager.tryFire(240, 500);
+
+    assert.equal(pool._children.length, 3);
+    const velocities = pool._children
+      .map(bullet => [bullet.body._vx, bullet.body._vy])
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    assertClose(velocities[0][0], -700);
+    assertClose(velocities[0][1], 0);
+    assertClose(velocities[1][0], 0);
+    assertClose(velocities[1][1], -700);
+    assertClose(velocities[2][0], 700);
+    assertClose(velocities[2][1], 0);
+  });
+
+  it('renders the T-Laser side beams horizontally', () => {
+    manager.equipPrimaryWeapon('tLaser');
+
+    manager.tryFire(240, 500);
+
+    const leftBeam = pool._children.find(bullet => bullet.body._vx < 0);
+    const centerBeam = pool._children.find(bullet => bullet.body._vx === 0);
+    const rightBeam = pool._children.find(bullet => bullet.body._vx > 0);
+
+    assertClose(leftBeam.rotation, -Math.PI / 2);
+    assertClose(centerBeam.rotation, 0);
+    assertClose(rightBeam.rotation, Math.PI / 2);
+  });
+
+  it('fires the Y-Laser forward plus both 45-degree side shots', () => {
+    manager.equipPrimaryWeapon('yLaser');
+
+    manager.tryFire(240, 500);
+
+    assert.equal(pool._children.length, 3);
+    const sideSpeed = Math.sin(Math.PI / 4) * 700;
+    const velocities = pool._children
+      .map(bullet => [bullet.body._vx, bullet.body._vy])
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    assertClose(velocities[0][0], -sideSpeed);
+    assertClose(velocities[0][1], -sideSpeed);
+    assertClose(velocities[1][0], 0);
+    assertClose(velocities[1][1], -700);
+    assertClose(velocities[2][0], sideSpeed);
+    assertClose(velocities[2][1], -sideSpeed);
+  });
+
   // --- update: cooldown ---
 
   it('update reduces cooldown by delta', () => {
@@ -377,6 +434,18 @@ describe('WeaponManager', () => {
     b.y = -25; // simulate bullet leaving canvas
     manager.update(0);
     assert.equal(b.active, false);
+  });
+
+  it('recycles sideways T-Laser bullets after they leave the playfield', () => {
+    manager.equipPrimaryWeapon('tLaser');
+    manager.tryFire(240, 500);
+    const sideBullet = pool._children.find(bullet => bullet.body._vx > 0);
+    sideBullet.x = 9999;
+
+    manager.update(0);
+
+    assert.equal(sideBullet.active, false);
+    assert.equal(sideBullet.body.enable, false);
   });
 
   it('does not recycle bullets still on screen', () => {

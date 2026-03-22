@@ -158,4 +158,24 @@ describe('BonusSystem', () => {
 
     assert.equal(bonus._shield.points, 0);
   });
+
+  it('includes the equipped weapon key when collecting a concrete weapon pickup', () => {
+    const bonus = bonusSystem.spawnBonus('tLaser', 100, 80, {
+      shieldRoll: { chance: 0 },
+    });
+
+    const payload = bonusSystem.collectBonus(bonus);
+
+    assert.deepEqual(payload, {
+      key: 'tLaser',
+      kind: 'newWeapon',
+      value: 1,
+      label: 'T-Laser',
+      pickupSound: 'forceField_001',
+      pending: false,
+      weaponKey: 'tLaser',
+      x: 100,
+      y: 80,
+    });
+  });
 });
