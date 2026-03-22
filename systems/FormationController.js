@@ -87,8 +87,8 @@ export class FormationController {
 
       // Hook into the ship's death so we can reorganise / recount
       const origOnDeath = ship.onDeath.bind(ship);
-      ship.onDeath = () => {
-        origOnDeath();
+      ship.onDeath = (opts) => {
+        origOnDeath(opts);
         data.dead     = true;
         data.drifting = false;
         scene.tweens.killTweensOf(ship);

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { installPhaserGlobal } from '../helpers/phaser.mock.js';
+import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js';
 
 installPhaserGlobal();
 
@@ -14,7 +14,15 @@ const {
   FORMATION_SHOOT_RATE,
   DRIFT_RANGE_X,
   DRIFT_RANGE_Y,
+  FormationController,
 } = await import('../../systems/FormationController.js');
+
+const { Skirm }        = await import('../../entities/enemies/Skirm.js');
+const { EVENTS }       = await import('../../config/events.config.js');
+const { resolveStats } = await import('../../systems/WaveSpawner.js');
+const { RunState }     = await import('../../systems/RunState.js');
+
+const SKIRM_STATS = resolveStats('skirm', 1.0, 1.0, {});
 
 const { WEAPONS }     = await import('../../config/weapons.config.js');
 const { GAME_CONFIG } = await import('../../config/game.config.js');
@@ -270,5 +278,101 @@ describe('DRIFT_RANGE_X / DRIFT_RANGE_Y', () => {
     const maxSlotY = Math.max(...SLOTS.map(s => s.y));
     assert.ok(maxSlotY + DRIFT_RANGE_Y < topQuarter,
       `max slot y (${maxSlotY}) + drift (${DRIFT_RANGE_Y}) would exit top quarter (${topQuarter})`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression: FormationController must forward scoreMultiplier through its
+// onDeath monkey-patch. Without opts forwarding the multiplier is silently
+// dropped and every formation kill scores at 1× regardless of heat level.
+// ---------------------------------------------------------------------------
+
+describe('FormationController — scoreMultiplier forwarding through onDeath', () => {
+  function makeFormationSkirm(statsOverride = {}) {
+    const scene = createMockScene();
+    const emitted = [];
+    scene.events.emit = (event, data) => emitted.push({ event, data });
+    const skirm = new Skirm(scene, 120, 50, { ...SKIRM_STATS, ...statsOverride }, 'straight');
+    new FormationController(scene, [skirm]);
+    return { skirm, scene, emitted };
+  }
+
+  it('forwards scoreMultiplier=1.3 from a hot kill to ENEMY_DIED', () => {
+    const { skirm, emitted } = makeFormationSkirm();
+    skirm.takeDamage(skirm.hp, 1.3);
+    const died = emitted.find(e => e.event === EVENTS.ENEMY_DIED);
+    assert.ok(died, 'ENEMY_DIED must be emitted');
+    assert.equal(died.data.scoreMultiplier, 1.3);
+  });
+
+  it('forwards scoreMultiplier=2.0 (max overheat) to ENEMY_DIED', () => {
+    const { skirm, emitted } = makeFormationSkirm();
+    skirm.takeDamage(skirm.hp, 2.0);
+    const died = emitted.find(e => e.event === EVENTS.ENEMY_DIED);
+    assert.ok(died, 'ENEMY_DIED must be emitted');
+    assert.equal(died.data.scoreMultiplier, 2.0);
+  });
+
+  it('defaults scoreMultiplier to 1 when formation ship is killed with no multiplier', () => {
+    const { skirm, emitted } = makeFormationSkirm();
+    skirm.die();
+    const died = emitted.find(e => e.event === EVENTS.ENEMY_DIED);
+    assert.ok(died, 'ENEMY_DIED must be emitted');
+    assert.equal(died.data.scoreMultiplier, 1);
+  });
+
+  it('a formation Skirm killed with 1.3× shot awards 65 points (= round(50 × 1.3))', () => {
+    RunState.reset();
+    const scene = createMockScene();
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_DIED) {
+        RunState.addScore(Math.round(data.score * (data.scoreMultiplier ?? 1)));
+        RunState.kills++;
+      }
+    };
+    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight');
+    new FormationController(scene, [skirm]);
+
+    skirm.takeDamage(skirm.hp, 1.3);
+
+    assert.equal(RunState.score, 65);
+    assert.equal(RunState.kills, 1);
+  });
+
+  it('a formation Skirm killed with 2.0× shot awards 100 points (= round(50 × 2.0))', () => {
+    RunState.reset();
+    const scene = createMockScene();
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_DIED) {
+        RunState.addScore(Math.round(data.score * (data.scoreMultiplier ?? 1)));
+        RunState.kills++;
+      }
+    };
+    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight');
+    new FormationController(scene, [skirm]);
+
+    skirm.takeDamage(skirm.hp, 2.0);
+
+    assert.equal(RunState.score, 100);
+    assert.equal(RunState.kills, 1);
+  });
+
+  it('killing the same formation Skirm twice only awards score once', () => {
+    RunState.reset();
+    const scene = createMockScene();
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_DIED) {
+        RunState.addScore(Math.round(data.score * (data.scoreMultiplier ?? 1)));
+        RunState.kills++;
+      }
+    };
+    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight');
+    new FormationController(scene, [skirm]);
+
+    skirm.takeDamage(skirm.hp, 1.5);  // kills it
+    skirm.takeDamage(skirm.hp, 1.5);  // dead — must be ignored
+
+    assert.equal(RunState.kills, 1);
+    assert.equal(RunState.score, 75);  // round(50 × 1.5) = 75, only once
   });
 });

@@ -130,6 +130,20 @@ describe('Skirm', () => {
       skirm.takeDamage(5);
       assert.equal(skirm.hp, 0);
     });
+
+    it('a 15-damage hot bullet (= round(10 × 1.5)) reduces a 20-HP Skirm to 5 HP without killing it', () => {
+      const { skirm } = makeSkirm('straight', { hp: 20 });
+      skirm.takeDamage(15);
+      assert.equal(skirm.hp, 5);
+      assert.equal(skirm.alive, true);
+    });
+
+    it('a 12-damage hot bullet (= round(10 × 1.2)) one-shots a standard 10-HP Skirm', () => {
+      const { skirm } = makeSkirm();
+      skirm.takeDamage(12, 1.2);
+      assert.equal(skirm.hp, 0);
+      assert.equal(skirm.alive, false);
+    });
   });
 
   describe('fire()', () => {
@@ -165,6 +179,19 @@ describe('Skirm', () => {
       const died = events.find(e => e.event === EVENTS.ENEMY_DIED);
       assert.ok(died);
       assert.equal(died.data.scoreMultiplier, 1.4);
+    });
+
+    it('the killing shot alone decides the ENEMY_DIED score multiplier', () => {
+      const { skirm, scene } = makeSkirm({ hp: 10 });
+      const events = [];
+      scene.events.emit = (e, d) => events.push({ event: e, data: d });
+
+      skirm.takeDamage(5, 1.2);
+      skirm.takeDamage(5, 1);
+
+      const died = events.find(e => e.event === EVENTS.ENEMY_DIED);
+      assert.ok(died);
+      assert.equal(died.data.scoreMultiplier, 1);
     });
   });
 });

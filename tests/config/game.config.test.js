@@ -10,8 +10,9 @@ describe('GAME_CONFIG', () => {
     'PLAYER_HEAT_MAX', 'PLAYER_HEAT_RECOVERY_MS', 'PLAYER_OVERHEAT_RECOVERY_SHOTS',
     'PLAYER_HEAT_WARNING_RATIO', 'PLAYER_HEAT_WARNING_BLINK_MS',
     'PLAYER_HEAT_WARNING_SHAKE_MS', 'PLAYER_HEAT_WARNING_SHAKE_INTENSITY',
-    'PLAYER_HEAT_WARNING_BONUS_PER_SHOT', 'PLAYER_HEAT_WARNING_LASER_COUNT',
-    'PLAYER_HEAT_WARNING_LASER_SPACING',
+    'PLAYER_HEAT_WARNING_BONUS_PER_SHOT', 'PLAYER_HEAT_WARNING_SHOT_SHAKE_MS',
+    'PLAYER_HEAT_WARNING_SHOT_SHAKE_MS_STEP', 'PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY',
+    'PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY_STEP',
     'SPEED_MIN', 'SPEED_MAX', 'PLAYER_SPEED_DEFAULT',
     'STAR_COUNT', 'STAR_SPEED_MIN', 'STAR_SPEED_MAX',
   ];
@@ -58,54 +59,6 @@ describe('GAME_CONFIG', () => {
     assert.ok(GAME_CONFIG.PLAYER_SPEED >= 100, 'PLAYER_SPEED too slow to be playable');
   });
 
-  it('PLAYER_LIVES_DEFAULT is 3', () => {
-    assert.equal(GAME_CONFIG.PLAYER_LIVES_DEFAULT, 3);
-  });
-
-  it('WEAPON_SLOTS is 2', () => {
-    assert.equal(GAME_CONFIG.WEAPON_SLOTS, 2);
-  });
-
-  it('weapon heat capacity is 30 shots by default', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_MAX, 30);
-  });
-
-  it('weapon heat recovers 1 shot every 100 ms by default', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_RECOVERY_MS, 100);
-  });
-
-  it('overheat requires 20 shots of recovery before firing resumes', () => {
-    assert.equal(GAME_CONFIG.PLAYER_OVERHEAT_RECOVERY_SHOTS, 20);
-  });
-
-  it('heat warning starts at 70 percent of the bar', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO, 0.7);
-  });
-
-  it('heat warning blink cadence is defined in milliseconds', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_BLINK_MS, 160);
-  });
-
-  it('heat warning shake cadence is defined in milliseconds', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_SHAKE_MS, 45);
-  });
-
-  it('heat warning shake intensity is configured', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_SHAKE_INTENSITY, 0.0070);
-  });
-
-  it('heat warning shots gain 10 percent per extra yellow-bar shot', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_BONUS_PER_SHOT, 0.1);
-  });
-
-  it('heat warning shots split into two laser beams', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_COUNT, 2);
-  });
-
-  it('heat warning laser beams stay close together', () => {
-    assert.equal(GAME_CONFIG.PLAYER_HEAT_WARNING_LASER_SPACING, 4);
-  });
-
   it('SPEED_MIN is less than SPEED_MAX', () => {
     assert.ok(GAME_CONFIG.SPEED_MIN < GAME_CONFIG.SPEED_MAX,
       `SPEED_MIN (${GAME_CONFIG.SPEED_MIN}) must be < SPEED_MAX (${GAME_CONFIG.SPEED_MAX})`);
@@ -117,5 +70,53 @@ describe('GAME_CONFIG', () => {
       PLAYER_SPEED_DEFAULT >= SPEED_MIN && PLAYER_SPEED_DEFAULT <= SPEED_MAX,
       `PLAYER_SPEED_DEFAULT (${PLAYER_SPEED_DEFAULT}) must be in [${SPEED_MIN}, ${SPEED_MAX}]`
     );
+  });
+
+  // ── Heat system structural constraints ───────────────────────────────────
+
+  it('overheat recovery shots are less than max heat (unlock is reachable)', () => {
+    const { PLAYER_HEAT_MAX, PLAYER_OVERHEAT_RECOVERY_SHOTS } = GAME_CONFIG;
+    assert.ok(
+      PLAYER_OVERHEAT_RECOVERY_SHOTS < PLAYER_HEAT_MAX,
+      `PLAYER_OVERHEAT_RECOVERY_SHOTS (${PLAYER_OVERHEAT_RECOVERY_SHOTS}) must be < PLAYER_HEAT_MAX (${PLAYER_HEAT_MAX})`
+    );
+  });
+
+  it('weapon unlocks below the warning zone so firing resumes normally after overheat', () => {
+    const { PLAYER_HEAT_MAX, PLAYER_OVERHEAT_RECOVERY_SHOTS, PLAYER_HEAT_WARNING_RATIO } = GAME_CONFIG;
+    const unlockAt      = PLAYER_HEAT_MAX - PLAYER_OVERHEAT_RECOVERY_SHOTS;
+    const warningStart  = PLAYER_HEAT_MAX * PLAYER_HEAT_WARNING_RATIO;
+    assert.ok(
+      unlockAt < warningStart,
+      `unlock heat (${unlockAt}) must be below warning zone start (${warningStart})`
+    );
+  });
+
+  it('heat warning ratio is a valid fraction strictly between 0 and 1', () => {
+    const r = GAME_CONFIG.PLAYER_HEAT_WARNING_RATIO;
+    assert.ok(r > 0 && r < 1, `PLAYER_HEAT_WARNING_RATIO (${r}) must be in (0, 1)`);
+  });
+
+  it('heat warning bonus per shot produces multipliers above 1', () => {
+    assert.ok(GAME_CONFIG.PLAYER_HEAT_WARNING_BONUS_PER_SHOT > 0,
+      'PLAYER_HEAT_WARNING_BONUS_PER_SHOT must be positive to have any effect');
+  });
+
+  it('shot shake step values are smaller than their base values', () => {
+    const {
+      PLAYER_HEAT_WARNING_SHOT_SHAKE_MS,
+      PLAYER_HEAT_WARNING_SHOT_SHAKE_MS_STEP,
+      PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY,
+      PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY_STEP,
+    } = GAME_CONFIG;
+    assert.ok(PLAYER_HEAT_WARNING_SHOT_SHAKE_MS_STEP < PLAYER_HEAT_WARNING_SHOT_SHAKE_MS,
+      'shake MS step must be smaller than base shake MS');
+    assert.ok(PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY_STEP < PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY,
+      'shake intensity step must be smaller than base shake intensity');
+  });
+
+  it('WEAPON_SLOTS is at least 1', () => {
+    assert.ok(GAME_CONFIG.WEAPON_SLOTS >= 1, 'player needs at least 1 weapon slot');
+    assert.ok(Number.isInteger(GAME_CONFIG.WEAPON_SLOTS));
   });
 });

@@ -221,23 +221,34 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Spring-damper rubber-band: stretch the ship when moving forward (up),
-   * spring back when not. Visual only — physics body is unaffected.
+   * Spring-damper rubber-band — one spring, two axes:
+   *   offset > 0  (moving back)    → setScale stretches X, compresses Y
+   *   offset < 0  (moving forward) → setTo moves the nose vertex up
+   * Visual only — physics body is unaffected.
    * @param {number} delta - ms since last frame
    */
   _updateRubberBand(delta) {
     const dt = delta / 1000;
     const movingBack = this._cursors.down.isDown || this._wasd.down.isDown;
+    const movingUp   = this._cursors.up.isDown   || this._wasd.up.isDown;
 
-    const target  = movingBack ? 0.35 : 0;
+    const target  = movingBack ? 0.35 : movingUp ? -0.35 : 0;
     const SPRING  = 40;
     const DAMPING = 10;
 
     this._rbVel    += ((target - this._rbOffset) * SPRING - this._rbVel * DAMPING) * dt;
     this._rbOffset += this._rbVel * dt;
 
-    // Stretch X when moving backward, compress Y slightly.
-    this._player.setScale(1 + this._rbOffset, 1 - this._rbOffset * 0.5);
+    if (this._rbOffset > 0) {
+      // Moving back: horizontal stretch via setScale.
+      this._player.setScale(1 + this._rbOffset, 1 - this._rbOffset * 0.5);
+      this._player.setTo(14, 0, 0, 36, 28, 36);   // reset vertices
+    } else {
+      // Moving forward: extend nose vertex upward via setTo.
+      const noseUp = -this._rbOffset * 18;         // px the nose travels up
+      this._player.setScale(1, 1);
+      this._player.setTo(14, -noseUp, 0, 36, 28, 36);
+    }
   }
 
   _createWASD() {

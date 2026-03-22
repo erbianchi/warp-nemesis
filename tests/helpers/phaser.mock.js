@@ -34,6 +34,7 @@ export function installPhaserGlobal() {
     setAlpha(v)      { this.alpha = v; return this; }
     setTint(v)       { this.tint = v; return this; }
     clearTint()      { delete this.tint; return this; }
+    setTexture(v)    { this.texture = v; return this; }
     setScale(x, y = x) { this.scaleX = x; this.scaleY = y; return this; }
   }
 
@@ -128,6 +129,7 @@ export function createMockScene() {
       setVisible:     function(v) { this.visible = v; return this; },
       setTint:        function(v) { this.tint = v; return this; },
       clearTint:      function() { delete this.tint; return this; },
+      setTexture:     function(v) { this.texture = v; return this; },
       setScale:       function(x, y = x) { this.scaleX = x; this.scaleY = y; return this; },
       on:             () => {},
       destroy:        function() { this.active = false; },

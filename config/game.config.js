@@ -20,8 +20,10 @@ export const GAME_CONFIG = {
   PLAYER_HEAT_WARNING_SHAKE_MS: 45,   // very fast camera shake cadence while warning is active
   PLAYER_HEAT_WARNING_SHAKE_INTENSITY: 0.0070, // warning shake strength
   PLAYER_HEAT_WARNING_BONUS_PER_SHOT: 0.1, // bonus added per shot while the bar is yellow
-  PLAYER_HEAT_WARNING_LASER_COUNT: 2,         // number of warning-zone laser beams
-  PLAYER_HEAT_WARNING_LASER_SPACING: 4,       // px between warning-zone laser beam centers
+  PLAYER_HEAT_WARNING_SHOT_SHAKE_MS: 24,      // extra camera punch when a hot shot fires
+  PLAYER_HEAT_WARNING_SHOT_SHAKE_MS_STEP: 2,  // extra shot-punch duration per yellow-shot step
+  PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY: 0.0018, // extra camera punch strength for first yellow shot
+  PLAYER_HEAT_WARNING_SHOT_SHAKE_INTENSITY_STEP: 0.0002, // extra shot-punch strength per yellow-shot step
 
   SPEED_MIN: 1,            // minimum speed tier
   SPEED_MAX: 5,            // maximum speed tier
