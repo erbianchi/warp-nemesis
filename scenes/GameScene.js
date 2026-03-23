@@ -33,6 +33,16 @@ const PLAYER_WARNING_BULLET_WIDTH = 11;
 const PLAYER_BULLET_HEIGHT = 16;
 const ENEMY_BULLET_WIDTH = 3;
 const ENEMY_BULLET_HEIGHT = 10;
+const HEAT_COOLING_COLORS = [
+  0x040d61,
+  0xfacc22,
+  0xf89800,
+  0xf83600,
+  0x9f0404,
+  0x4b4a4f,
+  0x353438,
+  0x040404,
+];
 
 /**
  * True while the weapon heat sits in the warning zone.
@@ -187,6 +197,7 @@ export class GameScene extends Phaser.Scene {
   update(time, delta) {
     if (this._gameOver || this._respawning) return;
 
+    this._lastUpdateDeltaMs = delta;
     this._hudTimeMs = time;
     this._bg.update(delta);
     this._movePlayer();
@@ -647,8 +658,13 @@ export class GameScene extends Phaser.Scene {
   _doBulletsOverlap(playerBullet, enemyBullet) {
     const playerHitbox = this._resolvePlayerBulletHitbox(playerBullet);
     const enemyHitbox = this._resolveEnemyBulletHitbox(enemyBullet);
-    return Math.abs((playerBullet?.x ?? 0) - (enemyBullet?.x ?? 0)) < (playerHitbox.halfW + enemyHitbox.halfW)
-      && Math.abs((playerBullet?.y ?? 0) - (enemyBullet?.y ?? 0)) < (playerHitbox.halfH + enemyHitbox.halfH);
+    const deltaMs = this._lastUpdateDeltaMs ?? 16;
+    const playerSweep = this._resolveSweptBulletBounds(playerBullet, playerHitbox, this._resolvePlayerBulletVelocity(playerBullet), deltaMs);
+    const enemySweep = this._resolveSweptBulletBounds(enemyBullet, enemyHitbox, this._resolveEnemyBulletVelocity(enemyBullet), deltaMs);
+    return playerSweep.minX < enemySweep.maxX
+      && playerSweep.maxX > enemySweep.minX
+      && playerSweep.minY < enemySweep.maxY
+      && playerSweep.maxY > enemySweep.minY;
   }
 
   _resolvePlayerBulletHitbox(bullet) {
@@ -671,6 +687,35 @@ export class GameScene extends Phaser.Scene {
     return {
       halfW: Math.max(1, width * 0.5),
       halfH: Math.max(1, height * 0.5),
+    };
+  }
+
+  _resolvePlayerBulletVelocity(bullet) {
+    return {
+      x: bullet?.body?._vx ?? bullet?.body?.velocity?.x ?? 0,
+      y: bullet?.body?._vy ?? bullet?.body?.velocity?.y ?? 0,
+    };
+  }
+
+  _resolveEnemyBulletVelocity(bullet) {
+    return {
+      x: (bullet?._vx ?? 0) + (bullet?._pushVx ?? 0),
+      y: (bullet?._vy ?? 0) + (bullet?._pushVy ?? 0),
+    };
+  }
+
+  _resolveSweptBulletBounds(bullet, hitbox, velocity, deltaMs = 16) {
+    const dt = Math.max(0, deltaMs) / 1000;
+    const x = bullet?.x ?? 0;
+    const y = bullet?.y ?? 0;
+    const prevX = x - ((velocity?.x ?? 0) * dt);
+    const prevY = y - ((velocity?.y ?? 0) * dt);
+
+    return {
+      minX: Math.min(x, prevX) - hitbox.halfW,
+      maxX: Math.max(x, prevX) + hitbox.halfW,
+      minY: Math.min(y, prevY) - hitbox.halfH,
+      maxY: Math.max(y, prevY) + hitbox.halfH,
     };
   }
 
@@ -833,6 +878,7 @@ export class GameScene extends Phaser.Scene {
     ];
 
     this._barFills = {};
+    this._heatCoolingFxActive = false;
 
     defs.forEach((def, i) => {
       const y = Y_TOP + i * (BAR_H + BAR_GAP);
@@ -844,7 +890,15 @@ export class GameScene extends Phaser.Scene {
       // fill — origin (0,0), width scaled by displayWidth
       const fill = this.add.rectangle(X0, y, BAR_W, BAR_H, def.color)
         .setDepth(11).setOrigin(0, 0);
-      this._barFills[def.key] = { rect: fill, max: def.max, fullW: BAR_W, color: def.color };
+      this._barFills[def.key] = {
+        rect: fill,
+        max: def.max,
+        fullW: BAR_W,
+        color: def.color,
+        x: X0,
+        y,
+        height: BAR_H,
+      };
 
       // border
       const gfx = this.add.graphics().setDepth(12);
@@ -858,6 +912,22 @@ export class GameScene extends Phaser.Scene {
       fill: '#ffffff',
       fontFamily: 'monospace',
     }).setDepth(12).setOrigin(0, 0.5).setVisible(false);
+
+    this._heatCoolingFx = this.add.particles?.(X0 + BAR_W, heatY + BAR_H / 2, 'flares', {
+      frame: 'white',
+      color: HEAT_COOLING_COLORS,
+      lifespan: 900,
+      angle: { min: -100, max: -80 },
+      scale: { start: 0.18, end: 0 },
+      speed: { min: 45, max: 75 },
+      frequency: 70,
+      quantity: 1,
+      blendMode: 'ADD',
+      advance: 1500,
+      emitting: false,
+    }) ?? null;
+    this._heatCoolingFx?.setDepth?.(13);
+    this._heatCoolingFx?.setVisible?.(false);
 
     this._drawStatusBars();
   }
@@ -878,6 +948,31 @@ export class GameScene extends Phaser.Scene {
 
       if (rect.setFillStyle) rect.setFillStyle(color, 1);
       rect.setAlpha(1);
+    }
+
+    this._syncHeatCoolingFx();
+  }
+
+  _syncHeatCoolingFx() {
+    const heatBar = this._barFills?.heat;
+    const fx = this._heatCoolingFx;
+    const coolingActive = Boolean(this._weapons?.isCoolingDown);
+
+    if (!heatBar || !fx || !coolingActive) {
+      if (this._heatCoolingFxActive) fx.stop?.();
+      this._heatCoolingFxActive = false;
+      fx?.setVisible?.(false);
+      return;
+    }
+
+    const edgeX = heatBar.x + Math.max(6, heatBar.rect.displayWidth - 2);
+    const centerY = heatBar.y + heatBar.height / 2;
+    fx.setPosition?.(edgeX, centerY);
+    fx.setVisible?.(true);
+
+    if (!this._heatCoolingFxActive) {
+      fx.start?.();
+      this._heatCoolingFxActive = true;
     }
   }
 

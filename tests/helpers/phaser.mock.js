@@ -280,6 +280,10 @@ export function createMockScene() {
       },
       particles: () => {
         const emitter = mockGameObject();
+        emitter.emitting = false;
+        emitter.start = function() { this.emitting = true; return this; };
+        emitter.stop = function() { this.emitting = false; return this; };
+        emitter.setPosition = function(x, y) { this.x = x; this.y = y; return this; };
         emitter.explode = () => {};
         emitter.destroy = function() { this.active = false; };
         return emitter;

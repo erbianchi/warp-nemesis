@@ -73,9 +73,28 @@ describe('WeaponManager', () => {
     pool    = createMockPool(LASER.poolSize);
     scene = createSceneWithPool(pool);
     scene.soundCalls = [];
+    scene.soundConfigs = [];
+    scene.soundStopCalls = [];
+    scene.soundAddCalls = [];
     scene.sound = {
-      play: (key) => {
+      play: (key, config = {}) => {
         scene.soundCalls.push(key);
+        scene.soundConfigs.push({ key, config });
+      },
+      add: (key, config = {}) => {
+        scene.soundAddCalls.push({ key, config });
+        return {
+          play: () => {
+            scene.soundCalls.push(key);
+            scene.soundConfigs.push({ key, config });
+          },
+          stop: () => {
+            scene.soundStopCalls.push(key);
+          },
+        };
+      },
+      stopByKey: (key) => {
+        scene.soundStopCalls.push(key);
       },
     };
     manager = new WeaponManager(scene);
@@ -126,6 +145,49 @@ describe('WeaponManager', () => {
 
     assert.equal(manager.heatRecoveryStepMs, GAME_CONFIG.PLAYER_HEAT_RECOVERY_MS);
     assert.equal(manager.heatShots, 6);
+  });
+
+  it('does not play laserCooling during a normal per-shot cooldown', () => {
+    manager.tryFire(240, 500);
+    scene.soundCalls = ['laserSmall_000'];
+    scene.soundConfigs = scene.soundConfigs.slice(0, 1);
+
+    manager.update(LASER.fireRate - 1, false);
+
+    assert.deepEqual(scene.soundCalls, ['laserSmall_000']);
+    assert.equal(scene.soundAddCalls.length, 0);
+
+    manager.update(1, false);
+    assert.deepEqual(scene.soundStopCalls, []);
+  });
+
+  it('plays laserCooling only while overheated and stops it when the overheat lock clears', () => {
+    manager._heatShots = manager.maxHeatShots;
+    manager._isOverheated = true;
+    scene.soundCalls = [];
+    scene.soundStopCalls = [];
+
+    manager.update(manager._heatRecoveryStepMs * 19, false);
+
+    assert.deepEqual(scene.soundCalls, ['laserCooling']);
+    assert.deepEqual(scene.soundStopCalls, []);
+
+    manager.update(manager._heatRecoveryStepMs, false);
+
+    assert.deepEqual(scene.soundStopCalls, ['laserCooling']);
+  });
+
+  it('does not start laserCooling during repeated normal shots once regular cooldown ends', () => {
+    manager.tryFire(240, 500);
+    manager.update(LASER.fireRate, false);
+
+    scene.soundCalls = [];
+    scene.soundConfigs = [];
+    scene.soundStopCalls = [];
+    manager.tryFire(240, 500);
+
+    assert.deepEqual(scene.soundCalls, ['laserSmall_000']);
+    assert.deepEqual(scene.soundStopCalls, []);
   });
 
   it('stacks slot-1 laser power bonuses and exposes the multiplier in the HUD snapshot', () => {

@@ -356,6 +356,68 @@ describe('GameScene bullet damage', () => {
     assert.equal(playerHit, false);
   });
 
+  it('lets a player laser cancel a Raptor beam even when the crossing happens between frames', () => {
+    const scene = new GameScene();
+    let hiddenBullet = null;
+    let playerHit = false;
+    const playerBullet = {
+      active: true,
+      x: 220,
+      y: 165,
+      texture: 'bullet_laser',
+      body: {
+        enable: true,
+        velocity: { x: 0, y: -625 },
+        stop: () => {},
+      },
+    };
+    const enemyBullet = {
+      active: true,
+      x: 220,
+      y: 180,
+      _vx: 0,
+      _vy: 0,
+      _hitboxWidth: 22,
+      _hitboxHeight: 7,
+      destroy() {
+        this.active = false;
+      },
+    };
+
+    scene._gameOver = false;
+    scene._respawning = false;
+    scene._bg = { update: () => {} };
+    scene._movePlayer = () => {};
+    scene._updateRubberBand = () => {};
+    scene._updateHeatWarningShake = () => {};
+    scene._drawStatusBars = () => {};
+    scene._spawner = { update: () => {}, isWaveActive: false, pendingSquadrons: 0 };
+    scene._bonuses = { update: () => {} };
+    scene._enemies = [];
+    scene._player = { x: 220, y: 520 };
+    scene._space = { isDown: false };
+    scene._weapons = {
+      update: () => {},
+      tryFire: () => false,
+      pool: {
+        getChildren: () => [playerBullet],
+        killAndHide: (bullet) => {
+          hiddenBullet = bullet;
+          bullet.active = false;
+        },
+      },
+    };
+    scene._eBullets = [enemyBullet];
+    scene._onPlayerHit = () => { playerHit = true; };
+
+    scene.update(0, 16);
+
+    assert.equal(hiddenBullet, playerBullet);
+    assert.equal(enemyBullet.active, false);
+    assert.equal(scene._eBullets.length, 0);
+    assert.equal(playerHit, false);
+  });
+
   it('spawns an enemy laser with the configured damage, size, and trajectory', () => {
     const scene = new GameScene();
     Object.assign(scene, createMockScene());
@@ -1095,6 +1157,52 @@ describe('GameScene player shield and bonuses', () => {
     scene._buildStatusBars();
 
     assert.deepEqual(Object.keys(scene._barFills), ['hp', 'heat']);
+  });
+
+  it('shows a small cooling flame on the heat bar only while weapon cooling is active', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    const particleCalls = [];
+    scene.add.particles = (x, y, texture, config) => {
+      const emitter = {
+        x,
+        y,
+        texture,
+        config,
+        visible: true,
+        emitting: false,
+        setDepth() { return this; },
+        setVisible(value) { this.visible = value; return this; },
+        setPosition(nextX, nextY) { this.x = nextX; this.y = nextY; return this; },
+        start() { this.emitting = true; return this; },
+        stop() { this.emitting = false; return this; },
+      };
+      particleCalls.push(emitter);
+      return emitter;
+    };
+    scene._weaponDisplayY = 594;
+    scene._weapons = {
+      maxHeatShots: GAME_CONFIG.PLAYER_HEAT_MAX,
+      heatShots: 10,
+      isCoolingDown: true,
+      getSlots: () => [{ key: 'laser' }, null],
+    };
+    scene._playerHp = 10;
+    scene._hudTimeMs = 0;
+
+    scene._buildStatusBars();
+
+    assert.equal(particleCalls.length, 1);
+    assert.equal(scene._heatCoolingFx.texture, 'flares');
+    assert.equal(scene._heatCoolingFx.config.frame, 'white');
+    assert.equal(scene._heatCoolingFx.visible, true);
+    assert.equal(scene._heatCoolingFx.emitting, true);
+
+    scene._weapons.isCoolingDown = false;
+    scene._drawStatusBars();
+
+    assert.equal(scene._heatCoolingFx.visible, false);
+    assert.equal(scene._heatCoolingFx.emitting, false);
   });
 
   it('does not collect a shielded bonus until the shield is broken', () => {

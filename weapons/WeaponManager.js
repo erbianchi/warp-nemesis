@@ -8,6 +8,7 @@ import { WEAPONS }     from '../config/weapons.config.js';
 
 const PLAYER_LASER_SPAWN_Y_OFFSET = 18;
 const DEFAULT_PRIMARY_WEAPON = 'laser';
+const LASER_COOLING_SFX_KEY = 'laserCooling';
 const MAX_PLAYER_BULLET_POOL_SIZE = Math.max(
   ...Object.values(WEAPONS).map(config => config.poolSize ?? 0)
 );
@@ -40,6 +41,8 @@ export class WeaponManager {
     this._primaryDamageMultiplier = 1;
     this._laserTextureKey = 'bullet_laser';
     this._lastShotInfo = null;
+    this._coolingSoundActive = false;
+    this._coolingSound = null;
 
     this._pool = scene.physics.add.group({
       classType:      Phaser.Physics.Arcade.Image,
@@ -74,6 +77,11 @@ export class WeaponManager {
   /** Current heat recovery step in milliseconds per recovered heat shot. */
   get heatRecoveryStepMs() { return this._heatRecoveryStepMs; }
 
+  /** True while slot 1 is locked by overheat and still cooling back down. */
+  get isCoolingDown() {
+    return Boolean(this._slots[0]) && this._isOverheated;
+  }
+
   /** Heat level below which firing is allowed again after overheat. */
   get unlockHeatShots() {
     return Math.max(0, this._maxHeatShots - this._overheatRecoveryShots);
@@ -87,6 +95,7 @@ export class WeaponManager {
     this._heatShots = 0;
     this._isOverheated = false;
     this._lastShotInfo = null;
+    this._stopCoolingSound();
   }
 
   /**
@@ -134,6 +143,7 @@ export class WeaponManager {
   resetPrimaryWeapon() {
     this._slots[0] = DEFAULT_PRIMARY_WEAPON;
     this._cfg = WEAPONS[this._slots[0]];
+    this._stopCoolingSound();
 
     for (const bullet of this._pool.getChildren()) {
       if (bullet?.active) this._releaseBullet(bullet);
@@ -192,6 +202,7 @@ export class WeaponManager {
     if (this._isOverheated && this._heatShots <= this.unlockHeatShots + 1e-6) {
       this._isOverheated = false;
     }
+    this._syncCoolingSound(this.isCoolingDown);
 
     for (const b of this._pool.getChildren()) {
       if (b.active && (
@@ -359,5 +370,43 @@ export class WeaponManager {
 
   _getHeatBonusMultiplier(heatShots = this._heatShots) {
     return 1 + this._getHeatBonusStepCount(heatShots) * this._heatWarningBonusPerShot;
+  }
+
+  _syncCoolingSound(shouldPlay) {
+    if (shouldPlay) this._startCoolingSound();
+    else this._stopCoolingSound();
+  }
+
+  _startCoolingSound() {
+    if (this._coolingSoundActive) return;
+    const sound = this._getCoolingSound();
+    if (sound?.play) {
+      sound.play();
+      this._coolingSoundActive = true;
+      return;
+    }
+
+    if (this._scene.sound?.play) {
+      this._scene.sound.play(LASER_COOLING_SFX_KEY, { loop: true });
+      this._coolingSoundActive = true;
+    }
+  }
+
+  _stopCoolingSound() {
+    if (!this._coolingSoundActive) return;
+    this._coolingSoundActive = false;
+    if (this._coolingSound?.stop) {
+      this._coolingSound.stop();
+      return;
+    }
+    this._scene.sound?.stopByKey?.(LASER_COOLING_SFX_KEY);
+  }
+
+  _getCoolingSound() {
+    if (this._coolingSound) return this._coolingSound;
+    const manager = this._scene.sound;
+    if (!manager?.add) return null;
+    this._coolingSound = manager.add(LASER_COOLING_SFX_KEY, { loop: true });
+    return this._coolingSound;
   }
 }
