@@ -99,6 +99,57 @@ describe('GameScene create', () => {
     assert.equal(scene._player.displayWidth, 34);
     assert.equal(scene._player.displayHeight, 42);
   });
+
+  it('can jump straight to the ending flow with the debugEnd query flag', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+
+    const delayedCalls = [];
+    scene.time.delayedCall = (delay, callback) => {
+      delayedCalls.push({ delay, callback });
+      return { remove: () => {} };
+    };
+
+    let levelClearCalls = 0;
+    scene._onLevelClear = () => {
+      levelClearCalls += 1;
+    };
+
+    const previousLocation = globalThis.location;
+    const hadLocation = Object.prototype.hasOwnProperty.call(globalThis, 'location');
+
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      writable: true,
+      value: { search: '?debugEnd=1' },
+    });
+
+    try {
+      scene.create();
+
+      assert.equal(
+        delayedCalls.some(({ delay }) => delay === 2000),
+        false,
+        'normal enemy spawning should be skipped in ending debug mode'
+      );
+
+      const debugEndCall = delayedCalls.find(({ delay }) => delay === 250);
+      assert.ok(debugEndCall, 'debug ending mode should schedule the level-clear flow');
+
+      debugEndCall.callback();
+      assert.equal(levelClearCalls, 1);
+    } finally {
+      if (hadLocation) {
+        Object.defineProperty(globalThis, 'location', {
+          configurable: true,
+          writable: true,
+          value: previousLocation,
+        });
+      } else {
+        delete globalThis.location;
+      }
+    }
+  });
 });
 
 describe('isHeatWarningActive', () => {
@@ -887,6 +938,98 @@ describe('GameScene player explosion', () => {
 
     assert.equal(explodePlayerCalled, true, 'explodePlayer must be called');
     assert.equal(flashCalled, true, 'camera flash must be called');
+  });
+});
+
+describe('GameScene level clear', () => {
+  it('sends the player off-screen with warp stars before showing the level-complete card', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+
+    const tweenCalls = [];
+    const delayedCalls = [];
+    const textCalls = [];
+    let warpDuration = null;
+    let fadeDuration = null;
+    let clearedBonuses = 0;
+    let stoppedFormations = 0;
+    let destroyedEnemyBullets = 0;
+    let removedEnemies = 0;
+
+    scene.tweens.add = (config) => {
+      tweenCalls.push(config);
+      return config;
+    };
+    scene.time.delayedCall = (delay, cb) => {
+      delayedCalls.push({ delay, cb });
+      return { remove: () => {} };
+    };
+    scene.add.text = (x, y, value, style) => {
+      const text = {
+        x,
+        y,
+        value,
+        style,
+        setOrigin() { return this; },
+        setDepth() { return this; },
+      };
+      textCalls.push(text);
+      return text;
+    };
+    scene._bg = {
+      startWarpExit: (duration) => { warpDuration = duration; },
+      fadeToBlack: (duration) => { fadeDuration = duration; },
+      update: () => {},
+    };
+    scene._player = scene.add.image(220, 520, 'spacecraft1');
+    scene._player.body = {
+      enable: true,
+      stop() {},
+    };
+    scene._bonuses = {
+      clear: () => { clearedBonuses += 1; },
+    };
+    scene._formations = [{
+      stop: () => { stoppedFormations += 1; },
+    }];
+    scene._enemyGroup = {
+      remove: () => { removedEnemies += 1; },
+    };
+    scene._enemies = [{
+      alive: true,
+      setActive() { return this; },
+      setVisible() { return this; },
+      body: { stop() {} },
+      destroy() {},
+    }];
+    scene._eBullets = [{
+      destroy: () => { destroyedEnemyBullets += 1; },
+    }];
+    RunState.reset();
+    RunState.score = 2450;
+
+    scene._onLevelClear();
+
+    assert.equal(scene._levelClearing, true);
+    assert.equal(warpDuration, 1200);
+    assert.equal(scene._player.body.enable, false);
+    assert.equal(stoppedFormations, 1);
+    assert.equal(clearedBonuses, 1);
+    assert.equal(destroyedEnemyBullets, 1);
+    assert.equal(removedEnemies, 1);
+    assert.equal(tweenCalls.length, 1);
+    assert.equal(tweenCalls[0].targets, scene._player);
+    assert.ok(tweenCalls[0].y < 0, 'player exit tween should leave the top of the screen');
+    assert.equal(textCalls.length, 0, 'the level-complete card should wait until after the exit run-up');
+
+    tweenCalls[0].onComplete();
+    assert.equal(scene._player.visible, false);
+
+    delayedCalls[0].cb();
+    assert.equal(fadeDuration, 600);
+    assert.equal(textCalls[0].value, 'LEVEL COMPLETE');
+    assert.equal(textCalls[1].value, 'SCORE  2450');
+    assert.equal(delayedCalls[1].delay, 4000);
   });
 });
 

@@ -18,11 +18,13 @@ Built with **Phaser 3** — no build toolchain, no npm, runs directly in a brows
 ## Current Implemented Slice
 
 - **Level 1 is playable** with 16 Skirm waves and short handoffs between waves.
+- **Overlay threats are live** — Raptors raid in side-entry pairs and Mines drift in with gravity wells while the normal wave flow continues.
 - **Skirm formations mix scripted and organic motion** — some ships drift, some snap into sharper dances, and formation runs replay from alternating sides.
 - **Bonuses are live** as white octagons: `1-Up`, `+50 Life`, `+50 Shield`, `Weapon Upgrade`, and `New Weapon`.
 - **Bonuses can roll a random shield** from `100` to `200`; shielded bonuses must be shot open before the player can collect them.
 - **Shields are shared tech** for player, enemies, bonuses, and future objects. They absorb damage first, show local shield bars on the holder, and burst with a blue blast when depleted.
 - **Bonus pickup sounds are config-driven** so each bonus can define its own sound key or stay silent.
+- **Level completion has a full exit beat** — the ship warps off the top, stars stretch into speed lines, then the background fades fully to black before the `LEVEL COMPLETE` card appears.
 
 ## Current Laser Heat
 
@@ -60,6 +62,14 @@ npx serve .
 Then open [http://localhost:8080](http://localhost:8080).
 
 No internet connection required — Phaser is bundled locally as `phaser.min.js`.
+
+### Debug End Sequence
+
+To jump straight to the level-ending departure sequence for quick testing, append `?debugEnd=1` to the URL before starting a run:
+
+`http://localhost:8080/?debugEnd=1`
+
+Start the game normally from the menu and `GameScene` will go directly into the end-of-level warp-out flow.
 
 ---
 

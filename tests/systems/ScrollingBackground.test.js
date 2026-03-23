@@ -135,4 +135,61 @@ describe('ScrollingBackground', () => {
         `star moved too far in one frame: y=${s.y}`);
     }
   });
+
+  it('warp exit accelerates the starfield beyond normal scroll speed', () => {
+    const s = bg._stars[0];
+    s.y = 100;
+    s.speed = STAR_SPEED_MIN;
+    const delta = 100;
+    const baseDisplacement = s.speed * (delta / 1000);
+
+    bg.startWarpExit(1000);
+    bg.update(delta);
+
+    assert.ok(bg._warpProgress > 0, 'warp progress should ramp up after warp starts');
+    assert.ok((s.y - 100) > baseDisplacement, 'warp stars should travel farther than normal scroll');
+  });
+
+  it('warp exit stretches stars into longer speed lines', () => {
+    const drawCalls = [];
+    scene = createMockScene();
+    scene.add.graphics = () => ({
+      setDepth: () => scene.add.graphics(),
+      clear: () => {},
+      fillStyle: () => {},
+      fillRect: (x, y, width, height) => drawCalls.push({ x, y, width, height }),
+      lineStyle: () => {},
+      strokeRect: () => {},
+    });
+    bg = new ScrollingBackground(scene);
+
+    bg.startWarpExit(1000);
+    bg.update(1000);
+
+    const longestTrail = Math.max(...drawCalls.map((call) => call.height));
+    assert.ok(longestTrail > 2, 'warp stars should render as stretched vertical trails');
+    assert.equal(bg._warpProgress, 1, 'warp effect should clamp at full strength once its ramp completes');
+  });
+
+  it('fadeToBlack stops drawing stars and raises a black overlay', () => {
+    const drawCalls = [];
+    scene = createMockScene();
+    scene.add.graphics = () => ({
+      setDepth: () => scene.add.graphics(),
+      clear: () => {},
+      fillStyle: () => {},
+      fillRect: (x, y, width, height) => drawCalls.push({ x, y, width, height }),
+      lineStyle: () => {},
+      strokeRect: () => {},
+    });
+    bg = new ScrollingBackground(scene);
+
+    bg.startWarpExit(1000);
+    bg.fadeToBlack(600);
+    bg.update(300);
+
+    assert.equal(bg._warpActive, false, 'fade-to-black should stop the warp effect');
+    assert.equal(drawCalls.length, 0, 'no stars or speed lines should be drawn during fade-to-black');
+    assert.ok(bg._fadeOverlay.alpha > 0, 'the black overlay should begin fading in');
+  });
 });

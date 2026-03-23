@@ -376,26 +376,29 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 
 ---
 
-## Current State (as of 2026-03-22)
+## Current State (as of 2026-03-23)
 
 ### What is implemented and working
 - `BootScene` — generates placeholder textures (player, skirm, bullets, particles, bonus octagon) and preloads the current SFX set
 - `MenuScene` — Start button, transitions to GameScene
-- `GameScene` — main loop: player movement, weapon firing, enemy management, player/enemy/bonus collision, bonus pickups, shared shield handling, score/lives/status HUD
-- `ScrollingBackground` — scrolling starfield
-- `WeaponManager` — laser weapon, bullet pool, 2-slot display, heat / warning-shot behavior
+- `GameScene` — main loop: player movement, weapon firing, enemy management, player/enemy/bonus collision, bonus pickups, shared shield handling, score/lives/status HUD, and the level-clear exit sequence
+- `ScrollingBackground` — scrolling starfield with warp speed-lines and fade-to-black support for level completion
+- `WeaponManager` — laser weapon, bullet pool, 2-slot display, heat / warning-shot behavior, overheat cooling sound
 - `RunState` — score and kill tracking
 - `EnemyBase` — abstract base class for enemies with optional reusable shield support
 - `Skirm` — first enemy type; formation and organic dances including abrupt/jinking motion
+- `Raptor` — side-entry heavy raider that arrives in overlapping pairs and fires 8-way blue bursts
+- `Mine` — slow overlay hazard with heavy contact damage and a Phaser gravity well
 - `FormationController` — squadron dance controller with alternating side entries, reforming, drift, moving fire, and top-side returns
-- `WaveSpawner` — roguelike pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning
+- `WaveSpawner` — roguelike pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning; overlay raid scheduling
 - `BonusSystem` — weighted bonus drops, shielded pickups, collection payloads, pickup-sound routing
 - `BonusPickup` — white octagon pickup entity with slower drift and optional shield shell
 - `ShieldController` — reusable shield ring, local shield bar, shield damage routing, break animation hook
-- `EffectsSystem` — explosions, shield break blasts, floating damage / pickup text
-- `levels.config.js` — currently **1 playable level** with **16 Skirm waves** and short wave-to-wave pacing
+- `EffectsSystem` — explosions, shield break blasts, floating damage / pickup text, gravity-well particles
+- `levels.config.js` — currently **1 playable level** with **16 Skirm waves**, overlay Raptor/Mine events, and short wave-to-wave pacing
 - `bonuses.config.js` — live bonus definitions, pickup motion tuning, pickup sounds, random bonus shield roll config
-- `enemies.config.js` — `skirm` stats + `standard`, `heavy`, `light`, `ace` plane presets with shield modifiers
+- `enemies.config.js` — `skirm`, `raptor`, and `mine` stats + `standard`, `heavy`, `light`, `ace` plane presets with shield modifiers
+- `debug.config.js` — URL query driven runtime debug flags such as `?debugEnd=1` for jumping straight to the level-complete sequence
 
 ### What is stub / not yet implemented
 - `PlayerShip.js` — empty; player is currently a plain rectangle in GameScene

@@ -4,6 +4,7 @@
  * and collision to physics.add.overlap + manual AABB for enemy bullets. */
 
 import { GAME_CONFIG }           from '../config/game.config.js';
+import { readDebugOptions }      from '../config/debug.config.js';
 import { EVENTS }                from '../config/events.config.js';
 import { ScrollingBackground }   from '../systems/ScrollingBackground.js';
 import { EffectsSystem }         from '../systems/EffectsSystem.js';
@@ -34,6 +35,10 @@ const PLAYER_WARNING_BULLET_WIDTH = 11;
 const PLAYER_BULLET_HEIGHT = 16;
 const ENEMY_BULLET_WIDTH = 3;
 const ENEMY_BULLET_HEIGHT = 10;
+const DEBUG_END_DELAY_MS = 250;
+const LEVEL_CLEAR_EXIT_MS = 1200;
+const LEVEL_CLEAR_FADE_MS = 600;
+const LEVEL_CLEAR_CARD_DELAY_MS = 4000;
 const HEAT_COOLING_COLORS = [
   0x040d61,
   0xfacc22,
@@ -96,6 +101,8 @@ export class GameScene extends Phaser.Scene {
     this._playerShield   = PLAYER_SHIELD_DEFAULT;
     this._gameOver       = false;
     this._respawning     = false;
+    this._levelClearing  = false;
+    this._debugOptions   = readDebugOptions(globalThis.location?.search ?? '');
     this._displayedScore = 0;
     this._scoreTween     = null;
     this._hudTimeMs      = 0;
@@ -188,7 +195,11 @@ export class GameScene extends Phaser.Scene {
     this._squadronScoreCheckpoint = 0;   // score at the start of the current squadron attempt
 
     this._showLevelBanner(this._levelIndex + 1);
-    this.time.delayedCall(2000, () => this._spawner.start());
+    if (this._debugOptions.debugEnd) {
+      this.time.delayedCall(DEBUG_END_DELAY_MS, () => this._onLevelClear());
+    } else {
+      this.time.delayedCall(2000, () => this._spawner.start());
+    }
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.start('MenuScene'));
   }
@@ -201,6 +212,7 @@ export class GameScene extends Phaser.Scene {
     this._lastUpdateDeltaMs = delta;
     this._hudTimeMs = time;
     this._bg.update(delta);
+    if (this._levelClearing) return;
     this._movePlayer();
     this._updateRubberBand(delta);
     this._updateTimedBonuses(time);
@@ -855,7 +867,52 @@ export class GameScene extends Phaser.Scene {
   }
 
   _onLevelClear() {
-    this.add.text(WIDTH / 2, HEIGHT / 2, 'LEVEL CLEAR!', {
+    if (this._levelClearing || this._gameOver) return;
+
+    this._levelClearing = true;
+    this._stopHeatWarningShake();
+    this._clearLevelThreats();
+    this._player.body?.stop?.();
+    if (this._player.body) this._player.body.enable = false;
+    this._bg?.startWarpExit?.(LEVEL_CLEAR_EXIT_MS);
+
+    this.tweens.add?.({
+      targets: this._player,
+      y: -80,
+      duration: LEVEL_CLEAR_EXIT_MS,
+      ease: 'Cubic.easeIn',
+      onComplete: () => this._player.setVisible?.(false),
+    });
+
+    this.time.delayedCall(LEVEL_CLEAR_EXIT_MS, () => {
+      this._showLevelCompleteCard();
+    });
+  }
+
+  _clearLevelThreats() {
+    for (const fc of this._formations) fc.stop?.();
+    this._formations = [];
+
+    for (const bullet of this._eBullets) bullet.destroy?.();
+    this._eBullets = [];
+
+    for (let i = this._enemies.length - 1; i >= 0; i--) {
+      const enemy = this._enemies[i];
+      enemy.alive = false;
+      enemy.setActive?.(false);
+      enemy.setVisible?.(false);
+      enemy.body?.stop?.();
+      this._enemyGroup.remove?.(enemy);
+      enemy.destroy?.();
+    }
+    this._enemies = [];
+    this._bonuses?.clear?.();
+  }
+
+  _showLevelCompleteCard() {
+    this._bg?.fadeToBlack?.(LEVEL_CLEAR_FADE_MS);
+
+    this.add.text(WIDTH / 2, HEIGHT / 2, 'LEVEL COMPLETE', {
       fontSize: '32px', fill: '#00ffff', fontFamily: 'monospace', fontStyle: 'bold',
     }).setOrigin(0.5).setDepth(20);
 
@@ -863,7 +920,7 @@ export class GameScene extends Phaser.Scene {
       fontSize: '18px', fill: '#ffffff', fontFamily: 'monospace',
     }).setOrigin(0.5).setDepth(20);
 
-    this.time.delayedCall(4000, () => this.scene.start('MenuScene'));
+    this.time.delayedCall(LEVEL_CLEAR_CARD_DELAY_MS, () => this.scene.start('MenuScene'));
   }
 
   // ── HUD ───────────────────────────────────────────────────────────────────
