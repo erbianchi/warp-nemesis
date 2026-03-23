@@ -98,6 +98,52 @@ describe('EffectsSystem', () => {
     assert.equal(destroyed, true);
   });
 
+  it('creates a flares gravity well and pulls the target toward its source', () => {
+    const source = { x: 100, y: 120, active: true, visible: true };
+    const target = {
+      x: 150,
+      y: 120,
+      active: true,
+      body: {
+        velocity: { x: 0, y: 0 },
+        setVelocity(x, y) {
+          this.velocity.x = x;
+          this.velocity.y = y;
+        },
+      },
+    };
+
+    const controller = effects.createGravityWell(source, target, {
+      radius: 52,
+      pullRadius: 180,
+      pullStrength: 600,
+      power: 4.2,
+      epsilon: 250,
+      gravity: 100,
+    });
+
+    assert.equal(controller.emitter.texture, 'flares');
+    assert.equal(controller.emitter.emitZone.type, 'random');
+    assert.equal(controller.emitter.emitZone.source.radius, 52);
+    assert.equal(controller.gravityWell.power, 4.2);
+    assert.equal(controller.gravityWell.gravity, 100);
+
+    controller.update(1000);
+    assert.equal(controller.emitter.emitting, true);
+    assert.ok(target.body.velocity.x < 0, 'target to the right should be pulled leftward');
+
+    source.x = 112;
+    source.y = 136;
+    controller.update(16);
+    assert.equal(controller.emitter.x, 112);
+    assert.equal(controller.emitter.y, 136);
+    assert.equal(controller.gravityWell.x, 112);
+    assert.equal(controller.gravityWell.y, 136);
+
+    controller.destroy();
+    assert.equal(controller.emitter.active, false);
+  });
+
   it('shows a floating damage number that rises and fades out', () => {
     let tweenConfig = null;
     let destroyed = false;

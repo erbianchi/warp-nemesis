@@ -9,6 +9,7 @@ const { RunState } = await import('../../systems/RunState.js');
 const { EVENTS } = await import('../../config/events.config.js');
 const { resolveStats } = await import('../../systems/WaveSpawner.js');
 const { Skirm } = await import('../../entities/enemies/Skirm.js');
+const { Mine } = await import('../../entities/enemies/Mine.js');
 const { Raptor } = await import('../../entities/enemies/Raptor.js');
 const {
   GameScene,
@@ -16,6 +17,7 @@ const {
   resolveHeatBarStyle,
 } = await import('../../scenes/GameScene.js');
 const SKIRM_STATS = resolveStats('skirm', 1.0, 1.0, {});
+const MINE_STATS = resolveStats('mine', 1.0, 1.0, {});
 const RAPTOR_STATS = resolveStats('raptor', 1.0, 1.0, {});
 
 function createHeatWarningScene(heatShots) {
@@ -535,6 +537,35 @@ describe('GameScene bullet damage', () => {
 });
 
 describe('GameScene enemy spawning', () => {
+  it('creates a Mine instance and binds its gravity well when the spawner requests one', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._player = { x: 220, y: 520, active: true };
+    scene._enemies = [];
+    scene._enemyGroup = { add: () => {} };
+
+    let gravityCall = null;
+    scene._effects = {
+      createGravityWell: (source, target, opts) => {
+        gravityCall = { source, target, opts };
+        return { update: () => {}, destroy: () => {} };
+      },
+    };
+
+    scene._spawnEnemy('mine', 180, -40, MINE_STATS, 'creep_drop', { overlay: true, waveId: 4 });
+
+    assert.equal(scene._enemies.length, 1);
+    assert.ok(scene._enemies[0] instanceof Mine);
+    assert.equal(scene._enemies[0].displayWidth, 28);
+    assert.equal(scene._enemies[0].displayHeight, 28);
+    assert.equal(scene._enemies[0]._overlayRaid, true);
+    assert.equal(scene._enemies[0]._spawnWaveId, 4);
+    assert.equal(gravityCall.source, scene._enemies[0]);
+    assert.equal(gravityCall.target, scene._player);
+    assert.equal(gravityCall.opts.power, 14);
+    assert.equal(gravityCall.opts.gravity, 360);
+  });
+
   it('creates a Raptor instance when the spawner requests one', () => {
     const scene = new GameScene();
     Object.assign(scene, createMockScene());
@@ -549,6 +580,23 @@ describe('GameScene enemy spawning', () => {
     assert.equal(scene._enemies[0].displayHeight, 32);
     assert.equal(scene._enemies[0]._overlayRaid, true);
     assert.equal(scene._enemies[0]._spawnWaveId, 3);
+  });
+
+  it('routes mine collision damage through the shared enemy-touch path', () => {
+    const scene = new GameScene();
+    let playerDamage = 0;
+    let died = false;
+    const mine = {
+      alive: true,
+      damage: 150,
+      die: () => { died = true; },
+    };
+
+    scene._onPlayerHit = (damage) => { playerDamage = damage; };
+    scene._onEnemyTouchPlayer(scene._player, mine);
+
+    assert.equal(playerDamage, 150);
+    assert.equal(died, true);
   });
 
   it('does not silently cull a persistent enemy when it drifts beyond the normal bounds', () => {

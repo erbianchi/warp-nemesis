@@ -32,6 +32,17 @@ export const ENEMIES = {
     bulletSpeed: 230, // heavy bolts, but fast enough to feel threatening
   },
 
+  /** Mine — slow drifting gravity trap. High collision damage, no ranged attack. */
+  mine: {
+    hp: 500,
+    damage: 150,
+    speed: 30,
+    fireRate: 0,
+    score: 200,
+    dropChance: 0.10,
+    bulletSpeed: 0,
+  },
+
   fighter: {
     hp: 20,
     damage: 10,

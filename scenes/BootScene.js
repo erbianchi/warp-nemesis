@@ -82,6 +82,20 @@ export class BootScene extends Phaser.Scene {
     rp.generateTexture('raptor', 40, 32);
     rp.destroy();
 
+    // Mine — metallic orb with four spikes
+    const mine = this.make.graphics({ add: false });
+    mine.fillStyle(0x848a94, 1);
+    mine.fillTriangle(14, 0, 10, 8, 18, 8);
+    mine.fillTriangle(28, 14, 20, 10, 20, 18);
+    mine.fillTriangle(14, 28, 10, 20, 18, 20);
+    mine.fillTriangle(0, 14, 8, 10, 8, 18);
+    mine.fillStyle(0xaeb5c2, 1);
+    mine.fillCircle(14, 14, 9);
+    mine.fillStyle(0xdde6ff, 1);
+    mine.fillCircle(14, 14, 3);
+    mine.generateTexture('mine', 28, 28);
+    mine.destroy();
+
     // Enemy bullet — small red bar
     const eb = this.make.graphics({ add: false });
     eb.fillStyle(0xff3300, 1);

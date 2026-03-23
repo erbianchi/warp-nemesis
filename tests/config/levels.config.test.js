@@ -12,6 +12,18 @@ function getOverlaySquadrons(level) {
   return level.overlaySquadrons ?? [];
 }
 
+function getTypedOverlays(level, type) {
+  return getOverlaySquadrons(level).filter((overlay) => (
+    Array.isArray(overlay.squadronPool)
+    && overlay.squadronPool.length > 0
+    && overlay.squadronPool.every((squadron) => (
+      Array.isArray(squadron.planes)
+      && squadron.planes.length > 0
+      && squadron.planes.every((plane) => plane.type === type)
+    ))
+  ));
+}
+
 describe('LEVELS', () => {
   it('exports a non-empty array of levels', () => {
     assert.ok(Array.isArray(LEVELS));
@@ -151,7 +163,7 @@ describe('LEVELS', () => {
   });
 
   describe('Level 1 Raptor overlays', () => {
-    const overlays = getOverlaySquadrons(LEVELS[0]);
+    const overlays = getTypedOverlays(LEVELS[0], 'raptor');
 
     it('defines exactly 2 overlay Raptor raid events', () => {
       assert.equal(overlays.length, 2);
@@ -172,6 +184,33 @@ describe('LEVELS', () => {
             `overlay "${overlay.id}" squadron "${squadron.id}" must enter from a side`);
           assert.ok(['side_left', 'side_right'].includes(squadron.dance),
             `overlay "${overlay.id}" squadron "${squadron.id}" must use a side-entry dance`);
+        }
+      }
+    });
+  });
+
+  describe('Level 1 Mine overlays', () => {
+    const overlays = getTypedOverlays(LEVELS[0], 'mine');
+
+    it('defines exactly 4 overlay Mine drop events', () => {
+      assert.equal(overlays.length, 4);
+    });
+
+    it('each overlay drop schedules a single top-entry Mine candidate pool', () => {
+      for (const overlay of overlays) {
+        assert.ok(typeof overlay.triggerWaveId === 'number', `overlay "${overlay.id}" needs triggerWaveId`);
+        assert.ok(Array.isArray(overlay.squadronPool) && overlay.squadronPool.length >= 2,
+          `overlay "${overlay.id}" needs a mine squadron pool`);
+        assert.ok(typeof overlay.delay === 'number' && overlay.delay >= 0,
+          `overlay "${overlay.id}" needs a non-negative delay`);
+
+        for (const squadron of overlay.squadronPool) {
+          assert.equal(squadron.planes.length, 1, `overlay "${overlay.id}" should spawn one mine at a time`);
+          squadron.planes.forEach((plane) => assert.equal(plane.type, 'mine'));
+          assert.equal(squadron.entryEdge, 'top',
+            `overlay "${overlay.id}" squadron "${squadron.id}" must enter from the top`);
+          assert.equal(squadron.dance, 'creep_drop',
+            `overlay "${overlay.id}" squadron "${squadron.id}" must use the mine drift dance`);
         }
       }
     });

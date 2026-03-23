@@ -24,6 +24,13 @@ function makeRaptorPlanes(count, resolver = () => ({})) {
   }));
 }
 
+function makeMinePlanes(count, resolver = () => ({})) {
+  return Array.from({ length: count }, (_, index) => ({
+    type: 'mine',
+    ...resolver(index, count),
+  }));
+}
+
 function createLevel1SquadronPool() {
   return [
     {
@@ -288,6 +295,13 @@ function createLevel1RaptorOverlayPool() {
 }
 
 function createLevel1OverlaySquadrons() {
+  return [
+    ...createLevel1RaptorOverlaySquadrons(),
+    ...createLevel1MineOverlaySquadrons(),
+  ];
+}
+
+function createLevel1RaptorOverlaySquadrons() {
   const pool = createLevel1RaptorOverlayPool();
 
   return [
@@ -309,6 +323,112 @@ function createLevel1OverlaySquadrons() {
       squadronPool: selectSquadrons(pool, [
         'w1_raptor_pair_mid_left',
         'w1_raptor_pair_mid_right',
+      ]),
+    },
+  ];
+}
+
+function createLevel1MineOverlayPool() {
+  return [
+    {
+      id: 'w1_mine_outer_left',
+      dance: 'creep_drop',
+      formation: 'line',
+      entryEdge: 'top',
+      entryX: 0.18,
+      spacing: 0,
+      planes: makeMinePlanes(1),
+    },
+    {
+      id: 'w1_mine_mid_left',
+      dance: 'creep_drop',
+      formation: 'line',
+      entryEdge: 'top',
+      entryX: 0.34,
+      spacing: 0,
+      planes: makeMinePlanes(1),
+    },
+    {
+      id: 'w1_mine_inner_left',
+      dance: 'creep_drop',
+      formation: 'line',
+      entryEdge: 'top',
+      entryX: 0.44,
+      spacing: 0,
+      planes: makeMinePlanes(1),
+    },
+    {
+      id: 'w1_mine_inner_right',
+      dance: 'creep_drop',
+      formation: 'line',
+      entryEdge: 'top',
+      entryX: 0.56,
+      spacing: 0,
+      planes: makeMinePlanes(1),
+    },
+    {
+      id: 'w1_mine_mid_right',
+      dance: 'creep_drop',
+      formation: 'line',
+      entryEdge: 'top',
+      entryX: 0.66,
+      spacing: 0,
+      planes: makeMinePlanes(1),
+    },
+    {
+      id: 'w1_mine_outer_right',
+      dance: 'creep_drop',
+      formation: 'line',
+      entryEdge: 'top',
+      entryX: 0.82,
+      spacing: 0,
+      planes: makeMinePlanes(1),
+    },
+  ];
+}
+
+function createLevel1MineOverlaySquadrons() {
+  const pool = createLevel1MineOverlayPool();
+
+  return [
+    {
+      id: 'l1_mine_drop_1',
+      triggerWaveId: 4,
+      delay: 0.20,
+      squadronCount: 1,
+      squadronPool: selectSquadrons(pool, [
+        'w1_mine_outer_left',
+        'w1_mine_mid_right',
+      ]),
+    },
+    {
+      id: 'l1_mine_drop_2',
+      triggerWaveId: 7,
+      delay: 0.50,
+      squadronCount: 1,
+      squadronPool: selectSquadrons(pool, [
+        'w1_mine_mid_left',
+        'w1_mine_outer_right',
+      ]),
+    },
+    {
+      id: 'l1_mine_drop_3',
+      triggerWaveId: 10,
+      delay: 0.30,
+      squadronCount: 1,
+      squadronPool: selectSquadrons(pool, [
+        'w1_mine_inner_left',
+        'w1_mine_mid_right',
+      ]),
+    },
+    {
+      id: 'l1_mine_drop_4',
+      triggerWaveId: 13,
+      delay: 0.55,
+      squadronCount: 1,
+      squadronPool: selectSquadrons(pool, [
+        'w1_mine_inner_right',
+        'w1_mine_outer_left',
       ]),
     },
   ];

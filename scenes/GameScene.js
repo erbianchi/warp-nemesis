@@ -15,6 +15,7 @@ import { WeaponManager }         from '../weapons/WeaponManager.js';
 import { RunState }              from '../systems/RunState.js';
 import { Skirm }                 from '../entities/enemies/Skirm.js';
 import { Raptor }                from '../entities/enemies/Raptor.js';
+import { Mine }                  from '../entities/enemies/Mine.js';
 
 const {
   WIDTH, HEIGHT,
@@ -548,6 +549,9 @@ export class GameScene extends Phaser.Scene {
   _spawnEnemy(type, x, y, stats, dance, meta = {}) {
     let enemy;
     switch (type) {
+      case 'mine':
+        enemy = new Mine(this, x, y, stats, dance);
+        break;
       case 'raptor':
         enemy = new Raptor(this, x, y, stats, dance);
         break;

@@ -8,6 +8,7 @@ const FRAGMENT_GRAVITY_Y = 160;
 const FRAGMENT_DRAG      = 40;
 const FRAGMENT_DEPTH     = 15;
 const DAMAGE_TEXT_DEPTH  = 18;
+const GRAVITY_WELL_DEPTH = 14;
 const PUSH_RADIUS        = 120;
 const MAX_PUSH           = 280;
 const DIRECTIONAL_SPEED_MIN = 40;
@@ -285,6 +286,91 @@ export class EffectsSystem {
   }
 
   /**
+   * Create a particle gravity-well effect tied to a source, and pull the target toward it.
+   * Uses Phaser 3.85's particle-emitter `createGravityWell` helper for the visual field.
+   * @param {object} source
+   * @param {object} target
+   * @param {object} [opts]
+   * @returns {{emitter: object|null, gravityWell: object|null, update: Function, destroy: Function}}
+   */
+  createGravityWell(source, target, opts = {}) {
+    const radius = opts.radius ?? 48;
+    const pullRadius = opts.pullRadius ?? Math.max(radius * 2.8, 140);
+    const pullStrength = opts.pullStrength ?? 420;
+    const scene = this._scene;
+    const zone = typeof Phaser !== 'undefined' && Phaser.Geom?.Circle
+      ? new Phaser.Geom.Circle(source?.x ?? 0, source?.y ?? 0, radius)
+      : { x: source?.x ?? 0, y: source?.y ?? 0, radius };
+    const emitter = scene.add?.particles?.(source?.x ?? 0, source?.y ?? 0, 'flares', {
+      frame: 'white',
+      color: [0x1b3dff, 0x49a3ff, 0xbfe8ff, 0xffffff],
+      lifespan: 820,
+      scale: { start: 0.12, end: 0 },
+      speed: { min: 8, max: 22 },
+      quantity: 1,
+      frequency: 55,
+      blendMode: 'ADD',
+      alpha: { start: 0.55, end: 0 },
+      emitting: false,
+    }) ?? null;
+
+    emitter?.addEmitZone?.({ type: 'random', source: zone });
+    const gravityWell = emitter?.createGravityWell?.({
+      x: source?.x ?? 0,
+      y: source?.y ?? 0,
+      power: opts.power ?? 4.2,
+      epsilon: opts.epsilon ?? 250,
+      gravity: opts.gravity ?? 100,
+    }) ?? null;
+
+    emitter?.setDepth?.(GRAVITY_WELL_DEPTH);
+
+    let clock = 0;
+    let emitting = false;
+
+    const controller = {
+      emitter,
+      gravityWell,
+      update: (delta = 16) => {
+        clock += delta;
+        const active = source?.active !== false && source?.visible !== false;
+        if (!active) {
+          if (emitting) emitter?.stop?.();
+          emitting = false;
+          emitter?.setVisible?.(false);
+          return;
+        }
+
+        if (zone) {
+          zone.x = source?.x ?? 0;
+          zone.y = source?.y ?? 0;
+        }
+        if (gravityWell) {
+          gravityWell.x = source?.x ?? 0;
+          gravityWell.y = source?.y ?? 0;
+        }
+
+        emitter?.setPosition?.(source?.x ?? 0, source?.y ?? 0);
+        emitter?.setVisible?.(true);
+        emitter?.setAlpha?.(0.58 + Math.sin(clock / 260) * 0.12);
+        if (!emitting) {
+          emitter?.start?.();
+          emitting = true;
+        }
+
+        this._applyGravityPull(source, target, pullRadius, pullStrength, delta);
+      },
+      destroy: () => {
+        if (emitting) emitter?.stop?.();
+        emitting = false;
+        emitter?.destroy?.();
+      },
+    };
+
+    return controller;
+  }
+
+  /**
    * Spawn an explosion for the given enemy type and push nearby objects.
    * @param {number} x
    * @param {number} y
@@ -439,5 +525,30 @@ export class EffectsSystem {
         bullet._pushVy = (bullet._pushVy ?? 0) + push.vy;
       }
     }
+  }
+
+  _applyGravityPull(source, target, radius, strength, delta) {
+    if (!source || !target || target.active === false) return;
+
+    const dx = (source.x ?? 0) - (target.x ?? 0);
+    const dy = (source.y ?? 0) - (target.y ?? 0);
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist <= 0 || dist >= radius) return;
+
+    const nx = dx / dist;
+    const ny = dy / dist;
+    const falloff = 1 - (dist / radius);
+    const impulse = strength * (0.25 + falloff * 0.75) * (Math.max(0, delta) / 1000);
+
+    if (target.body?.setVelocity) {
+      const nextVx = (target.body.velocity?.x ?? 0) + nx * impulse;
+      const nextVy = (target.body.velocity?.y ?? 0) + ny * impulse;
+      target.body.setVelocity(nextVx, nextVy);
+      return;
+    }
+
+    target.x += nx * impulse * 0.3;
+    target.y += ny * impulse * 0.3;
+    target.body?.updateFromGameObject?.();
   }
 }

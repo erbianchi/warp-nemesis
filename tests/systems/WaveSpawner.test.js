@@ -413,4 +413,30 @@ describe('WaveSpawner', () => {
       'raptor raids should always enter from a side'
     );
   });
+
+  it('a full Level 1 run always spawns 4 overlay Mines', () => {
+    const fullRunScene = makeScene();
+    const fullRunSpawns = [];
+    const spawner = new WaveSpawner(
+      fullRunScene,
+      0,
+      (type, x, y, stats, dance) => fullRunSpawns.push({ type, dance }),
+      () => 0.01
+    );
+    const waves = LEVELS[0].waves;
+
+    spawner.start();
+    for (let i = 0; i < waves.length - 1; i++) {
+      spawner.update(16);
+      spawner.onWaveCleared();
+      spawner.update(Math.ceil(waves[i + 1].interSquadronDelay * 1000) + 1);
+    }
+
+    const mineSpawns = fullRunSpawns.filter((spawn) => spawn.type === 'mine');
+    assert.equal(mineSpawns.length, 4, 'expected 4 overlay mines per Level 1 run');
+    assert.ok(
+      mineSpawns.every((spawn) => spawn.dance === 'creep_drop'),
+      'mine overlays should use the creeping top-entry dance'
+    );
+  });
 });

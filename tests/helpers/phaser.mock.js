@@ -75,6 +75,24 @@ export function installPhaserGlobal() {
       Clamp:         (val, min, max) => Math.min(Math.max(val, min), max),
     },
 
+    Geom: {
+      Rectangle: class {
+        constructor(x = 0, y = 0, width = 0, height = 0) {
+          this.x = x;
+          this.y = y;
+          this.width = width;
+          this.height = height;
+        }
+      },
+      Circle: class {
+        constructor(x = 0, y = 0, radius = 0) {
+          this.x = x;
+          this.y = y;
+          this.radius = radius;
+        }
+      },
+    },
+
     Display: {
       Color: {
         GetColor: (r, g, b) => ((r & 0xff) << 16) | ((g & 0xff) << 8) | (b & 0xff),
@@ -278,12 +296,17 @@ export function createMockScene() {
         };
         return text;
       },
-      particles: () => {
-        const emitter = mockGameObject();
+      particles: (x = 0, y = 0, texture = '', config = {}) => {
+        const emitter = Object.assign(mockGameObject(), { x, y, texture, config });
         emitter.emitting = false;
         emitter.start = function() { this.emitting = true; return this; };
         emitter.stop = function() { this.emitting = false; return this; };
         emitter.setPosition = function(x, y) { this.x = x; this.y = y; return this; };
+        emitter.addEmitZone = function(zoneConfig) { this.emitZone = zoneConfig; return this; };
+        emitter.createGravityWell = function(wellConfig) {
+          this.gravityWell = { ...wellConfig };
+          return this.gravityWell;
+        };
         emitter.explode = () => {};
         emitter.destroy = function() { this.active = false; };
         return emitter;
