@@ -9,12 +9,14 @@ const { RunState } = await import('../../systems/RunState.js');
 const { EVENTS } = await import('../../config/events.config.js');
 const { resolveStats } = await import('../../systems/WaveSpawner.js');
 const { Skirm } = await import('../../entities/enemies/Skirm.js');
+const { Raptor } = await import('../../entities/enemies/Raptor.js');
 const {
   GameScene,
   isHeatWarningActive,
   resolveHeatBarStyle,
 } = await import('../../scenes/GameScene.js');
 const SKIRM_STATS = resolveStats('skirm', 1.0, 1.0, {});
+const RAPTOR_STATS = resolveStats('raptor', 1.0, 1.0, {});
 
 function createHeatWarningScene(heatShots) {
   const calls = [];
@@ -354,33 +356,73 @@ describe('GameScene bullet damage', () => {
     assert.equal(playerHit, false);
   });
 
-  it('spawns an enemy laser with the configured damage and culls it after it leaves the screen', () => {
+  it('spawns an enemy laser with the configured damage, size, and trajectory', () => {
     const scene = new GameScene();
     Object.assign(scene, createMockScene());
-    const tweenConfigs = [];
-
     scene._eBullets = [];
-    scene.tweens = {
-      add: (config) => {
-        tweenConfigs.push(config);
-        return { stop: () => {} };
-      },
-    };
-
-    scene._onEnemyFire({ x: 120, y: 90, vy: 220, damage: 14 });
+    scene._onEnemyFire({ x: 120, y: 90, vx: 80, vy: 160, damage: 14, width: 9, height: 24 });
 
     assert.equal(scene._eBullets.length, 1);
-    assert.equal(scene._eBullets[0]._damage, 14);
-    assert.equal(scene._eBullets[0].x, 120);
-    assert.equal(scene._eBullets[0].y, 90);
-    assert.equal(tweenConfigs.length, 1);
-    assert.equal(tweenConfigs[0].duration, Math.round(((GAME_CONFIG.HEIGHT + 30 - 90) / 220) * 1000));
+    const bullet = scene._eBullets[0];
+    assert.equal(bullet._damage, 14);
+    assert.equal(bullet._vx, 80);
+    assert.equal(bullet._vy, 160);
+    assert.equal(bullet.x, 120);
+    assert.equal(bullet.y, 90);
+    assert.equal(bullet.displayWidth, 9);
+    assert.equal(bullet.displayHeight, 24);
+    assert.ok(Math.abs(bullet.rotation - (Math.atan2(160, 80) - Math.PI / 2)) < 0.0001);
+    assert.ok(bullet._hitboxWidth > 17);
+    assert.ok(bullet._hitboxHeight > 20);
+  });
 
-    scene._eBullets[0].active = true;
-    tweenConfigs[0].onComplete();
+  it('moves enemy lasers with their own vx/vy and culls them when they leave any screen edge', () => {
+    const scene = new GameScene();
+    scene._gameOver = false;
+    scene._respawning = false;
+    scene._bg = { update: () => {} };
+    scene._movePlayer = () => {};
+    scene._updateRubberBand = () => {};
+    scene._updateHeatWarningShake = () => {};
+    scene._drawStatusBars = () => {};
+    scene._spawner = { update: () => {}, isWaveActive: false, pendingSquadrons: 0 };
+    scene._bonuses = { update: () => {} };
+    scene._enemies = [];
+    scene._player = { x: 20, y: 20 };
+    scene._space = { isDown: false };
+    scene._weapons = {
+      update: () => {},
+      tryFire: () => false,
+      pool: { getChildren: () => [] },
+    };
+    scene._onPlayerHit = () => {};
 
+    const enemyBullet = {
+      active: true,
+      x: 100,
+      y: 100,
+      width: 9,
+      height: 24,
+      displayWidth: 9,
+      displayHeight: 24,
+      _vx: 60,
+      _vy: 120,
+      destroy() {
+        this.active = false;
+      },
+    };
+    scene._eBullets = [enemyBullet];
+
+    scene.update(0, 1000);
+
+    assert.equal(enemyBullet.x, 160);
+    assert.equal(enemyBullet.y, 220);
+    assert.equal(scene._eBullets.length, 1);
+
+    scene.update(1000, 4000);
+
+    assert.equal(enemyBullet.active, false);
     assert.equal(scene._eBullets.length, 0);
-    assert.equal(scene._eBullets[0], undefined);
   });
 
   it('enemy laser overflow reaches player hp after the shield absorbs what it can', () => {
@@ -427,6 +469,121 @@ describe('GameScene bullet damage', () => {
     assert.equal(playerHitDamage, 17);
     assert.equal(enemyBullet.active, false);
     assert.equal(scene._eBullets.length, 0);
+  });
+});
+
+describe('GameScene enemy spawning', () => {
+  it('creates a Raptor instance when the spawner requests one', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._enemies = [];
+    scene._enemyGroup = { add: () => {} };
+
+    scene._spawnEnemy('raptor', 140, -60, RAPTOR_STATS, 'side_left', { overlay: true, waveId: 3 });
+
+    assert.equal(scene._enemies.length, 1);
+    assert.ok(scene._enemies[0] instanceof Raptor);
+    assert.equal(scene._enemies[0].displayWidth, 40);
+    assert.equal(scene._enemies[0].displayHeight, 32);
+    assert.equal(scene._enemies[0]._overlayRaid, true);
+    assert.equal(scene._enemies[0]._spawnWaveId, 3);
+  });
+
+  it('does not silently cull a persistent enemy when it drifts beyond the normal bounds', () => {
+    const scene = new GameScene();
+    scene._gameOver = false;
+    scene._respawning = false;
+    scene._bg = { update: () => {} };
+    scene._movePlayer = () => {};
+    scene._updateRubberBand = () => {};
+    scene._updateHeatWarningShake = () => {};
+    scene._drawStatusBars = () => {};
+    scene._spawner = { update: () => {}, isWaveActive: false, pendingSquadrons: 0 };
+    scene._bonuses = { update: () => {} };
+    scene._player = { x: 20, y: 20 };
+    scene._space = { isDown: false };
+    scene._eBullets = [];
+    scene._weapons = {
+      update: () => {},
+      tryFire: () => false,
+      pool: { getChildren: () => [] },
+    };
+    scene._enemyGroup = { remove: () => {} };
+
+    const enemy = {
+      active: true,
+      x: GAME_CONFIG.WIDTH + 140,
+      y: 220,
+      _persistUntilDestroyed: true,
+      updateCalled: 0,
+      update() {
+        this.updateCalled += 1;
+      },
+    };
+    scene._enemies = [enemy];
+
+    scene.update(0, 16);
+
+    assert.equal(scene._enemies.length, 1);
+    assert.equal(enemy.updateCalled, 1);
+  });
+
+  it('ignores overlay squadron spawns for the main wave checkpoint flow', () => {
+    const scene = new GameScene();
+    scene._squadronScoreCheckpoint = 27;
+    scene._enemies = [];
+    scene._formations = [];
+
+    scene._onSquadronSpawned({
+      overlay: true,
+      count: 2,
+      squadron: {
+        dance: 'side_left',
+        controller: {},
+      },
+    });
+
+    assert.equal(scene._squadronScoreCheckpoint, 27);
+    assert.equal(scene._formations.length, 0);
+  });
+
+  it('advances the main wave even while only overlay raid enemies remain alive', () => {
+    const scene = new GameScene();
+    let waveCleared = 0;
+    scene._gameOver = false;
+    scene._respawning = false;
+    scene._bg = { update: () => {} };
+    scene._movePlayer = () => {};
+    scene._updateRubberBand = () => {};
+    scene._updateHeatWarningShake = () => {};
+    scene._drawStatusBars = () => {};
+    scene._bonuses = { update: () => {} };
+    scene._player = { x: 20, y: 20 };
+    scene._space = { isDown: false };
+    scene._eBullets = [];
+    scene._weapons = {
+      update: () => {},
+      tryFire: () => false,
+      pool: { getChildren: () => [] },
+    };
+    scene._spawner = {
+      update: () => {},
+      isWaveActive: true,
+      pendingMainSquadrons: 0,
+      onWaveCleared: () => { waveCleared += 1; },
+    };
+    scene._enemies = [
+      {
+        active: true,
+        _overlayRaid: true,
+        update: () => {},
+      },
+    ];
+    scene._enemyGroup = { remove: () => {} };
+
+    scene.update(0, 16);
+
+    assert.equal(waveCleared, 1);
   });
 });
 

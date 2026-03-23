@@ -14,6 +14,7 @@ import { ShieldController }      from '../systems/ShieldController.js';
 import { WeaponManager }         from '../weapons/WeaponManager.js';
 import { RunState }              from '../systems/RunState.js';
 import { Skirm }                 from '../entities/enemies/Skirm.js';
+import { Raptor }                from '../entities/enemies/Raptor.js';
 
 const {
   WIDTH, HEIGHT,
@@ -102,7 +103,7 @@ export class GameScene extends Phaser.Scene {
 
     // ── Enemy management ────────────────────────────────────────────────────
     this._enemies    = [];   // live enemy instances
-    this._eBullets   = [];   // tween-driven enemy bullet rectangles
+    this._eBullets   = [];   // velocity-driven enemy bullet rectangles
     this._enemyGroup = this.physics.add.group();
     this._formations = [];   // active FormationControllers
 
@@ -135,7 +136,7 @@ export class GameScene extends Phaser.Scene {
     this._spawner = new WaveSpawner(
       this,
       this._levelIndex,
-      (type, x, y, stats, dance) => this._spawnEnemy(type, x, y, stats, dance)
+      (type, x, y, stats, dance, meta) => this._spawnEnemy(type, x, y, stats, dance, meta)
     );
     this._bonuses = new BonusSystem(this, {
       effects: this._effects,
@@ -208,7 +209,10 @@ export class GameScene extends Phaser.Scene {
     for (let i = this._enemies.length - 1; i >= 0; i--) {
       const e = this._enemies[i];
       if (!e.active) { this._enemyGroup.remove(e); this._enemies.splice(i, 1); continue; }
-      if (e.y > HEIGHT + 80 || e.x < -100 || e.x > WIDTH + 100) {
+      if (
+        !e._persistUntilDestroyed
+        && (e.y > HEIGHT + 80 || e.x < -100 || e.x > WIDTH + 100)
+      ) {
         this._removeEnemy(e, i);
         continue;
       }
@@ -222,13 +226,27 @@ export class GameScene extends Phaser.Scene {
     for (let i = this._eBullets.length - 1; i >= 0; i--) {
       const b = this._eBullets[i];
       if (!b.active) { this._eBullets.splice(i, 1); continue; }
-      if (b.y > HEIGHT + 20) { b.destroy(); this._eBullets.splice(i, 1); continue; }
 
-      // Apply and decay sideways push from nearby explosions (tweens only control y)
-      if (b._pushVx) {
-        b.x += b._pushVx * dt;
+      b.x += (b._vx ?? 0) * dt;
+      b.y += (b._vy ?? 0) * dt;
+
+      if (
+        b.y < -20 || b.y > HEIGHT + 20
+        || b.x < -20 || b.x > WIDTH + 20
+      ) {
+        b.destroy();
+        this._eBullets.splice(i, 1);
+        continue;
+      }
+
+      // Apply and decay temporary shockwave push on top of the authored bullet velocity.
+      if (b._pushVx || b._pushVy) {
+        b.x += (b._pushVx ?? 0) * dt;
+        b.y += (b._pushVy ?? 0) * dt;
         b._pushVx *= Math.max(0, 1 - 2.5 * dt);
+        b._pushVy *= Math.max(0, 1 - 2.5 * dt);
         if (Math.abs(b._pushVx) < 0.5) b._pushVx = 0;
+        if (Math.abs(b._pushVy) < 0.5) b._pushVy = 0;
       }
 
       const playerBullet = this._findCollidingPlayerBullet(b);
@@ -245,9 +263,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Signal wave clear once all squadrons have spawned and no enemies remain
+    const pendingMainSquadrons = this._spawner.pendingMainSquadrons ?? this._spawner.pendingSquadrons ?? 0;
     if (this._spawner.isWaveActive
-        && this._spawner.pendingSquadrons === 0
-        && this._enemies.length === 0) {
+        && pendingMainSquadrons === 0
+        && this._countMainWaveEnemies() === 0) {
       this._spawner.onWaveCleared();
     }
   }
@@ -497,7 +516,8 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard.once('keydown-ENTER', () => this.scene.start('GameScene'));
   }
 
-  _onSquadronSpawned({ count, squadron }) {
+  _onSquadronSpawned({ count, squadron, overlay = false }) {
+    if (overlay) return;
     this._squadronScoreCheckpoint = RunState.score;
     const ships = this._enemies
       .slice(-count)
@@ -514,16 +534,28 @@ export class GameScene extends Phaser.Scene {
 
   // ── Enemy spawning ────────────────────────────────────────────────────────
 
-  _spawnEnemy(type, x, y, stats, dance) {
+  _spawnEnemy(type, x, y, stats, dance, meta = {}) {
     let enemy;
     switch (type) {
+      case 'raptor':
+        enemy = new Raptor(this, x, y, stats, dance);
+        break;
       case 'skirm':
       default:
         enemy = new Skirm(this, x, y, stats, dance);
         break;
     }
+    enemy._overlayRaid = Boolean(meta.overlay);
+    enemy._spawnWaveId = meta.waveId ?? null;
+    enemy._sourceEventId = meta.sourceEventId ?? null;
     this._enemies.push(enemy);
     this._enemyGroup.add(enemy);
+  }
+
+  _countMainWaveEnemies() {
+    return this._enemies.reduce((count, enemy) => (
+      enemy?.active !== false && !enemy?._overlayRaid ? count + 1 : count
+    ), 0);
   }
 
   /** Remove an off-screen enemy silently (no score awarded). */
@@ -573,23 +605,21 @@ export class GameScene extends Phaser.Scene {
     this._onPlayerHit(dmg);
   }
 
-  _onEnemyFire({ x, y, vy, damage }) {
-    const bullet = this.add.rectangle(x, y, 3, 10, 0xff4400).setDepth(9);
-    bullet._damage = damage;
-    this._eBullets.push(bullet);
+  _onEnemyFire({ x, y, vx = 0, vy = 0, damage, width = 3, height = 10, color = 0xff4400 }) {
+    const bullet = this.add.rectangle(x, y, width, height, color).setDepth(9);
+    const rotation = (vx === 0 && vy === 0)
+      ? 0
+      : Math.atan2(vy, vx) - Math.PI / 2;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
 
-    const dist = HEIGHT + 30 - y;
-    this.tweens.add({
-      targets:    bullet,
-      y:          HEIGHT + 30,
-      duration:   Math.round((dist / vy) * 1000),
-      ease:       'Linear',
-      onComplete: () => {
-        const idx = this._eBullets.indexOf(bullet);
-        if (idx !== -1) this._eBullets.splice(idx, 1);
-        if (bullet.active) bullet.destroy();
-      },
-    });
+    bullet._vx = vx;
+    bullet._vy = vy;
+    bullet._damage = damage;
+    bullet._hitboxWidth = Math.abs(width * cos) + Math.abs(height * sin);
+    bullet._hitboxHeight = Math.abs(width * sin) + Math.abs(height * cos);
+    bullet.setRotation?.(rotation);
+    this._eBullets.push(bullet);
   }
 
   _consumePlayerBullet(bullet) {
@@ -636,8 +666,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   _resolveEnemyBulletHitbox(bullet) {
-    const width = bullet?.displayWidth ?? bullet?.width ?? ENEMY_BULLET_WIDTH;
-    const height = bullet?.displayHeight ?? bullet?.height ?? ENEMY_BULLET_HEIGHT;
+    const width = bullet?._hitboxWidth ?? bullet?.displayWidth ?? bullet?.width ?? ENEMY_BULLET_WIDTH;
+    const height = bullet?._hitboxHeight ?? bullet?.displayHeight ?? bullet?.height ?? ENEMY_BULLET_HEIGHT;
     return {
       halfW: Math.max(1, width * 0.5),
       halfH: Math.max(1, height * 0.5),

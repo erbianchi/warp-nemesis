@@ -418,7 +418,7 @@ export class EffectsSystem {
 
   /**
    * Apply an outward push to nearby enemies and enemy bullets.
-   * Enemy bullets only get lateral motion because their vertical travel is tween-driven.
+   * Enemy bullets inherit a temporary velocity offset on top of their authored path.
    * @param {number} x
    * @param {number} y
    * @param {Array<object>} enemies
@@ -434,7 +434,10 @@ export class EffectsSystem {
     for (const bullet of enemyBullets) {
       if (!bullet?.active) continue;
       const push = calcShockwavePush(x, y, bullet.x, bullet.y, vx, vy);
-      if (push) bullet._pushVx = (bullet._pushVx ?? 0) + push.vx;
+      if (push) {
+        bullet._pushVx = (bullet._pushVx ?? 0) + push.vx;
+        bullet._pushVy = (bullet._pushVy ?? 0) + push.vy;
+      }
     }
   }
 }

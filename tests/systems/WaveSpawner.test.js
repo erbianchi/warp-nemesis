@@ -191,8 +191,8 @@ describe('samplePool', () => {
 describe('WaveSpawner', () => {
   let scene, spawned;
 
-  function spawnFn(type, x, y, stats, dance) {
-    spawned.push({ type, x, y, stats, dance });
+  function spawnFn(type, x, y, stats, dance, meta) {
+    spawned.push({ type, x, y, stats, dance, meta });
   }
 
   beforeEach(() => {
@@ -321,5 +321,96 @@ describe('WaveSpawner', () => {
     spawner.update(5000);
     spawner.onWaveCleared();
     assert.equal(scene.events._log.length, countBefore, 'no events after done');
+  });
+
+  it('schedules Level 1 overlay raids independently of the main squadron queue', () => {
+    const spawner = new WaveSpawner(scene, 0, spawnFn, () => 0.01);
+    spawner.start();
+    const waves = LEVELS[0].waves;
+
+    for (let i = 0; i < 2; i++) {
+      spawner.update(16);
+      spawner.onWaveCleared();
+      spawner.update(Math.ceil(waves[i + 1].interSquadronDelay * 1000) + 1);
+    }
+
+    spawned = [];
+    assert.equal(spawner._currentWave.id, 3);
+    assert.equal(spawner._overlayQueue.length, 1, 'wave 3 should arm one overlay raid');
+    assert.equal(spawner.pendingMainSquadrons, 0, 'the main squadron queue should already be empty');
+    assert.equal(spawner.pendingSquadrons, 1, 'after wave start only the delayed overlay raid should remain pending');
+
+    spawned = [];
+    spawner.update(280);
+    assert.equal(spawned.length, 0, 'overlay raid should wait for its configured delay');
+
+    spawner.update(20);
+    assert.equal(spawned.length, 2, 'overlay raid should spawn a pair of raptors');
+    assert.ok(spawned.every((entry) => entry.type === 'raptor'));
+    assert.ok(spawned.every((entry) => entry.meta?.overlay === true));
+    assert.ok(spawned.every((entry) => entry.meta?.waveId === 3));
+
+    const overlayEvent = scene.events._log.find((entry) => (
+      entry.event === EVENTS.SQUADRON_SPAWNED && entry.data.overlay === true
+    ));
+    assert.ok(overlayEvent, 'overlay raids should be flagged on SQUADRON_SPAWNED');
+  });
+
+  it('overlay raids keep the difficulty of the wave that triggered them', () => {
+    const spawner = new WaveSpawner(scene, 0, spawnFn);
+    spawner._currentWave = { id: 4, difficultyFactor: 1.08 };
+
+    spawner._spawnSquadron(
+      {
+        id: 'overlay_raptor_pair',
+        dance: 'side_left',
+        formation: 'line',
+        entryEdge: 'left',
+        entryX: 0.34,
+        spacing: 84,
+        planes: [
+          { type: 'raptor' },
+          { type: 'raptor' },
+        ],
+      },
+      {
+        overlay: true,
+        waveId: 3,
+        difficultyFactor: 1.05,
+        sourceEvent: { id: 'l1_raptor_raid_1' },
+      }
+    );
+
+    assert.equal(spawned.length, 2);
+    assert.ok(spawned.every((entry) => entry.meta?.overlay === true));
+    assert.ok(spawned.every((entry) => entry.meta?.waveId === 3));
+    assert.equal(spawned[0].stats.hp, resolveStats('raptor', 1.0, 1.05, {}).hp);
+    assert.equal(spawned[0].stats.shield, resolveStats('raptor', 1.0, 1.05, {}).shield);
+  });
+
+  it('a full Level 1 run always spawns 2 Raptor raids for 4 total Raptors', () => {
+    const fullRunScene = makeScene();
+    const fullRunSpawns = [];
+    const spawner = new WaveSpawner(
+      fullRunScene,
+      0,
+      (type, x, y, stats, dance) => fullRunSpawns.push({ type, dance }),
+      () => 0.01
+    );
+    const waves = LEVELS[0].waves;
+
+    spawner.start();
+    for (let i = 0; i < waves.length - 1; i++) {
+      spawner.update(16);
+      spawner.onWaveCleared();
+      spawner.update(Math.ceil(waves[i + 1].interSquadronDelay * 1000) + 1);
+    }
+
+    const raptorSpawns = fullRunSpawns.filter((spawn) => spawn.type === 'raptor');
+    assert.equal(raptorSpawns.length, 4, 'expected 2 pair-raids per Level 1 run');
+    assert.ok(
+      raptorSpawns.every((spawn) => ['side_left', 'side_right'].includes(spawn.dance)),
+      'raptor raids should always enter from a side'
+    );
   });
 });

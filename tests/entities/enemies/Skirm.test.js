@@ -6,6 +6,7 @@ installPhaserGlobal();
 
 import { Skirm } from '../../../entities/enemies/Skirm.js';
 import { ENEMIES } from '../../../config/enemies.config.js';
+import { GAME_CONFIG } from '../../../config/game.config.js';
 import { resolveStats } from '../../../systems/WaveSpawner.js';
 import { EVENTS } from '../../../config/events.config.js';
 
@@ -95,6 +96,8 @@ describe('Skirm', () => {
       'zigzag',
       'drift_drop',
       'jink_drop',
+      'whirl',
+      'hourglass',
     ];
 
     for (const dance of DANCES) {
@@ -111,6 +114,53 @@ describe('Skirm', () => {
       const { skirm } = makeSkirm('zigzag');
       assert.doesNotThrow(() => skirm.update(16));
       assert.doesNotThrow(() => skirm.update(32));
+    });
+
+    it('whirl enters on screen and starts a looping orbit instead of exiting', () => {
+      const scene = createMockScene();
+      const tweenCalls = [];
+      scene.tweens.add = (config) => {
+        tweenCalls.push(config);
+        return { stop: () => {} };
+      };
+
+      const skirm = new Skirm(scene, 120, -40, BASE_STATS, 'whirl');
+      assert.equal(skirm.alive, true);
+      assert.ok(tweenCalls.length >= 1, 'whirl should schedule an entry tween');
+
+      const entry = tweenCalls[0];
+      assert.ok(entry.y >= 0 && entry.y <= GAME_CONFIG.HEIGHT * 0.5, 'whirl entry should move on screen');
+
+      entry.onComplete();
+
+      assert.ok(tweenCalls.length >= 2, 'whirl should schedule a looping orbit step');
+      const orbit = tweenCalls[1];
+      assert.ok(orbit.x >= 0 && orbit.x <= GAME_CONFIG.WIDTH, 'whirl orbit x should stay on screen');
+      assert.ok(orbit.y >= 0 && orbit.y <= GAME_CONFIG.HEIGHT, 'whirl orbit y should stay on screen');
+    });
+
+    it('hourglass enters on screen and starts a mirrored hold pattern instead of exiting', () => {
+      const scene = createMockScene();
+      const tweenCalls = [];
+      scene.tweens.add = (config) => {
+        tweenCalls.push(config);
+        return { stop: () => {} };
+      };
+
+      const skirm = new Skirm(scene, 200, -40, BASE_STATS, 'hourglass');
+      assert.equal(skirm.alive, true);
+      assert.ok(tweenCalls.length >= 1, 'hourglass should schedule an entry tween');
+
+      const entry = tweenCalls[0];
+      assert.ok(entry.y >= 0 && entry.y <= GAME_CONFIG.HEIGHT * 0.5, 'hourglass entry should move on screen');
+
+      entry.onComplete();
+
+      assert.ok(tweenCalls.length >= 2, 'hourglass should schedule a looping weave step');
+      const firstLoop = tweenCalls[1];
+      assert.ok(firstLoop.x >= 0 && firstLoop.x <= GAME_CONFIG.WIDTH, 'hourglass loop x should stay on screen');
+      assert.ok(firstLoop.y >= 0 && firstLoop.y <= GAME_CONFIG.HEIGHT, 'hourglass loop y should stay on screen');
+      assert.notEqual(firstLoop.x, entry.x, 'hourglass should move off the center line during its loop');
     });
   });
 

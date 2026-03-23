@@ -62,6 +62,20 @@ export class BootScene extends Phaser.Scene {
     sk.generateTexture('skirm', 20, 16);
     sk.destroy();
 
+    // Raptor — 40×32 px heavy gunship, roughly 2× the Skirm footprint
+    const rp = this.make.graphics({ add: false });
+    rp.fillStyle(0x1f56c7, 1);
+    rp.fillTriangle(20, 32, 4, 8, 36, 8);    // main hull
+    rp.fillStyle(0x9edcff, 1);
+    rp.fillRect(14, 2, 12, 10);              // canopy
+    rp.fillStyle(0x1f56c7, 1);
+    rp.fillRect(0, 8, 10, 7);                // left wing root
+    rp.fillRect(30, 8, 10, 7);               // right wing root
+    rp.fillRect(4, 15, 8, 5);                // left lower wing
+    rp.fillRect(28, 15, 8, 5);               // right lower wing
+    rp.generateTexture('raptor', 40, 32);
+    rp.destroy();
+
     // Enemy bullet — small red bar
     const eb = this.make.graphics({ add: false });
     eb.fillStyle(0xff3300, 1);

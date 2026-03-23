@@ -8,6 +8,10 @@ function getSquadrons(wave) {
   return wave.squadronPool ?? wave.squadrons ?? [];
 }
 
+function getOverlaySquadrons(level) {
+  return level.overlaySquadrons ?? [];
+}
+
 describe('LEVELS', () => {
   it('exports a non-empty array of levels', () => {
     assert.ok(Array.isArray(LEVELS));
@@ -134,6 +138,42 @@ describe('LEVELS', () => {
       ));
 
       assert.ok(hasSixteenShipTemplate, 'expected at least one 16-skirm template in Level 1');
+    });
+
+    it('includes the new symmetric whirl and hourglass dances in the level pool', () => {
+      const dances = new Set(
+        LEVELS[0].waves.flatMap((wave) => getSquadrons(wave).map((sq) => sq.dance))
+      );
+
+      assert.ok(dances.has('whirl'), 'expected Level 1 to include a whirl squadron template');
+      assert.ok(dances.has('hourglass'), 'expected Level 1 to include an hourglass squadron template');
+    });
+  });
+
+  describe('Level 1 Raptor overlays', () => {
+    const overlays = getOverlaySquadrons(LEVELS[0]);
+
+    it('defines exactly 2 overlay Raptor raid events', () => {
+      assert.equal(overlays.length, 2);
+    });
+
+    it('each overlay raid selects a pair of Raptors entering from a side', () => {
+      for (const overlay of overlays) {
+        assert.ok(typeof overlay.triggerWaveId === 'number', `overlay "${overlay.id}" needs triggerWaveId`);
+        assert.ok(Array.isArray(overlay.squadronPool) && overlay.squadronPool.length >= 2,
+          `overlay "${overlay.id}" needs a left/right squadron pool`);
+        assert.ok(typeof overlay.delay === 'number' && overlay.delay >= 0,
+          `overlay "${overlay.id}" needs a non-negative delay`);
+
+        for (const squadron of overlay.squadronPool) {
+          assert.equal(squadron.planes.length, 2, `overlay "${overlay.id}" should spawn raptors in pairs`);
+          squadron.planes.forEach((plane) => assert.equal(plane.type, 'raptor'));
+          assert.ok(['left', 'right'].includes(squadron.entryEdge),
+            `overlay "${overlay.id}" squadron "${squadron.id}" must enter from a side`);
+          assert.ok(['side_left', 'side_right'].includes(squadron.dance),
+            `overlay "${overlay.id}" squadron "${squadron.id}" must use a side-entry dance`);
+        }
+      }
     });
   });
 

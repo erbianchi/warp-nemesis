@@ -189,7 +189,7 @@ export function samplePool(pool, count, rng = Math.random) {
  *   // Call spawner.update(delta) each frame.
  *
  * spawnFn signature:
- *   spawnFn(type, x, y, stats, dance) → enemy instance
+ *   spawnFn(type, x, y, stats, dance, meta) → enemy instance
  *
  * Events emitted on scene.events:
  *   EVENTS.WAVE_START          (waveConfig)
@@ -201,7 +201,7 @@ export class WaveSpawner {
   /**
    * @param {Phaser.Scene} scene
    * @param {number}       levelIndex - 0-based index into LEVELS
-   * @param {Function}     spawnFn    - spawnFn(type, x, y, stats, dance)
+   * @param {Function}     spawnFn    - spawnFn(type, x, y, stats, dance, meta)
    * @param {Function}     [rng]      - Optional RNG for pool sampling (default Math.random)
    */
   constructor(scene, levelIndex, spawnFn, rng = Math.random) {
@@ -217,6 +217,7 @@ export class WaveSpawner {
     this._waveQueue       = [];
     this._currentWave     = null;
     this._squadronQueue   = [];   // resolved squadron list for current wave
+    this._overlayQueue    = [];   // overlay squadrons scheduled against the current wave timeline
     this._elapsed         = 0;   // seconds since start()
     this._nextSquadronAt  = 0;   // seconds at which to spawn next squadron
     this._waitingForWave  = false;
@@ -234,6 +235,11 @@ export class WaveSpawner {
 
   /** Number of squadrons still queued to spawn in the current wave. */
   get pendingSquadrons() {
+    return this._squadronQueue.length + this._overlayQueue.length;
+  }
+
+  /** Number of non-overlay squadrons still queued for the current wave. */
+  get pendingMainSquadrons() {
     return this._squadronQueue.length;
   }
 
@@ -241,6 +247,7 @@ export class WaveSpawner {
   start() {
     this._elapsed = 0;
     this._waveQueue = [...this._levelConfig.waves];
+    this._overlayQueue = [];
     this._launchNextWave();
   }
 
@@ -258,7 +265,8 @@ export class WaveSpawner {
         this._waitingForWave = false;
         this._launchNextWave();
       }
-      return;
+      this._dispatchReadyOverlaySquadrons();
+      if (this._waitingForWave) return;
     }
 
     // Dispatch all squadrons whose time slot has arrived
@@ -267,6 +275,8 @@ export class WaveSpawner {
       this._spawnSquadron(squadron);
       this._nextSquadronAt += (this._currentWave.interSquadronDelay ?? 0);
     }
+
+    this._dispatchReadyOverlaySquadrons();
   }
 
   /**
@@ -306,6 +316,7 @@ export class WaveSpawner {
     }
 
     this._nextSquadronAt = this._elapsed; // first squadron spawns immediately
+    this._scheduleOverlaySquadronsForWave(this._currentWave);
     this._scene.events.emit(EVENTS.WAVE_START, this._currentWave);
   }
 
@@ -319,11 +330,16 @@ export class WaveSpawner {
     this._nextSquadronAt = this._elapsed; // spawn on next update tick
   }
 
-  _spawnSquadron(squadron) {
+  _spawnSquadron(squadron, meta = {}) {
     const { width, height } = this._scene.scale;
     const { difficultyBase } = this._levelConfig;
-    const { difficultyFactor } = this._currentWave;
+    const difficultyFactor = meta.difficultyFactor ?? this._currentWave?.difficultyFactor ?? 1;
     const defaultDance = squadron.dance ?? 'straight';
+    const spawnMeta = {
+      overlay: Boolean(meta.overlay),
+      sourceEventId: meta.sourceEvent?.id ?? null,
+      waveId: meta.waveId ?? this._currentWave?.id ?? null,
+    };
 
     const positions = resolveFormationPositions(squadron, width, height, this._rng);
 
@@ -331,15 +347,59 @@ export class WaveSpawner {
       const stats = resolveStats(plane.type, difficultyBase, difficultyFactor, plane);
       const pos   = positions[i] ?? positions[positions.length - 1];
       const dance = plane.dance ?? defaultDance;
-      this._spawnFn(plane.type, pos.x, pos.y, stats, dance);
+      this._spawnFn(plane.type, pos.x, pos.y, stats, dance, spawnMeta);
     });
 
-    this._lastSquadron = squadron; // saved for replayLastSquadron()
+    if (!meta.overlay) {
+      this._lastSquadron = squadron; // saved for replayLastSquadron()
+    }
 
     this._scene.events.emit(EVENTS.SQUADRON_SPAWNED, {
       dance: defaultDance,
       count: squadron.planes.length,
       squadron,
+      overlay: spawnMeta.overlay,
+      sourceEventId: spawnMeta.sourceEventId,
+      waveId: spawnMeta.waveId,
     });
+  }
+
+  _scheduleOverlaySquadronsForWave(wave) {
+    const overlayDefs = this._levelConfig.overlaySquadrons ?? [];
+    const matchingOverlays = overlayDefs.filter((overlay) => overlay.triggerWaveId === wave.id);
+
+    for (const overlay of matchingOverlays) {
+      const squadrons = overlay.squadronPool
+        ? samplePool(
+            overlay.squadronPool,
+            overlay.squadronCount ?? overlay.squadronPool.length,
+            this._rng
+          )
+        : [...(overlay.squadrons ?? [])];
+
+      squadrons.forEach((squadron, index) => {
+        this._overlayQueue.push({
+          spawnAt: this._elapsed + (overlay.delay ?? 0) + index * (overlay.interSquadronDelay ?? 0),
+          squadron,
+          sourceEvent: overlay,
+          difficultyFactor: wave.difficultyFactor,
+          waveId: wave.id,
+        });
+      });
+    }
+
+    this._overlayQueue.sort((a, b) => a.spawnAt - b.spawnAt);
+  }
+
+  _dispatchReadyOverlaySquadrons() {
+    while (this._overlayQueue.length > 0 && this._elapsed >= this._overlayQueue[0].spawnAt) {
+      const overlay = this._overlayQueue.shift();
+      this._spawnSquadron(overlay.squadron, {
+        overlay: true,
+        sourceEvent: overlay.sourceEvent,
+        difficultyFactor: overlay.difficultyFactor,
+        waveId: overlay.waveId,
+      });
+    }
   }
 }

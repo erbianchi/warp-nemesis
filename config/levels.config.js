@@ -17,6 +17,13 @@ function makeSkirmPlanes(count, resolver = () => ({})) {
   }));
 }
 
+function makeRaptorPlanes(count, resolver = () => ({})) {
+  return Array.from({ length: count }, (_, index) => ({
+    type: 'raptor',
+    ...resolver(index, count),
+  }));
+}
+
 function createLevel1SquadronPool() {
   return [
     {
@@ -171,6 +178,32 @@ function createLevel1SquadronPool() {
         return {};
       }),
     },
+    {
+      id: 'w1_whirl_guard_10',
+      dance: 'whirl',
+      formation: 'spread',
+      entryEdge: 'top',
+      entryX: 0.5,
+      spacing: 34,
+      planes: makeSkirmPlanes(10, (index, count) => {
+        if (index === Math.floor(count / 2)) return { preset: 'ace' };
+        if (index % 3 === 0) return { preset: 'light' };
+        return {};
+      }),
+    },
+    {
+      id: 'w1_hourglass_gate_12',
+      dance: 'hourglass',
+      formation: 'line',
+      entryEdge: 'top',
+      entryX: 0.5,
+      spacing: 36,
+      planes: makeSkirmPlanes(12, (index) => {
+        if (index === 5) return { preset: 'ace' };
+        if (index % 4 === 0) return { preset: 'light' };
+        return {};
+      }),
+    },
   ];
 }
 
@@ -188,20 +221,20 @@ function createLevel1Waves() {
   const waveSpecs = [
     { difficultyFactor: 1.00, interSquadronDelay: 0.70, ids: ['w1_patrol_loop_10', 'w1_drift_rain_12'] },
     { difficultyFactor: 1.02, interSquadronDelay: 0.85, ids: ['w1_patrol_loop_10', 'w1_fan_cloud_12'] },
-    { difficultyFactor: 1.05, interSquadronDelay: 0.90, ids: ['w1_drift_rain_12', 'w1_fan_cloud_12'] },
+    { difficultyFactor: 1.05, interSquadronDelay: 0.90, ids: ['w1_drift_rain_12', 'w1_whirl_guard_10'] },
     { difficultyFactor: 1.08, interSquadronDelay: 1.00, ids: ['w1_patrol_loop_10', 'w1_hook_spear_14'] },
-    { difficultyFactor: 1.10, interSquadronDelay: 0.95, ids: ['w1_hook_spear_14', 'w1_drift_rain_12'] },
-    { difficultyFactor: 1.13, interSquadronDelay: 1.10, ids: ['w1_snap_current_16', 'w1_fan_cloud_12'] },
+    { difficultyFactor: 1.10, interSquadronDelay: 0.95, ids: ['w1_hook_spear_14', 'w1_hourglass_gate_12'] },
+    { difficultyFactor: 1.13, interSquadronDelay: 1.10, ids: ['w1_snap_current_16', 'w1_whirl_guard_10'] },
     { difficultyFactor: 1.16, interSquadronDelay: 1.00, ids: ['w1_patrol_loop_10', 'w1_snap_current_16'] },
-    { difficultyFactor: 1.20, interSquadronDelay: 1.15, ids: ['w1_hook_spear_14', 'w1_fan_cloud_12'] },
-    { difficultyFactor: 1.24, interSquadronDelay: 1.20, ids: ['w1_split_breakers_16', 'w1_drift_rain_12'] },
+    { difficultyFactor: 1.20, interSquadronDelay: 1.15, ids: ['w1_hourglass_gate_12', 'w1_fan_cloud_12'] },
+    { difficultyFactor: 1.24, interSquadronDelay: 1.20, ids: ['w1_split_breakers_16', 'w1_whirl_guard_10'] },
     { difficultyFactor: 1.28, interSquadronDelay: 1.05, ids: ['w1_snap_current_16', 'w1_drift_rain_12'] },
-    { difficultyFactor: 1.32, interSquadronDelay: 1.25, ids: ['w1_patrol_loop_10', 'w1_split_breakers_16'] },
-    { difficultyFactor: 1.36, interSquadronDelay: 1.15, ids: ['w1_hook_spear_14', 'w1_snap_current_16'] },
-    { difficultyFactor: 1.40, interSquadronDelay: 1.30, ids: ['w1_split_breakers_16', 'w1_fan_cloud_12'] },
-    { difficultyFactor: 1.45, interSquadronDelay: 1.20, ids: ['w1_hook_spear_14', 'w1_split_breakers_16'] },
-    { difficultyFactor: 1.50, interSquadronDelay: 1.35, ids: ['w1_snap_current_16', 'w1_split_breakers_16'] },
-    { difficultyFactor: 1.56, interSquadronDelay: 1.40, ids: ['w1_hook_spear_14', 'w1_snap_current_16', 'w1_split_breakers_16'] },
+    { difficultyFactor: 1.32, interSquadronDelay: 1.25, ids: ['w1_hourglass_gate_12', 'w1_split_breakers_16'] },
+    { difficultyFactor: 1.36, interSquadronDelay: 1.15, ids: ['w1_hook_spear_14', 'w1_whirl_guard_10'] },
+    { difficultyFactor: 1.40, interSquadronDelay: 1.30, ids: ['w1_split_breakers_16', 'w1_hourglass_gate_12'] },
+    { difficultyFactor: 1.45, interSquadronDelay: 1.20, ids: ['w1_hook_spear_14', 'w1_split_breakers_16', 'w1_whirl_guard_10'] },
+    { difficultyFactor: 1.50, interSquadronDelay: 1.35, ids: ['w1_snap_current_16', 'w1_hourglass_gate_12'] },
+    { difficultyFactor: 1.56, interSquadronDelay: 1.40, ids: ['w1_hook_spear_14', 'w1_snap_current_16', 'w1_split_breakers_16', 'w1_whirl_guard_10', 'w1_hourglass_gate_12'] },
   ];
 
   return waveSpecs.map((spec, index) => ({
@@ -211,6 +244,74 @@ function createLevel1Waves() {
     squadronCount: 1,
     squadronPool: selectSquadrons(pool, spec.ids),
   }));
+}
+
+function createLevel1RaptorOverlayPool() {
+  return [
+    {
+      id: 'w1_raptor_pair_upper_left',
+      dance: 'side_left',
+      formation: 'line',
+      entryEdge: 'left',
+      entryX: 0.34,
+      spacing: 84,
+      planes: makeRaptorPlanes(2),
+    },
+    {
+      id: 'w1_raptor_pair_upper_right',
+      dance: 'side_right',
+      formation: 'line',
+      entryEdge: 'right',
+      entryX: 0.34,
+      spacing: 84,
+      planes: makeRaptorPlanes(2),
+    },
+    {
+      id: 'w1_raptor_pair_mid_left',
+      dance: 'side_left',
+      formation: 'line',
+      entryEdge: 'left',
+      entryX: 0.56,
+      spacing: 88,
+      planes: makeRaptorPlanes(2),
+    },
+    {
+      id: 'w1_raptor_pair_mid_right',
+      dance: 'side_right',
+      formation: 'line',
+      entryEdge: 'right',
+      entryX: 0.56,
+      spacing: 88,
+      planes: makeRaptorPlanes(2),
+    },
+  ];
+}
+
+function createLevel1OverlaySquadrons() {
+  const pool = createLevel1RaptorOverlayPool();
+
+  return [
+    {
+      id: 'l1_raptor_raid_1',
+      triggerWaveId: 3,
+      delay: 0.30,
+      squadronCount: 1,
+      squadronPool: selectSquadrons(pool, [
+        'w1_raptor_pair_upper_left',
+        'w1_raptor_pair_upper_right',
+      ]),
+    },
+    {
+      id: 'l1_raptor_raid_2',
+      triggerWaveId: 9,
+      delay: 0.45,
+      squadronCount: 1,
+      squadronPool: selectSquadrons(pool, [
+        'w1_raptor_pair_mid_left',
+        'w1_raptor_pair_mid_right',
+      ]),
+    },
+  ];
 }
 
 export const LEVELS = [
@@ -223,5 +324,6 @@ export const LEVELS = [
     boss: null,
 
     waves: createLevel1Waves(),
+    overlaySquadrons: createLevel1OverlaySquadrons(),
   },
 ];

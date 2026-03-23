@@ -20,6 +20,18 @@ export const ENEMIES = {
     bulletSpeed: 220,
   },
 
+  /** Raptor — heavy slow gunship. Larger frame, shielded, fires an 8-way star burst. */
+  raptor: {
+    hp: 100,
+    shield: 100,
+    damage: 25,
+    speed: 62,
+    fireRate: 4000,   // deliberate burst cadence, but not sleepy
+    score: 300,
+    dropChance: 0.18,
+    bulletSpeed: 230, // heavy bolts, but fast enough to feel threatening
+  },
+
   fighter: {
     hp: 20,
     damage: 10,

@@ -18,6 +18,8 @@ const { WIDTH: W, HEIGHT: H } = GAME_CONFIG;
  *   zigzag      — enter from top, tween left/right in sharp zigzags while descending, shoot
  *   drift_drop  — organic wandering descent with random lateral drift
  *   jink_drop   — abrupt lateral snaps while descending
+ *   whirl       — enter, then orbit a local center in a symmetric on-screen loop
+ *   hourglass   — enter, then weave a mirrored hourglass loop while holding screen space
  *   side_cross  — enter from one side, arc across to other side, brief hover, dive at player
  *   fan_out     — enter clustered, spread outward, hold + shoot, all converge and dive
  */
@@ -37,6 +39,8 @@ export class Skirm extends EnemyBase {
       case 'zigzag':      this._danceZigzag();    break;
       case 'drift_drop':  this._danceDriftDrop(); break;
       case 'jink_drop':   this._danceJinkDrop();  break;
+      case 'whirl':       this._danceWhirl();     break;
+      case 'hourglass':   this._danceHourglass(); break;
       case 'side_cross':  this._danceSideCross(); break;
       case 'fan_out':     this._danceFanOut();    break;
       default:            break;
@@ -174,6 +178,63 @@ export class Skirm extends EnemyBase {
   }
 
   /**
+   * whirl — enter the arena, then orbit a local center forever in a
+   * balanced four-point loop. Direction can flip per ship so the wave still
+   * feels organic while remaining highly readable and symmetrical.
+   */
+  _danceWhirl() {
+    const centerX = Phaser.Math.Clamp(this.x, 90, W - 90);
+    const centerY = H * 0.26 + Math.random() * H * 0.10;
+    const radiusX = 44 + Math.random() * 18;
+    const radiusY = 34 + Math.random() * 14;
+    const clockwise = Math.random() > 0.5;
+    const orbitPoints = clockwise
+      ? [
+          { x: centerX + radiusX, y: centerY,           duration: 300 },
+          { x: centerX,           y: centerY + radiusY, duration: 320 },
+          { x: centerX - radiusX, y: centerY,           duration: 300 },
+          { x: centerX,           y: centerY - radiusY, duration: 320 },
+        ]
+      : [
+          { x: centerX - radiusX, y: centerY,           duration: 300 },
+          { x: centerX,           y: centerY + radiusY, duration: 320 },
+          { x: centerX + radiusX, y: centerY,           duration: 300 },
+          { x: centerX,           y: centerY - radiusY, duration: 320 },
+        ];
+
+    this._enterAndLoop(
+      { x: centerX, y: centerY - radiusY },
+      orbitPoints,
+      { enterDuration: 760, enterEase: 'Sine.easeOut' }
+    );
+  }
+
+  /**
+   * hourglass — move into position, then sweep through mirrored diagonal
+   * crossings around a center anchor. This holds the enemy on screen and keeps
+   * its threat pattern visibly symmetric.
+   */
+  _danceHourglass() {
+    const centerX = Phaser.Math.Clamp(this.x, 96, W - 96);
+    const centerY = H * 0.30 + Math.random() * H * 0.10;
+    const spanX = Math.min(74, centerX - 34, W - 34 - centerX);
+    const spanY = 42 + Math.random() * 16;
+    const loopPoints = [
+      { x: centerX - spanX, y: centerY - spanY, duration: 300 },
+      { x: centerX + spanX, y: centerY + spanY, duration: 360 },
+      { x: centerX + spanX, y: centerY - spanY, duration: 300 },
+      { x: centerX - spanX, y: centerY + spanY, duration: 360 },
+      { x: centerX,         y: centerY,         duration: 260 },
+    ];
+
+    this._enterAndLoop(
+      { x: centerX, y: centerY },
+      loopPoints,
+      { enterDuration: 700, enterEase: 'Sine.easeOut' }
+    );
+  }
+
+  /**
    * side_cross — enter from one side, arc across to mid-screen,
    * brief hover, then dive toward the player.
    */
@@ -260,6 +321,46 @@ export class Skirm extends EnemyBase {
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Enter the play space once, then repeat a looping tween pattern while
+   * staying on screen until the player destroys the ship.
+   * @param {{x: number, y: number}} entryTarget
+   * @param {Array<{x: number, y: number, duration?: number, ease?: string, pauseMs?: number}>} loopPoints
+   * @param {{enterDuration?: number, enterEase?: string}} [opts]
+   */
+  _enterAndLoop(entryTarget, loopPoints, opts = {}) {
+    const scene = this.scene;
+    const runStep = (index = 0) => {
+      if (!this.alive) return;
+      const step = loopPoints[index % loopPoints.length];
+      scene.tweens.add({
+        targets:  this,
+        x:        step.x,
+        y:        step.y,
+        duration: step.duration ?? 320,
+        ease:     step.ease ?? 'Sine.easeInOut',
+        onComplete: () => {
+          if (!this.alive) return;
+          const pauseMs = step.pauseMs ?? 0;
+          if (pauseMs > 0) {
+            scene.time.delayedCall(pauseMs, () => runStep(index + 1));
+            return;
+          }
+          runStep(index + 1);
+        },
+      });
+    };
+
+    scene.tweens.add({
+      targets:  this,
+      x:        entryTarget.x,
+      y:        entryTarget.y,
+      duration: opts.enterDuration ?? 720,
+      ease:     opts.enterEase ?? 'Sine.easeOut',
+      onComplete: () => runStep(0),
+    });
+  }
 
   /** Remove this enemy silently (off-screen exit — no score). */
   _exitSilent() {
