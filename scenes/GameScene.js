@@ -14,6 +14,7 @@ import { BonusSystem }           from '../systems/BonusSystem.js';
 import { ShieldController }      from '../systems/ShieldController.js';
 import { WeaponManager }         from '../weapons/WeaponManager.js';
 import { RunState }              from '../systems/RunState.js';
+import { MetaProgression }       from '../systems/MetaProgression.js';
 import { Skirm }                 from '../entities/enemies/Skirm.js';
 import { Raptor }                from '../entities/enemies/Raptor.js';
 import { Mine }                  from '../entities/enemies/Mine.js';
@@ -82,6 +83,7 @@ export function resolveHeatBarStyle(heatShots, maxHeatShots, timeMs = 0) {
 export class GameScene extends Phaser.Scene {
   constructor() {
     super({ key: 'GameScene' });
+    this._levelCompletionRecorded = false;
   }
 
   // ── Setup ─────────────────────────────────────────────────────────────────
@@ -97,8 +99,10 @@ export class GameScene extends Phaser.Scene {
 
     this._playerSpeed    = PLAYER_SPEED_DEFAULT;
     this._playerLives    = PLAYER_LIVES_DEFAULT;
-    this._playerHp       = PLAYER_HP_DEFAULT;
-    this._playerShield   = PLAYER_SHIELD_DEFAULT;
+    this._levelCompletionRecorded = false;
+    this._resolveStartingPlayerStats();
+    this._playerHp       = this._startingPlayerHp;
+    this._playerShield   = this._startingPlayerShield;
     this._gameOver       = false;
     this._respawning     = false;
     this._levelClearing  = false;
@@ -309,6 +313,18 @@ export class GameScene extends Phaser.Scene {
     return p;
   }
 
+  _resolveStartingPlayerStats() {
+    const startingBonuses = MetaProgression.getStartingBonuses();
+    this._startingPlayerHp = Math.min(
+      PLAYER_HP_MAX,
+      PLAYER_HP_DEFAULT + (startingBonuses.hp ?? 0)
+    );
+    this._startingPlayerShield = Math.min(
+      PLAYER_SHIELD_MAX,
+      PLAYER_SHIELD_DEFAULT + (startingBonuses.shield ?? 0)
+    );
+  }
+
   /**
    * Spring-damper rubber-band for the player sprite.
    * Visual only — physics body is unaffected.
@@ -431,10 +447,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   _resetPlayerBonuses() {
+    const startingShield = this._startingPlayerShield ?? PLAYER_SHIELD_DEFAULT;
     if (this._playerShieldFx?.setPoints) {
-      this._playerShieldFx.setPoints(PLAYER_SHIELD_DEFAULT);
+      this._playerShieldFx.setPoints(startingShield);
     } else {
-      this._playerShield = PLAYER_SHIELD_DEFAULT;
+      this._playerShield = startingShield;
       this.events.emit(EVENTS.SHIELD_CHANGED, {
         current: this._playerShield,
         max: PLAYER_SHIELD_MAX,
@@ -488,7 +505,7 @@ export class GameScene extends Phaser.Scene {
         this._player.body.enable = true;
       }
 
-      this._playerHp = PLAYER_HP_DEFAULT;
+      this._playerHp = this._startingPlayerHp ?? PLAYER_HP_DEFAULT;
       this.events.emit(EVENTS.HEALTH_CHANGED, {
         current: this._playerHp,
         max: PLAYER_HP_MAX,
@@ -910,6 +927,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   _showLevelCompleteCard() {
+    this._recordLevelCompletion();
     this._bg?.fadeToBlack?.(LEVEL_CLEAR_FADE_MS);
 
     this.add.text(WIDTH / 2, HEIGHT / 2, 'LEVEL COMPLETE', {
@@ -920,7 +938,18 @@ export class GameScene extends Phaser.Scene {
       fontSize: '18px', fill: '#ffffff', fontFamily: 'monospace',
     }).setOrigin(0.5).setDepth(20);
 
-    this.time.delayedCall(LEVEL_CLEAR_CARD_DELAY_MS, () => this.scene.start('MenuScene'));
+    this.time.delayedCall(LEVEL_CLEAR_CARD_DELAY_MS, () => this.scene.start('LevelTransitionScene', {
+      levelNumber: (this._levelIndex ?? 0) + 1,
+      runScore: RunState.score,
+      returnSceneKey: 'MenuScene',
+      continueLabel: 'BACK TO MENU',
+    }));
+  }
+
+  _recordLevelCompletion() {
+    if (this._levelCompletionRecorded) return;
+    this._levelCompletionRecorded = true;
+    MetaProgression.recordCompletedLevel(RunState.score);
   }
 
   // ── HUD ───────────────────────────────────────────────────────────────────

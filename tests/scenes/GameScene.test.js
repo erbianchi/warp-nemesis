@@ -6,6 +6,7 @@ installPhaserGlobal();
 
 const { GAME_CONFIG } = await import('../../config/game.config.js');
 const { RunState } = await import('../../systems/RunState.js');
+const { MetaProgression } = await import('../../systems/MetaProgression.js');
 const { EVENTS } = await import('../../config/events.config.js');
 const { resolveStats } = await import('../../systems/WaveSpawner.js');
 const { Skirm } = await import('../../entities/enemies/Skirm.js');
@@ -77,6 +78,25 @@ describe('GameScene create', () => {
       overlapCalls.some(([, target, callback]) => target === scene._bonuses.group && callback === scene._onPlayerCollectBonus),
       'player ship should overlap bonus pickups'
     );
+  });
+
+  it('applies permanent bought hp and shield bonuses when a new run starts', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+
+    const originalGetStartingBonuses = MetaProgression.getStartingBonuses;
+    MetaProgression.getStartingBonuses = () => ({ hp: 50, shield: 50 });
+
+    try {
+      scene.create();
+
+      assert.equal(scene._startingPlayerHp, 60);
+      assert.equal(scene._startingPlayerShield, 50);
+      assert.equal(scene._playerHp, 60);
+      assert.equal(scene._playerShield, 50);
+    } finally {
+      MetaProgression.getStartingBonuses = originalGetStartingBonuses;
+    }
   });
 
   it('keeps the spacecraft sprite at its configured size when rubber-band animation is idle', () => {
@@ -955,6 +975,8 @@ describe('GameScene level clear', () => {
     let stoppedFormations = 0;
     let destroyedEnemyBullets = 0;
     let removedEnemies = 0;
+    const recordedLevelScores = [];
+    let sceneStart = null;
 
     scene.tweens.add = (config) => {
       tweenCalls.push(config);
@@ -1005,31 +1027,60 @@ describe('GameScene level clear', () => {
     scene._eBullets = [{
       destroy: () => { destroyedEnemyBullets += 1; },
     }];
+    scene._levelIndex = 0;
+    scene.scene = {
+      start: (sceneKey, data) => {
+        sceneStart = { sceneKey, data };
+      },
+    };
     RunState.reset();
     RunState.score = 2450;
+    const originalRecordCompletedLevel = MetaProgression.recordCompletedLevel;
+    MetaProgression.recordCompletedLevel = (score) => {
+      recordedLevelScores.push(score);
+      return {
+        totalScore: score,
+        ownedBonuses: { hp: 0, shield: 0 },
+      };
+    };
 
-    scene._onLevelClear();
+    try {
+      scene._onLevelClear();
 
-    assert.equal(scene._levelClearing, true);
-    assert.equal(warpDuration, 1200);
-    assert.equal(scene._player.body.enable, false);
-    assert.equal(stoppedFormations, 1);
-    assert.equal(clearedBonuses, 1);
-    assert.equal(destroyedEnemyBullets, 1);
-    assert.equal(removedEnemies, 1);
-    assert.equal(tweenCalls.length, 1);
-    assert.equal(tweenCalls[0].targets, scene._player);
-    assert.ok(tweenCalls[0].y < 0, 'player exit tween should leave the top of the screen');
-    assert.equal(textCalls.length, 0, 'the level-complete card should wait until after the exit run-up');
+      assert.equal(scene._levelClearing, true);
+      assert.equal(warpDuration, 1200);
+      assert.equal(scene._player.body.enable, false);
+      assert.equal(stoppedFormations, 1);
+      assert.equal(clearedBonuses, 1);
+      assert.equal(destroyedEnemyBullets, 1);
+      assert.equal(removedEnemies, 1);
+      assert.equal(tweenCalls.length, 1);
+      assert.equal(tweenCalls[0].targets, scene._player);
+      assert.ok(tweenCalls[0].y < 0, 'player exit tween should leave the top of the screen');
+      assert.equal(textCalls.length, 0, 'the level-complete card should wait until after the exit run-up');
 
-    tweenCalls[0].onComplete();
-    assert.equal(scene._player.visible, false);
+      tweenCalls[0].onComplete();
+      assert.equal(scene._player.visible, false);
 
-    delayedCalls[0].cb();
-    assert.equal(fadeDuration, 600);
-    assert.equal(textCalls[0].value, 'LEVEL COMPLETE');
-    assert.equal(textCalls[1].value, 'SCORE  2450');
-    assert.equal(delayedCalls[1].delay, 4000);
+      delayedCalls[0].cb();
+      assert.equal(fadeDuration, 600);
+      assert.equal(textCalls[0].value, 'LEVEL COMPLETE');
+      assert.equal(textCalls[1].value, 'SCORE  2450');
+      assert.equal(delayedCalls[1].delay, 4000);
+      delayedCalls[1].cb();
+      assert.deepEqual(recordedLevelScores, [2450]);
+      assert.deepEqual(sceneStart, {
+        sceneKey: 'LevelTransitionScene',
+        data: {
+          levelNumber: 1,
+          runScore: 2450,
+          returnSceneKey: 'MenuScene',
+          continueLabel: 'BACK TO MENU',
+        },
+      });
+    } finally {
+      MetaProgression.recordCompletedLevel = originalRecordCompletedLevel;
+    }
   });
 });
 
@@ -1116,6 +1167,37 @@ describe('GameScene player death', () => {
     assert.equal(scene._respawning, true);
     assert.equal(livesText, '× 1');
     assert.ok(drawCalls >= 2, 'status bars should redraw after death and reset');
+  });
+
+  it('does not record the total score when the player loses the last life', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    let recordedLevelCompletions = 0;
+
+    scene._player = scene.add.image(180, 420, 'spacecraft1');
+    scene._player.body = { enable: true };
+    scene._formations = [];
+    scene._explode = () => {};
+    scene._resetPlayerHeat = () => {};
+    scene._resetPlayerBonuses = () => {};
+
+    const originalRecordCompletedLevel = MetaProgression.recordCompletedLevel;
+    MetaProgression.recordCompletedLevel = () => {
+      recordedLevelCompletions += 1;
+      return {
+        totalScore: RunState.score,
+        ownedBonuses: { hp: 0, shield: 0 },
+      };
+    };
+
+    try {
+      scene._killPlayer();
+      scene._killPlayer();
+
+      assert.equal(recordedLevelCompletions, 0);
+    } finally {
+      MetaProgression.recordCompletedLevel = originalRecordCompletedLevel;
+    }
   });
 });
 

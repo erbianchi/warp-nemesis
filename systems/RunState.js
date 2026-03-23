@@ -3,10 +3,10 @@
  * Reset at the start of every new run. */
 
 export const RunState = {
-  score:  0,
-  lives:  3,
-  level:  1,
-  kills:  0,
+  score: 0,
+  lives: 3,
+  level: 1,
+  kills: 0,
 
   /**
    * Add points to the running score.

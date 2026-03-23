@@ -177,12 +177,16 @@ export function createMockScene() {
       scaleX:         1,
       scaleY:         1,
       rotation:       0,
-      setInteractive: () => ({ on: () => {} }),
+      setInteractive: function() { this.interactive = true; return this; },
       setDepth:       function(v) { this.depth = v; return this; },
       setOrigin:      function() { return this; },
       setAlpha:       function(v) { this.alpha = v; return this; },
       setActive:      function(v) { this.active = v; return this; },
       setVisible:     function(v) { this.visible = v; return this; },
+      setFillStyle:   function(color, alpha = 1) {
+        this.fillStyle = { color, alpha };
+        return this;
+      },
       setTint:        function(v) { this.tint = v; return this; },
       clearTint:      function() { delete this.tint; return this; },
       setTexture:     function(v) { this.texture = v; return this; },
@@ -204,7 +208,11 @@ export function createMockScene() {
         return this;
       },
       setText:        function(v) { this.text = v; return this; },
-      on:             () => {},
+      on:             function(event, handler) {
+        this._events = this._events ?? {};
+        this._events[event] = handler;
+        return this;
+      },
       destroy:        function() { this.active = false; },
     };
     obj.preFX = {

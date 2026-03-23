@@ -6,6 +6,7 @@ import { GAME_CONFIG } from './config/game.config.js';
 import { BootScene }   from './scenes/BootScene.js';
 import { MenuScene }   from './scenes/MenuScene.js';
 import { GameScene }   from './scenes/GameScene.js';
+import { LevelTransitionScene } from './scenes/LevelTransitionScene.js';
 
 const { WIDTH, HEIGHT } = GAME_CONFIG;
 
@@ -27,5 +28,5 @@ const game = new Phaser.Game({
     arcade: { gravity: { y: 0 }, debug: false },
   },
 
-  scene: [BootScene, MenuScene, GameScene],
+  scene: [BootScene, MenuScene, GameScene, LevelTransitionScene],
 });
