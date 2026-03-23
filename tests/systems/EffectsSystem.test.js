@@ -8,6 +8,7 @@ const {
   EffectsSystem,
   composeFragmentVelocity,
   calcShockwavePush,
+  resolveEnemyExplosionSpec,
   resolveExplosionProfile,
 } = await import('../../systems/EffectsSystem.js');
 
@@ -53,6 +54,32 @@ describe('EffectsSystem', () => {
   it('plays the skirm explosion sound for skirm deaths', () => {
     effects.explodeForType(100, 100, 'skirm', 0, 0, [], []);
     assert.deepEqual(scene.soundCalls, ['explosionSkirm_000']);
+  });
+
+  it('uses the generic executor for mine deaths and keeps explosion audio', () => {
+    const spawnedWaves = [];
+    effects._spawnExplosionWave = (x, y, vx, vy, wave) => {
+      spawnedWaves.push(wave.shape);
+    };
+    effects._applyShockwave = () => {};
+
+    effects.explodeForType(100, 100, 'mine', 0, 0, [], []);
+
+    assert.deepEqual(spawnedWaves, ['radial', 'radial']);
+    assert.deepEqual(scene.soundCalls, ['explosionSkirm_000']);
+  });
+
+  it('resolves distinct blast specs for skirm, raptor, and mine', () => {
+    const skirm = resolveEnemyExplosionSpec('skirm', 180, 0);
+    const raptor = resolveEnemyExplosionSpec('raptor', 180, 0);
+    const mine = resolveEnemyExplosionSpec('mine', 180, 0);
+
+    assert.equal(skirm.waves.length, 1);
+    assert.deepEqual(skirm.waves.map((wave) => wave.shape), ['directional']);
+    assert.deepEqual(raptor.waves.map((wave) => wave.shape), ['directional', 'radial']);
+    assert.deepEqual(mine.waves.map((wave) => wave.shape), ['radial', 'radial']);
+    assert.ok(raptor.disruption.radius > skirm.disruption.radius);
+    assert.ok(mine.disruption.maxPush > skirm.disruption.maxPush);
   });
 
   it('can suppress the category explosion sound for placeholder blasts', () => {

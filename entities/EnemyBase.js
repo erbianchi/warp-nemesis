@@ -34,6 +34,7 @@ export class EnemyBase extends _BaseSprite {
    * @param {object} stats   - Resolved stats from WaveSpawner.resolveStats()
    * @param {number} stats.hp
    * @param {number} stats.damage
+   * @param {number} [stats.contactDamage]
    * @param {number} stats.speed
    * @param {number} stats.fireRate    - ms between shots (0 = no ranged attack)
    * @param {number} stats.score
@@ -66,6 +67,8 @@ export class EnemyBase extends _BaseSprite {
     /** @type {number} */
     this.damage = stats.damage;
     /** @type {number} */
+    this.contactDamage = stats.contactDamage ?? stats.damage;
+    /** @type {number} */
     this.speed = stats.speed;
     /** @type {number} */
     this.fireRate = stats.fireRate;
@@ -78,6 +81,8 @@ export class EnemyBase extends _BaseSprite {
 
     /** @type {boolean} */
     this.alive = true;
+    /** @type {boolean} */
+    this._destroyed = false;
 
     /** @type {number} - accumulated ms since last shot */
     this._fireCooldown = 0;
@@ -221,9 +226,24 @@ export class EnemyBase extends _BaseSprite {
   die(opts = {}) {
     if (!this.alive) return;
     this.alive = false;
-    this._shield.destroy();
     this.onDeath(opts);
     this.destroy();
+  }
+
+  /**
+   * Destroy shared enemy resources and Phaser state.
+   * Silent destroys (off-screen exits, scene cleanup) should call this directly.
+   * Death effects and score are emitted separately through die()/onDeath().
+   * @param {boolean} [fromScene]
+   * @returns {object|undefined}
+   */
+  destroy(fromScene) {
+    if (this._destroyed) return this;
+    this._destroyed = true;
+    this.alive = false;
+    this._shield?.destroy?.();
+    this.onDestroy(fromScene);
+    return super.destroy?.(fromScene);
   }
 
   // ── Overridable hooks ─────────────────────────────────────────────────
@@ -254,4 +274,11 @@ export class EnemyBase extends _BaseSprite {
       dropChance: this.dropChance,
     });
   }
+
+  /**
+   * Called during destroy() for shared subclass cleanup.
+   * Override when an enemy owns extra teardown beyond the base shield cleanup.
+   * @param {boolean} [fromScene]
+   */
+  onDestroy(fromScene) {}
 }

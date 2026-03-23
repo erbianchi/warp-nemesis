@@ -8,14 +8,14 @@ import { EVENTS } from '../config/events.config.js';
 
 /**
  * Resolves the final stats for a plane by compositing:
- *   hp/damage/score = base × level.difficultyBase × wave.difficultyFactor × plane.modifier
- *   speed           = base × plane.speedModifier  (NOT difficulty-scaled)
+ *   hp/damage/contactDamage/score = base × level.difficultyBase × wave.difficultyFactor × plane.modifier
+ *   speed                         = base × plane.speedModifier  (NOT difficulty-scaled)
  *
  * @param {string} type             - Key in ENEMIES config
  * @param {number} difficultyBase   - Level multiplier
  * @param {number} difficultyFactor - Wave multiplier
  * @param {object} planeOverrides   - { preset?, hpModifier?, damageModifier?, speedModifier?, fireRateModifier?, shieldModifier? }
- * @returns {{ hp, damage, speed, fireRate, score, dropChance, bulletSpeed, shield }}
+ * @returns {{ hp: number, damage: number, contactDamage?: number, speed: number, fireRate: number, score: number, dropChance: number, bulletSpeed: number, shield: number }}
  */
 export function resolveStats(type, difficultyBase, difficultyFactor, planeOverrides = {}) {
   const base = ENEMIES[type];
@@ -35,6 +35,9 @@ export function resolveStats(type, difficultyBase, difficultyFactor, planeOverri
   return {
     hp:          Math.round(base.hp         * difficulty * hpMod),
     damage:      Math.round(base.damage     * difficulty * damageMod),
+    contactDamage: base.contactDamage == null
+      ? undefined
+      : Math.round(base.contactDamage * difficulty * damageMod),
     speed:       Math.round(base.speed      * speedMod),
     fireRate:    Math.round(base.fireRate   / fireRateMod),
     score:       Math.round(base.score      * difficulty),

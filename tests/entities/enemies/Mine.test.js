@@ -45,8 +45,8 @@ describe('Mine', () => {
       assert.ok('mine' in ENEMIES);
     });
 
-    it('base contact damage is 150', () => {
-      assert.equal(ENEMIES.mine.damage, 150);
+    it('base contact damage is 200', () => {
+      assert.equal(ENEMIES.mine.contactDamage, 200);
     });
 
     it('base hp is 500', () => {
@@ -54,6 +54,7 @@ describe('Mine', () => {
     });
 
     it('has no ranged fire by default', () => {
+      assert.equal(ENEMIES.mine.damage, 0);
       assert.equal(ENEMIES.mine.fireRate, 0);
       assert.equal(ENEMIES.mine.bulletSpeed, 0);
     });
@@ -71,6 +72,7 @@ describe('Mine', () => {
       assert.equal(mine.maxHp, BASE_STATS.hp);
       assert.equal(mine.shield, 0);
       assert.equal(mine.maxShield, 400);
+      assert.equal(mine.contactDamage, BASE_STATS.contactDamage);
       assert.equal(mine.displayWidth, 28);
       assert.equal(mine.displayHeight, 28);
     });
@@ -118,6 +120,15 @@ describe('Mine', () => {
       const { mine, getGravityWellDestroyCount } = makeMine();
 
       mine.die();
+
+      assert.equal(mine.alive, false);
+      assert.equal(getGravityWellDestroyCount(), 1);
+    });
+
+    it('destroys the gravity field when the mine is directly destroyed', () => {
+      const { mine, getGravityWellDestroyCount } = makeMine();
+
+      mine.destroy();
 
       assert.equal(mine.alive, false);
       assert.equal(getGravityWellDestroyCount(), 1);

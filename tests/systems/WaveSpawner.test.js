@@ -89,6 +89,12 @@ describe('resolveStats', () => {
     assert.equal(resolveStats('skirm', 1.0, 1.0, { damageModifier: 1.2 }).damage, 12);
     assert.equal(resolveStats('skirm', 1.0, 1.0, { damageModifier: 0.8 }).damage,  8);
   });
+
+  it('keeps mine contact damage separate from ranged damage', () => {
+    const stats = resolveStats('mine', 1.0, 1.0, {});
+    assert.equal(stats.damage, 0);
+    assert.equal(stats.contactDamage, 200);
+  });
 });
 
 // ─── resolveFormationPositions ────────────────────────────────────────────────

@@ -644,7 +644,7 @@ export class GameScene extends Phaser.Scene {
 
   _onEnemyTouchPlayer(player, enemy) {
     if (!enemy.alive) return;
-    const dmg = enemy.damage ?? 10;
+    const dmg = enemy.contactDamage ?? enemy.damage ?? 10;
     enemy.die();
     this._onPlayerHit(dmg);
   }

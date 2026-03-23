@@ -21,6 +21,7 @@ const TEST_STATS = {
 class TestEnemy extends EnemyBase {
   constructor(scene, x = 100, y = 100, stats = TEST_STATS) {
     super(scene, x, y, 'test_enemy', stats, 'straight');
+    this.destroyHookCalls = 0;
   }
 
   setupMovement() {
@@ -30,6 +31,10 @@ class TestEnemy extends EnemyBase {
   setupWeapon() {}
 
   fire() {}
+
+  onDestroy() {
+    this.destroyHookCalls += 1;
+  }
 }
 
 describe('EnemyBase', () => {
@@ -76,6 +81,21 @@ describe('EnemyBase', () => {
     enemy.takeDamage(6);
     assert.equal(enemy.shield, 0);
     assert.equal(enemy.hp, 9);
+  });
+
+  it('keeps a dedicated contact damage value when one is provided', () => {
+    enemy = new TestEnemy(scene, 100, 100, { ...TEST_STATS, damage: 5, contactDamage: 12 });
+
+    assert.equal(enemy.damage, 5);
+    assert.equal(enemy.contactDamage, 12);
+  });
+
+  it('runs shared destroy cleanup only once even if destroy is called repeatedly', () => {
+    enemy.destroy();
+    enemy.destroy();
+
+    assert.equal(enemy.alive, false);
+    assert.equal(enemy.destroyHookCalls, 1);
   });
 
   it('can die from shield overflow once the remaining damage reaches hp', () => {

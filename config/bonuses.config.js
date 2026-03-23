@@ -1,6 +1,8 @@
 /** @module bonuses.config
  * Bonus pickup definitions. */
 
+import { WEAPONS } from './weapons.config.js';
+
 export const BONUS_TYPES = Object.freeze({
   EXTRA_LIFE:     'extraLife',
   HEALTH_50:      'health50',
@@ -36,6 +38,12 @@ export const BONUS_EFFECT_VALUES = Object.freeze({
     multiplier: 2,
   }),
 });
+
+function resolveWeaponBonusLabel(weaponKey) {
+  const weapon = WEAPONS[weaponKey];
+  if (!weapon?.name) throw new Error(`bonuses.config: unknown weapon bonus label for "${weaponKey}"`);
+  return weapon.name;
+}
 
 export const BONUSES = Object.freeze({
   [BONUS_TYPES.EXTRA_LIFE]: {
@@ -87,7 +95,7 @@ export const BONUSES = Object.freeze({
   },
   [BONUS_TYPES.LASER_POWER_2X]: {
     key:         BONUS_TYPES.LASER_POWER_2X,
-    label:       'Laser x2',
+    label:       `${resolveWeaponBonusLabel('laser')} x${BONUS_EFFECT_VALUES.LASER_POWER_2X.multiplier}`,
     kind:        'laserPower',
     value:       BONUS_EFFECT_VALUES.LASER_POWER_2X.multiplier,
     multiplier:  BONUS_EFFECT_VALUES.LASER_POWER_2X.multiplier,
@@ -97,7 +105,7 @@ export const BONUSES = Object.freeze({
   },
   [BONUS_TYPES.T_LASER]: {
     key:         BONUS_TYPES.T_LASER,
-    label:       'T-Laser',
+    label:       resolveWeaponBonusLabel('tLaser'),
     kind:        'newWeapon',
     value:       1,
     weaponKey:   'tLaser',
@@ -107,7 +115,7 @@ export const BONUSES = Object.freeze({
   },
   [BONUS_TYPES.Y_LASER]: {
     key:         BONUS_TYPES.Y_LASER,
-    label:       'Y-Laser',
+    label:       resolveWeaponBonusLabel('yLaser'),
     kind:        'newWeapon',
     value:       1,
     weaponKey:   'yLaser',

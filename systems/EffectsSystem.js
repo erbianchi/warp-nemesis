@@ -13,9 +13,15 @@ const PUSH_RADIUS        = 120;
 const MAX_PUSH           = 280;
 const DIRECTIONAL_SPEED_MIN = 40;
 const DIRECTIONAL_SPEED_MAX = 320;
-const TINTS = [0xff5500, 0xff6600, 0xff8800, 0xff9900, 0xffbb00, 0xffcc00, 0xffffff, 0xffee88];
+const SKIRM_TINTS = [0xff5500, 0xff6600, 0xff8800, 0xff9900, 0xffbb00, 0xffcc00, 0xffffff, 0xffee88];
+const RAPTOR_TINTS = [0x4ab8ff, 0x7fd5ff, 0xa3ecff, 0xffffff, 0xffdd88];
+const MINE_TINTS = [0xfff4c2, 0xffdd88, 0xffaa33, 0xff7a18, 0xff4400, 0xffffff];
+const DEFAULT_EXPLOSION_SOUND_KEY = 'explosionSkirm_000';
 const EXPLOSION_SOUND_KEYS = Object.freeze({
-  skirm: 'explosionSkirm_000',
+  default: DEFAULT_EXPLOSION_SOUND_KEY,
+  skirm: DEFAULT_EXPLOSION_SOUND_KEY,
+  raptor: DEFAULT_EXPLOSION_SOUND_KEY,
+  mine: DEFAULT_EXPLOSION_SOUND_KEY,
 });
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -76,9 +82,10 @@ export function composeFragmentVelocity(carrierVx, carrierVy, blastAngle, blastS
  * @param {number} targetY
  * @param {number} carrierVx
  * @param {number} carrierVy
+ * @param {{radius?: number, maxPush?: number, carryRatio?: number}} [opts]
  * @returns {{vx: number, vy: number, alignment: number, effectiveRadius: number}|null}
  */
-export function calcShockwavePush(originX, originY, targetX, targetY, carrierVx = 0, carrierVy = 0) {
+export function calcShockwavePush(originX, originY, targetX, targetY, carrierVx = 0, carrierVy = 0, opts = {}) {
   const dx   = targetX - originX;
   const dy   = targetY - originY;
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -87,11 +94,14 @@ export function calcShockwavePush(originX, originY, targetX, targetY, carrierVx 
   const nx = dx / dist;
   const ny = dy / dist;
   const { speed, hasDir, motionFactor, dirX, dirY } = resolveMotionProfile(carrierVx, carrierVy);
+  const baseRadius = opts.radius ?? PUSH_RADIUS;
+  const maxPush = opts.maxPush ?? MAX_PUSH;
+  const carryRatio = opts.carryRatio ?? 0.18;
   const alignment = hasDir ? nx * dirX + ny * dirY : 0;
   const radiusScale = hasDir
     ? clamp(1 + alignment * 0.4 * motionFactor, 0.7, 1.4)
     : 1;
-  const effectiveRadius = PUSH_RADIUS * radiusScale;
+  const effectiveRadius = baseRadius * radiusScale;
 
   if (dist >= effectiveRadius) return null;
 
@@ -99,8 +109,8 @@ export function calcShockwavePush(originX, originY, targetX, targetY, carrierVx 
     ? clamp(1 + alignment * 0.3 * motionFactor, 0.75, 1.35)
     : 1;
   const falloff = 1 - dist / effectiveRadius;
-  const carry = hasDir ? speed * 0.18 * motionFactor * falloff : 0;
-  const force = MAX_PUSH * falloff * forceScale;
+  const carry = hasDir ? speed * carryRatio * motionFactor * falloff : 0;
+  const force = maxPush * falloff * forceScale;
 
   return {
     vx: nx * force + dirX * carry,
@@ -127,6 +137,133 @@ export function resolveExplosionProfile(vx = 0, vy = 0) {
     count: Math.round(clamp(18 + motion.speed / 10, 18, 42)),
     fragmentSize: 3 + motion.motionFactor * 1.4,
     fragmentLife: Math.round(470 + motion.motionFactor * 110),
+  };
+}
+
+/**
+ * Resolve the generic explosion spec for an enemy type.
+ * Each type can express a different debris pattern while still flowing through
+ * the same explosion executor and nearby disruption-wave logic.
+ * @param {string} type
+ * @param {number} [vx=0]
+ * @param {number} [vy=0]
+ * @returns {{waves: Array<object>, disruption: {radius: number, maxPush: number, carryRatio?: number}}}
+ */
+export function resolveEnemyExplosionSpec(type, vx = 0, vy = 0) {
+  switch (type) {
+    case 'mine':
+      return resolveMineExplosionSpec();
+    case 'raptor':
+      return resolveRaptorExplosionSpec(vx, vy);
+    case 'skirm':
+    default:
+      return resolveSkirmExplosionSpec(vx, vy);
+  }
+}
+
+function resolveSkirmExplosionSpec(vx = 0, vy = 0) {
+  const profile = resolveExplosionProfile(vx, vy);
+  return {
+    waves: [
+      {
+        shape: 'directional',
+        countMin: profile.count,
+        countMax: profile.count,
+        spreadRad: profile.spreadRad,
+        speedMin: profile.launchSpeed * 0.82,
+        speedMax: profile.launchSpeed,
+        sizeMin: profile.fragmentSize * 0.85,
+        sizeMax: profile.fragmentSize * 1.15,
+        lifeMin: Math.round(profile.fragmentLife * 0.92),
+        lifeMax: Math.round(profile.fragmentLife * 1.06),
+        tints: SKIRM_TINTS,
+        inheritCarrierScale: 1,
+      },
+    ],
+    disruption: {
+      radius: PUSH_RADIUS,
+      maxPush: MAX_PUSH,
+    },
+  };
+}
+
+function resolveMineExplosionSpec() {
+  return {
+    waves: [
+      {
+        shape: 'radial',
+        countMin: 18,
+        countMax: 26,
+        speedMin: 170,
+        speedMax: 310,
+        sizeMin: 4.8,
+        sizeMax: 8.2,
+        lifeMin: 420,
+        lifeMax: 700,
+        tints: MINE_TINTS,
+        inheritCarrierScale: 0.3,
+      },
+      {
+        shape: 'radial',
+        countMin: 10,
+        countMax: 16,
+        speedMin: 40,
+        speedMax: 130,
+        sizeMin: 7.5,
+        sizeMax: 12.5,
+        lifeMin: 520,
+        lifeMax: 900,
+        tints: MINE_TINTS,
+        inheritCarrierScale: 0,
+      },
+    ],
+    disruption: {
+      radius: 136,
+      maxPush: Math.round(MAX_PUSH * 1.12),
+      carryRatio: 0.14,
+    },
+  };
+}
+
+function resolveRaptorExplosionSpec(vx = 0, vy = 0) {
+  const motion = resolveMotionProfile(vx, vy);
+  const speedBase = clamp(180 + motion.speed * 0.22, 180, 340);
+
+  return {
+    waves: [
+      {
+        shape: 'directional',
+        countMin: Math.round(clamp(24 + motion.speed / 9, 24, 46)),
+        countMax: Math.round(clamp(28 + motion.speed / 8, 28, 50)),
+        spreadRad: motion.hasDir ? lerp(2.4, 0.95, motion.motionFactor) : Math.PI,
+        speedMin: speedBase * 0.78,
+        speedMax: speedBase * 1.06,
+        sizeMin: 4.5,
+        sizeMax: 7.8,
+        lifeMin: 440,
+        lifeMax: 760,
+        tints: RAPTOR_TINTS,
+        inheritCarrierScale: 1,
+      },
+      {
+        shape: 'radial',
+        countMin: 12,
+        countMax: 18,
+        speedMin: 60,
+        speedMax: 170,
+        sizeMin: 6.4,
+        sizeMax: 11.4,
+        lifeMin: 560,
+        lifeMax: 920,
+        tints: RAPTOR_TINTS,
+        inheritCarrierScale: 0.25,
+      },
+    ],
+    disruption: {
+      radius: 148,
+      maxPush: Math.round(MAX_PUSH * 1.18),
+      carryRatio: 0.22,
+    },
   };
 }
 
@@ -383,13 +520,8 @@ export class EffectsSystem {
    */
   explodeForType(x, y, type, vx = 0, vy = 0, enemies = [], enemyBullets = [], opts = {}) {
     if (opts.playSound !== false) this._playExplosionSound(type);
-
-    switch (type) {
-      case 'skirm':
-      default:
-        this._explodeSkirm(x, y, vx, vy, enemies, enemyBullets);
-        break;
-    }
+    const spec = resolveEnemyExplosionSpec(type, vx, vy);
+    this._explodeWithSpec(x, y, vx, vy, enemies, enemyBullets, spec);
   }
 
   /**
@@ -397,46 +529,55 @@ export class EffectsSystem {
    * @param {string} type
    */
   _playExplosionSound(type) {
-    const soundKey = EXPLOSION_SOUND_KEYS[type];
+    const soundKey = EXPLOSION_SOUND_KEYS[type] ?? EXPLOSION_SOUND_KEYS.default;
     if (!soundKey) return;
     this._scene.sound?.play(soundKey);
   }
 
   /**
-   * Skirm explosion — pooled particle fragments with a radial shockwave.
-   * The blast direction follows the dead ship's travel vector.
+   * Execute a resolved enemy blast spec.
    * @param {number} x
    * @param {number} y
    * @param {number} vx
    * @param {number} vy
    * @param {Array<object>} enemies
    * @param {Array<object>} enemyBullets
+   * @param {{waves: Array<object>, disruption: {radius: number, maxPush: number, carryRatio?: number}}} spec
    */
-  _explodeSkirm(x, y, vx, vy, enemies, enemyBullets) {
-    const profile = resolveExplosionProfile(vx, vy);
-
-    for (let i = 0; i < profile.count; i++) {
-      const angle = profile.motion.hasDir
-        ? profile.motion.dirRad + Phaser.Math.FloatBetween(-profile.spreadRad, profile.spreadRad)
-        : Phaser.Math.FloatBetween(-Math.PI, Math.PI);
-      const mag   = Phaser.Math.FloatBetween(profile.launchSpeed * 0.82, profile.launchSpeed);
-      const fragVel = composeFragmentVelocity(vx, vy, angle, mag);
-      const size  = profile.fragmentSize * Phaser.Math.FloatBetween(0.85, 1.15);
-      const life  = Math.round(profile.fragmentLife * Phaser.Math.FloatBetween(0.92, 1.06));
-      const tint  = TINTS[Phaser.Math.Between(0, TINTS.length - 1)];
-
-      this._spawnFragment(
-        x,
-        y,
-        fragVel.vx,
-        fragVel.vy,
-        size,
-        tint,
-        life
-      );
+  _explodeWithSpec(x, y, vx, vy, enemies, enemyBullets, spec) {
+    for (const wave of spec?.waves ?? []) {
+      this._spawnExplosionWave(x, y, vx, vy, wave);
     }
 
-    this._applyShockwave(x, y, vx, vy, enemies, enemyBullets);
+    this._applyShockwave(x, y, vx, vy, enemies, enemyBullets, spec?.disruption);
+  }
+
+  /**
+   * Spawn one explosion debris wave from a resolved spec.
+   * @param {number} x
+   * @param {number} y
+   * @param {number} vx
+   * @param {number} vy
+   * @param {object} wave
+   */
+  _spawnExplosionWave(x, y, vx, vy, wave) {
+    const motion = resolveMotionProfile(vx, vy);
+    const count = Phaser.Math.Between(wave.countMin ?? 0, wave.countMax ?? wave.countMin ?? 0);
+    const carrierVx = vx * (wave.inheritCarrierScale ?? 1);
+    const carrierVy = vy * (wave.inheritCarrierScale ?? 1);
+
+    for (let i = 0; i < count; i++) {
+      const angle = wave.shape === 'directional' && motion.hasDir
+        ? motion.dirRad + Phaser.Math.FloatBetween(-(wave.spreadRad ?? Math.PI), wave.spreadRad ?? Math.PI)
+        : Phaser.Math.FloatBetween(-Math.PI, Math.PI);
+      const blastSpeed = Phaser.Math.FloatBetween(wave.speedMin ?? 0, wave.speedMax ?? wave.speedMin ?? 0);
+      const fragVel = composeFragmentVelocity(carrierVx, carrierVy, angle, blastSpeed);
+      const size = Phaser.Math.FloatBetween(wave.sizeMin ?? 1, wave.sizeMax ?? wave.sizeMin ?? 1);
+      const life = Phaser.Math.Between(wave.lifeMin ?? 300, wave.lifeMax ?? wave.lifeMin ?? 300);
+      const tint = wave.tints?.[Phaser.Math.Between(0, Math.max(0, (wave.tints?.length ?? 1) - 1))] ?? 0xffffff;
+
+      this._spawnFragment(x, y, fragVel.vx, fragVel.vy, size, tint, life);
+    }
   }
 
   /**
@@ -509,17 +650,20 @@ export class EffectsSystem {
    * @param {number} y
    * @param {Array<object>} enemies
    * @param {Array<object>} enemyBullets
+   * @param {{radius?: number, maxPush?: number, carryRatio?: number}} [opts]
    */
-  _applyShockwave(x, y, vx, vy, enemies, enemyBullets) {
+  _applyShockwave(x, y, vx, vy, enemies, enemyBullets, opts = {}) {
     for (const enemy of enemies) {
       if (!enemy?.alive || typeof enemy.applyPush !== 'function') continue;
-      const push = calcShockwavePush(x, y, enemy.x, enemy.y, vx, vy);
-      if (push) enemy.applyPush(push.vx, push.vy);
+      const push = calcShockwavePush(x, y, enemy.x, enemy.y, vx, vy, opts);
+      if (push) {
+        enemy.applyPush(push.vx, push.vy);
+      }
     }
 
     for (const bullet of enemyBullets) {
       if (!bullet?.active) continue;
-      const push = calcShockwavePush(x, y, bullet.x, bullet.y, vx, vy);
+      const push = calcShockwavePush(x, y, bullet.x, bullet.y, vx, vy, opts);
       if (push) {
         bullet._pushVx = (bullet._pushVx ?? 0) + push.vx;
         bullet._pushVy = (bullet._pushVy ?? 0) + push.vy;

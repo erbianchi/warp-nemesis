@@ -8,6 +8,7 @@ const { GAME_CONFIG } = await import('../../config/game.config.js');
 const { RunState } = await import('../../systems/RunState.js');
 const { MetaProgression } = await import('../../systems/MetaProgression.js');
 const { EVENTS } = await import('../../config/events.config.js');
+const { EffectsSystem } = await import('../../systems/EffectsSystem.js');
 const { resolveStats } = await import('../../systems/WaveSpawner.js');
 const { Skirm } = await import('../../entities/enemies/Skirm.js');
 const { Mine } = await import('../../entities/enemies/Mine.js');
@@ -653,21 +654,52 @@ describe('GameScene enemy spawning', () => {
     assert.equal(scene._enemies[0]._spawnWaveId, 3);
   });
 
-  it('routes mine collision damage through the shared enemy-touch path', () => {
+  it('prefers enemy-specific contact damage in the shared enemy-touch path', () => {
     const scene = new GameScene();
     let playerDamage = 0;
     let died = false;
     const mine = {
       alive: true,
-      damage: 150,
+      damage: 10,
+      contactDamage: 200,
       die: () => { died = true; },
     };
 
     scene._onPlayerHit = (damage) => { playerDamage = damage; };
     scene._onEnemyTouchPlayer(scene._player, mine);
 
-    assert.equal(playerDamage, 150);
+    assert.equal(playerDamage, 200);
     assert.equal(died, true);
+  });
+
+  it('colliding with a real Mine damages the player and triggers the mine blast route', () => {
+    RunState.reset();
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    let playerDamage = 0;
+    const blastTypes = [];
+
+    scene._player = { x: 220, y: 520, active: true };
+    scene._effects = {
+      createGravityWell: () => ({ update: () => {}, destroy: () => {} }),
+    };
+    scene._animateScore = () => {};
+    scene._explodeForType = (x, y, type) => {
+      blastTypes.push(type);
+    };
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_DIED) scene._onEnemyDied(data);
+    };
+    scene._onPlayerHit = (damage) => {
+      playerDamage = damage;
+    };
+
+    const mine = new Mine(scene, 180, 220, MINE_STATS, 'creep_drop');
+    scene._onEnemyTouchPlayer(scene._player, mine);
+
+    assert.equal(playerDamage, MINE_STATS.contactDamage);
+    assert.equal(mine.alive, false);
+    assert.deepEqual(blastTypes, ['mine']);
   });
 
   it('does not silently cull a persistent enemy when it drifts beyond the normal bounds', () => {
@@ -941,6 +973,39 @@ describe('GameScene enemy score awards', () => {
 
     assert.equal(scene._displayedScore, 27.9);
     assert.equal(scoreText, 'SCORE  27');
+  });
+
+  it('pushes a nearby skirm aside when another skirm explodes', () => {
+    RunState.reset();
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._effects = new EffectsSystem(scene, { fragmentPoolSize: 4 });
+    scene._bonuses = { spawnRandomDrop: () => {} };
+    scene._animateScore = () => {};
+    scene._eBullets = [];
+    scene._enemyGroup = { add: () => {}, remove: () => {} };
+    scene._player = { x: 220, y: 520, active: true };
+
+    const dyingSkirm = new Skirm(scene, 100, 100, SKIRM_STATS, 'straight');
+    const nearbySkirm = new Skirm(scene, 112, 100, SKIRM_STATS, 'straight');
+    scene._enemies = [dyingSkirm, nearbySkirm];
+
+    const startX = nearbySkirm.x;
+    scene._onEnemyDied({
+      x: dyingSkirm.x,
+      y: dyingSkirm.y,
+      type: 'skirm',
+      vx: 0,
+      vy: 0,
+      score: 0,
+      dropChance: 0,
+    });
+
+    assert.ok(nearbySkirm._pushVx > 0, `expected positive blast push, got ${nearbySkirm._pushVx}`);
+
+    nearbySkirm.update(16);
+
+    assert.ok(nearbySkirm.x > startX, 'nearby skirm should be displaced away from the blast');
   });
 });
 
@@ -1259,7 +1324,7 @@ describe('GameScene player shield and bonuses', () => {
       key: 'tLaser',
       kind: 'newWeapon',
       value: 1,
-      label: 'T-Laser',
+      label: 'T-LASER',
       weaponKey: 'tLaser',
       pending: false,
     });
@@ -1272,7 +1337,7 @@ describe('GameScene player shield and bonuses', () => {
         key: 'tLaser',
         kind: 'newWeapon',
         value: 1,
-        label: 'T-Laser',
+        label: 'T-LASER',
         weaponKey: 'tLaser',
         pending: false,
         slot: 0,
@@ -1345,7 +1410,7 @@ describe('GameScene player shield and bonuses', () => {
       kind: 'laserPower',
       value: 2,
       multiplier: 2,
-      label: 'Laser x2',
+      label: 'LASER x2',
       pending: false,
     });
 
@@ -1357,7 +1422,7 @@ describe('GameScene player shield and bonuses', () => {
         kind: 'laserPower',
         value: 2,
         multiplier: 2,
-        label: 'Laser x2',
+        label: 'LASER x2',
         pending: false,
         slot: 0,
         totalMultiplier: 4,
@@ -1546,6 +1611,32 @@ describe('GameScene player shield and bonuses', () => {
         scaleTo: 1.08,
       },
     ]);
+  });
+
+  it('shows the synced weapon pickup name when the player collects T-Laser or Y-Laser', () => {
+    const scene = new GameScene();
+    const effectLabels = [];
+    scene._player = { x: 140, y: 560 };
+    scene._applyBonusEffect = () => {};
+    scene._effects = {
+      showDamageNumber: (...args) => {
+        effectLabels.push(args[2]);
+      },
+    };
+    scene.sound = { play: () => {} };
+
+    const payloads = [
+      { key: 'tLaser', label: 'T-LASER', kind: 'newWeapon', value: 1, pickupSound: 'forceField_001' },
+      { key: 'yLaser', label: 'Y-LASER', kind: 'newWeapon', value: 1, pickupSound: 'forceField_001' },
+    ];
+    scene._bonuses = {
+      collectBonus: () => payloads.shift() ?? null,
+    };
+
+    scene._onPlayerCollectBonus({}, { x: 90, y: 120 });
+    scene._onPlayerCollectBonus({}, { x: 90, y: 120 });
+
+    assert.deepEqual(effectLabels, ['T-LASER', 'Y-LASER']);
   });
 
   it('lets player bullets break a bonus shield before the player collects the pickup', () => {

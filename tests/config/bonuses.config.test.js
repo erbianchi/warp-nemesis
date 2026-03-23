@@ -8,6 +8,7 @@ import {
   BONUS_SHIELD_ROLL,
   BONUS_TYPES,
 } from '../../config/bonuses.config.js';
+import { WEAPONS } from '../../config/weapons.config.js';
 
 describe('BONUSES', () => {
   it('defines the expected pickup types', () => {
@@ -78,10 +79,10 @@ describe('BONUSES', () => {
   it('defines concrete slot-1 weapon pickups with explicit weapon keys', () => {
     assert.equal(BONUSES.tLaser.kind, 'newWeapon');
     assert.equal(BONUSES.tLaser.weaponKey, 'tLaser');
-    assert.equal(BONUSES.tLaser.label, 'T-Laser');
+    assert.equal(BONUSES.tLaser.label, WEAPONS.tLaser.name);
     assert.equal(BONUSES.yLaser.kind, 'newWeapon');
     assert.equal(BONUSES.yLaser.weaponKey, 'yLaser');
-    assert.equal(BONUSES.yLaser.label, 'Y-Laser');
+    assert.equal(BONUSES.yLaser.label, WEAPONS.yLaser.name);
   });
 
   it('defines the timed cooling boost in readable config values', () => {
@@ -96,6 +97,6 @@ describe('BONUSES', () => {
     assert.equal(BONUS_EFFECT_VALUES.LASER_POWER_2X.multiplier, 2);
     assert.equal(BONUSES.laserPower2x.kind, 'laserPower');
     assert.equal(BONUSES.laserPower2x.multiplier, BONUS_EFFECT_VALUES.LASER_POWER_2X.multiplier);
-    assert.equal(BONUSES.laserPower2x.label, 'Laser x2');
+    assert.equal(BONUSES.laserPower2x.label, `${WEAPONS.laser.name} x2`);
   });
 });

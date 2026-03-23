@@ -170,10 +170,30 @@ describe('BonusSystem', () => {
       key: 'tLaser',
       kind: 'newWeapon',
       value: 1,
-      label: 'T-Laser',
+      label: 'T-LASER',
       pickupSound: 'forceField_001',
       pending: false,
       weaponKey: 'tLaser',
+      x: 100,
+      y: 80,
+    });
+  });
+
+  it('keeps Y-Laser bonus payloads synced to the weapon config name', () => {
+    const bonus = bonusSystem.spawnBonus('yLaser', 100, 80, {
+      shieldRoll: { chance: 0 },
+    });
+
+    const payload = bonusSystem.collectBonus(bonus);
+
+    assert.deepEqual(payload, {
+      key: 'yLaser',
+      kind: 'newWeapon',
+      value: 1,
+      label: 'Y-LASER',
+      pickupSound: 'forceField_001',
+      pending: false,
+      weaponKey: 'yLaser',
       x: 100,
       y: 80,
     });
@@ -211,7 +231,7 @@ describe('BonusSystem', () => {
       key: 'laserPower2x',
       kind: 'laserPower',
       value: 2,
-      label: 'Laser x2',
+      label: 'LASER x2',
       pickupSound: 'forceField_001',
       pending: false,
       multiplier: 2,

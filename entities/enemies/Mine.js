@@ -57,15 +57,12 @@ export class Mine extends EnemyBase {
   }
 
   onDeath(opts = {}) {
-    this._gravityWell?.destroy?.();
-    this._gravityWell = null;
     super.onDeath(opts);
   }
 
-  destroy(fromScene) {
+  onDestroy(fromScene) {
     this._gravityWell?.destroy?.();
     this._gravityWell = null;
-    return super.destroy?.(fromScene);
   }
 
   _advanceFlight(delta) {
