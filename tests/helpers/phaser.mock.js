@@ -44,6 +44,10 @@ export function installPhaserGlobal() {
     setTint(v)       { this.tint = v; return this; }
     clearTint()      { delete this.tint; return this; }
     setTexture(v)    { this.texture = v; return this; }
+    setCrop(x, y, width, height) {
+      this.crop = { x, y, width, height };
+      return this;
+    }
     setRotation(v)   { this.rotation = v; return this; }
     setScale(x, y = x) {
       this.scaleX = x;
@@ -190,6 +194,10 @@ export function createMockScene() {
       setTint:        function(v) { this.tint = v; return this; },
       clearTint:      function() { delete this.tint; return this; },
       setTexture:     function(v) { this.texture = v; return this; },
+      setCrop:        function(x, y, width, height) {
+        this.crop = { x, y, width, height };
+        return this;
+      },
       setRotation:    function(v) { this.rotation = v; return this; },
       setScale:       function(x, y = x) {
         this.scaleX = x;

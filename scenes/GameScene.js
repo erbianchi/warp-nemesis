@@ -36,6 +36,20 @@ const PLAYER_WARNING_BULLET_WIDTH = 11;
 const PLAYER_BULLET_HEIGHT = 16;
 const ENEMY_BULLET_WIDTH = 3;
 const ENEMY_BULLET_HEIGHT = 10;
+const PLAYER_VISUAL_DEPTH = 10;
+const PLAYER_PARALLAX_LERP = 10;
+const PLAYER_TEXTURE_WIDTH = 137;
+const PLAYER_TEXTURE_HEIGHT = 117;
+const PLAYER_FRONT_CROP_Y = 0;
+const PLAYER_FRONT_CROP_HEIGHT = 44;
+const PLAYER_CORE_CROP_Y = 37;
+const PLAYER_CORE_CROP_HEIGHT = 47;
+const PLAYER_REAR_CROP_Y = 72;
+const PLAYER_REAR_CROP_HEIGHT = 45;
+const PLAYER_PARALLAX_REAR_SHIFT_X = 3.8;
+const PLAYER_PARALLAX_FRONT_SHIFT_X = 0.55;
+const PLAYER_PARALLAX_REAR_SHIFT_Y = 0.6;
+const PLAYER_PARALLAX_FRONT_SHIFT_Y = 1.5;
 const DEBUG_END_DELAY_MS = 250;
 const LEVEL_CLEAR_EXIT_MS = 1200;
 const LEVEL_CLEAR_FADE_MS = 600;
@@ -224,6 +238,7 @@ export class GameScene extends Phaser.Scene {
     this._bg.update(delta);
     if (this._levelClearing) return;
     this._movePlayer();
+    this._updatePlayerParallax(delta);
     this._updateRubberBand(delta);
     this._updateTimedBonuses(time);
     const wantsToFire = this._space.isDown;
@@ -308,14 +323,38 @@ export class GameScene extends Phaser.Scene {
   // ── Player ────────────────────────────────────────────────────────────────
 
   _createPlayer() {
+    this._playerShadow = this.add.image(WIDTH / 2, HEIGHT - 80, 'spacecraft1');
+    this._playerShadow.setOrigin?.(0.5, 0.5);
+    this._playerShadow.setDepth?.(PLAYER_VISUAL_DEPTH - 1);
+    this._playerShadow.setTint?.(0x6b7ea6);
+    this._playerShadow.setAlpha?.(0.92);
+    this._playerShadow.setCrop?.(0, PLAYER_REAR_CROP_Y, PLAYER_TEXTURE_WIDTH, PLAYER_REAR_CROP_HEIGHT);
+
     const p = this.add.image(WIDTH / 2, HEIGHT - 80, 'spacecraft1');
     p.setOrigin?.(0.5, 0.5);
+    p.setDepth?.(PLAYER_VISUAL_DEPTH);
     p._baseDisplayWidth = 34;
     p._baseDisplayHeight = 42;
     p.setDisplaySize?.(p._baseDisplayWidth, p._baseDisplayHeight);
+    p.setCrop?.(0, PLAYER_CORE_CROP_Y, PLAYER_TEXTURE_WIDTH, PLAYER_CORE_CROP_HEIGHT);
     this.physics.add.existing(p);
     p.body.setCollideWorldBounds?.(true);
     p.body.setSize?.(p._baseDisplayWidth, p._baseDisplayHeight, true);
+
+    this._playerHighlight = this.add.image(WIDTH / 2, HEIGHT - 80, 'spacecraft1');
+    this._playerHighlight.setOrigin?.(0.5, 0.5);
+    this._playerHighlight.setDepth?.(PLAYER_VISUAL_DEPTH + 1);
+    this._playerHighlight.setTint?.(0xe7f7ff);
+    this._playerHighlight.setAlpha?.(1);
+    this._playerHighlight.setCrop?.(0, PLAYER_FRONT_CROP_Y, PLAYER_TEXTURE_WIDTH, PLAYER_FRONT_CROP_HEIGHT);
+
+    this._playerParallaxOffsetX = 0;
+    this._playerParallaxOffsetY = 0;
+    this._setPlayerVisualSize(
+      p._baseDisplayWidth,
+      p._baseDisplayHeight
+    );
+    this._syncPlayerParallaxVisuals();
     return p;
   }
 
@@ -354,10 +393,32 @@ export class GameScene extends Phaser.Scene {
     const heightFactor = 1 - backwardStretch * 0.26 + forwardStretch * 0.18;
     const baseWidth = this._player._baseDisplayWidth ?? this._player.displayWidth ?? 34;
     const baseHeight = this._player._baseDisplayHeight ?? this._player.displayHeight ?? 42;
-    this._player.setDisplaySize(
+    this._setPlayerVisualSize(
       baseWidth * widthFactor,
       baseHeight * heightFactor
     );
+  }
+
+  _updatePlayerParallax(delta) {
+    const dt = Math.max(0, delta) / 1000;
+    const body = this._player?.body;
+    const maxSpeed = Math.max(1, PLAYER_SPEED * this._playerSpeed);
+    const targetX = Phaser.Math.Clamp((body?.velocity?.x ?? 0) / maxSpeed, -1, 1);
+    const targetY = Phaser.Math.Clamp((body?.velocity?.y ?? 0) / maxSpeed, -1, 1);
+    const smoothing = Math.min(1, PLAYER_PARALLAX_LERP * dt);
+
+    this._playerParallaxOffsetX = Phaser.Math.Linear(
+      this._playerParallaxOffsetX ?? 0,
+      targetX,
+      smoothing
+    );
+    this._playerParallaxOffsetY = Phaser.Math.Linear(
+      this._playerParallaxOffsetY ?? 0,
+      targetY,
+      smoothing
+    );
+
+    this._syncPlayerParallaxVisuals();
   }
 
   _createWASD() {
@@ -389,6 +450,40 @@ export class GameScene extends Phaser.Scene {
     if ((left || right) && (up || down)) {
       body.velocity.normalize().scale(PLAYER_SPEED);
     }
+  }
+
+  _setPlayerVisualSize(width, height) {
+    this._player?.setDisplaySize?.(width, height);
+    this._playerShadow?.setDisplaySize?.(width, height);
+    this._playerHighlight?.setDisplaySize?.(width, height);
+  }
+
+  _syncPlayerParallaxVisuals() {
+    if (!this._player) return;
+
+    const x = this._player.x;
+    const y = this._player.y;
+    const offsetX = this._playerParallaxOffsetX ?? 0;
+    const offsetY = this._playerParallaxOffsetY ?? 0;
+    const speedAlpha = Math.min(1, Math.hypot(offsetX, offsetY));
+
+    this._player.setRotation?.(0);
+
+    if (this._playerShadow) {
+      this._playerShadow.x = x + offsetX * PLAYER_PARALLAX_REAR_SHIFT_X;
+      this._playerShadow.y = y + offsetY * PLAYER_PARALLAX_REAR_SHIFT_Y;
+      this._playerShadow.setRotation?.(0);
+      this._playerShadow.setVisible?.(this._player.visible);
+    }
+
+    if (this._playerHighlight) {
+      this._playerHighlight.x = x + offsetX * PLAYER_PARALLAX_FRONT_SHIFT_X;
+      this._playerHighlight.y = y + offsetY * PLAYER_PARALLAX_FRONT_SHIFT_Y;
+      this._playerHighlight.setRotation?.(0);
+      this._playerHighlight.setAlpha?.(0.94 + speedAlpha * 0.06);
+      this._playerHighlight.setVisible?.(this._player.visible);
+    }
+
   }
 
   _onPlayerHit(damage = 10) {
@@ -479,6 +574,8 @@ export class GameScene extends Phaser.Scene {
 
     this._explode(this._player.x, this._player.y);
     this._player.setVisible(false);
+    this._playerShadow?.setVisible?.(false);
+    this._playerHighlight?.setVisible?.(false);
     if (this._player.body) this._player.body.enable = false;
 
     for (const fc of this._formations) fc.stop();
@@ -506,6 +603,9 @@ export class GameScene extends Phaser.Scene {
       this._player.x = WIDTH / 2;
       this._player.y = HEIGHT - 80;
       this._player.setVisible(true);
+      this._playerParallaxOffsetX = 0;
+      this._playerParallaxOffsetY = 0;
+      this._syncPlayerParallaxVisuals();
       if (this._player.body) {
         this._player.body.reset(WIDTH / 2, HEIGHT - 80);
         this._player.body.enable = true;
@@ -518,7 +618,7 @@ export class GameScene extends Phaser.Scene {
       });
       this._rbOffset = 0;
       this._rbVel    = 0;
-      this._player.setDisplaySize(
+      this._setPlayerVisualSize(
         this._player._baseDisplayWidth ?? 34,
         this._player._baseDisplayHeight ?? 42
       );
@@ -547,6 +647,8 @@ export class GameScene extends Phaser.Scene {
 
     this._explode(this._player.x, this._player.y);
     this._player.setVisible(false);
+    this._playerShadow?.setVisible?.(false);
+    this._playerHighlight?.setVisible?.(false);
     if (this._player.body) this._player.body.enable = false;
 
     for (const fc of this._formations) fc.stop();
@@ -900,11 +1002,15 @@ export class GameScene extends Phaser.Scene {
     this._bg?.startWarpExit?.(LEVEL_CLEAR_EXIT_MS);
 
     this.tweens.add?.({
-      targets: this._player,
+      targets: [this._player, this._playerShadow, this._playerHighlight].filter(Boolean),
       y: -80,
       duration: LEVEL_CLEAR_EXIT_MS,
       ease: 'Cubic.easeIn',
-      onComplete: () => this._player.setVisible?.(false),
+      onComplete: () => {
+        this._player.setVisible?.(false);
+        this._playerShadow?.setVisible?.(false);
+        this._playerHighlight?.setVisible?.(false);
+      },
     });
 
     this.time.delayedCall(LEVEL_CLEAR_EXIT_MS, () => {

@@ -121,6 +121,22 @@ describe('GameScene create', () => {
     assert.equal(scene._player.displayHeight, 42);
   });
 
+  it('adds a layered parallax drift to the fighter visuals while moving sideways', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._player = scene._createPlayer();
+    scene._playerSpeed = GAME_CONFIG.PLAYER_SPEED_DEFAULT;
+    scene._player.body.velocity.x = GAME_CONFIG.PLAYER_SPEED;
+    scene._player.body.velocity.y = 0;
+
+    scene._updatePlayerParallax(100);
+
+    assert.equal(scene._player.rotation, 0);
+    assert.ok(scene._playerShadow.x > scene._player.x);
+    assert.ok(scene._playerHighlight.x > scene._player.x);
+    assert.ok(scene._playerShadow.x > scene._playerHighlight.x);
+  });
+
   it('can jump straight to the ending flow with the debugEnd query flag', () => {
     const scene = new GameScene();
     Object.assign(scene, createMockScene());
@@ -1070,6 +1086,8 @@ describe('GameScene level clear', () => {
       update: () => {},
     };
     scene._player = scene.add.image(220, 520, 'spacecraft1');
+    scene._playerShadow = scene.add.image(220, 520, 'spacecraft1');
+    scene._playerHighlight = scene.add.image(220, 520, 'spacecraft1');
     scene._player.body = {
       enable: true,
       stop() {},
@@ -1121,7 +1139,7 @@ describe('GameScene level clear', () => {
       assert.equal(destroyedEnemyBullets, 1);
       assert.equal(removedEnemies, 1);
       assert.equal(tweenCalls.length, 1);
-      assert.equal(tweenCalls[0].targets, scene._player);
+    assert.deepEqual(tweenCalls[0].targets, [scene._player, scene._playerShadow, scene._playerHighlight]);
       assert.ok(tweenCalls[0].y < 0, 'player exit tween should leave the top of the screen');
       assert.equal(textCalls.length, 0, 'the level-complete card should wait until after the exit run-up');
 
