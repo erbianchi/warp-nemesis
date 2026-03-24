@@ -15,4 +15,11 @@ describe('readDebugOptions', () => {
     assert.deepEqual(readDebugOptions('?debugEnd=0'), { debugEnd: false });
     assert.deepEqual(readDebugOptions('?otherFlag=1'), { debugEnd: false });
   });
+
+  it('accepts the path-style flag form used as /&debugEnd=1', () => {
+    assert.deepEqual(
+      readDebugOptions({ pathname: '/&debugEnd=1', search: '' }),
+      { debugEnd: true }
+    );
+  });
 });

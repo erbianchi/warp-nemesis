@@ -171,6 +171,7 @@ describe('GameScene create', () => {
       }
     }
   });
+
 });
 
 describe('isHeatWarningActive', () => {

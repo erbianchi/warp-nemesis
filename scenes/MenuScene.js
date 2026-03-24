@@ -55,6 +55,8 @@ export class MenuScene extends Phaser.Scene {
   }
 
   _startGame() {
+    this.sound?.unlock?.();
+    this.sound?.context?.resume?.();
     this.scene.start('GameScene');
   }
 }

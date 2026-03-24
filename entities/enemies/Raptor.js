@@ -53,10 +53,10 @@ export class Raptor extends EnemyBase {
     this._anchorY = clamp(this.y, RAPTOR_SCREEN_MARGIN_TOP + 8, H - RAPTOR_SCREEN_MARGIN_BOTTOM);
     this._entrySpeedX = this.speed * 3.4;
     this._entryWaveY = 16;
-    this._patrolRangeX = 36;
-    this._patrolRangeY = 70;
-    this._patrolLerpX = 2.6;
-    this._patrolLerpY = 2.1;
+    this._patrolRangeX = 90;
+    this._patrolRangeY = 110;
+    this._patrolLerpX = 3.2;
+    this._patrolLerpY = 2.8;
     this._lanePhase = Math.random() * Math.PI * 2;
   }
 
@@ -107,12 +107,12 @@ export class Raptor extends EnemyBase {
     }
 
     const targetX = clamp(
-      this._anchorX + Math.sin(this._laneClock / 1420 + this._lanePhase) * this._patrolRangeX,
+      this._anchorX + Math.sin(this._laneClock / 1000 + this._lanePhase) * this._patrolRangeX,
       RAPTOR_SCREEN_MARGIN_X,
       W - RAPTOR_SCREEN_MARGIN_X
     );
     const targetY = clamp(
-      this._anchorY + Math.sin(this._laneClock / 980 + this._lanePhase * 0.85) * this._patrolRangeY,
+      this._anchorY + Math.sin(this._laneClock / 760 + this._lanePhase * 0.85) * this._patrolRangeY,
       RAPTOR_SCREEN_MARGIN_TOP,
       H - RAPTOR_SCREEN_MARGIN_BOTTOM
     );

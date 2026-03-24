@@ -80,6 +80,7 @@ describe('WeaponManager', () => {
       play: (key, config = {}) => {
         scene.soundCalls.push(key);
         scene.soundConfigs.push({ key, config });
+        return { isPlaying: true, stop: () => { scene.soundStopCalls.push(key); } };
       },
       add: (key, config = {}) => {
         scene.soundAddCalls.push({ key, config });

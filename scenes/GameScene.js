@@ -89,6 +89,7 @@ export class GameScene extends Phaser.Scene {
   // ── Setup ─────────────────────────────────────────────────────────────────
 
   create() {
+    this._debugOptions = readDebugOptions(globalThis.location ?? '');
     this._bg      = new ScrollingBackground(this);
     this._effects = new EffectsSystem(this);
     this._player  = this._createPlayer();
@@ -96,6 +97,7 @@ export class GameScene extends Phaser.Scene {
     this._cursors = this.input.keyboard.createCursorKeys();
     this._wasd    = this._createWASD();
     this._space   = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.input.keyboard.once('keydown', () => this._unlockAudio());
 
     this._playerSpeed    = PLAYER_SPEED_DEFAULT;
     this._playerLives    = PLAYER_LIVES_DEFAULT;
@@ -106,7 +108,6 @@ export class GameScene extends Phaser.Scene {
     this._gameOver       = false;
     this._respawning     = false;
     this._levelClearing  = false;
-    this._debugOptions   = readDebugOptions(globalThis.location?.search ?? '');
     this._displayedScore = 0;
     this._scoreTween     = null;
     this._hudTimeMs      = 0;
@@ -206,6 +207,11 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.input.keyboard.on('keydown-ESC', () => this.scene.start('MenuScene'));
+  }
+
+  _unlockAudio() {
+    this.sound?.unlock?.();
+    this.sound?.context?.resume?.();
   }
 
   // ── Main loop ─────────────────────────────────────────────────────────────

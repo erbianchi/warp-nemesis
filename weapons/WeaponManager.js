@@ -379,17 +379,9 @@ export class WeaponManager {
 
   _startCoolingSound() {
     if (this._coolingSoundActive) return;
-    const sound = this._getCoolingSound();
-    if (sound?.play) {
-      sound.play();
-      this._coolingSoundActive = true;
-      return;
-    }
-
-    if (this._scene.sound?.play) {
-      this._scene.sound.play(LASER_COOLING_SFX_KEY, { loop: true });
-      this._coolingSoundActive = true;
-    }
+    if (!this._scene.sound?.play) return;
+    this._coolingSound = this._scene.sound.play(LASER_COOLING_SFX_KEY, { loop: true }) || null;
+    if (this._coolingSound) this._coolingSoundActive = true;
   }
 
   _stopCoolingSound() {
@@ -397,16 +389,9 @@ export class WeaponManager {
     this._coolingSoundActive = false;
     if (this._coolingSound?.stop) {
       this._coolingSound.stop();
-      return;
+    } else {
+      this._scene.sound?.stopByKey?.(LASER_COOLING_SFX_KEY);
     }
-    this._scene.sound?.stopByKey?.(LASER_COOLING_SFX_KEY);
-  }
-
-  _getCoolingSound() {
-    if (this._coolingSound) return this._coolingSound;
-    const manager = this._scene.sound;
-    if (!manager?.add) return null;
-    this._coolingSound = manager.add(LASER_COOLING_SFX_KEY, { loop: true });
-    return this._coolingSound;
+    this._coolingSound = null;
   }
 }

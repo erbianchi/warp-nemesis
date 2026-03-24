@@ -40,7 +40,7 @@ describe('BootScene', () => {
       path: 'assets/audio/sfx/laserSmall_000.ogg',
     }, {
       key: 'laserOverheat_000',
-      path: 'assets/audio/sfx/laserOverheat_000..ogg',
+      path: 'assets/audio/sfx/laserOverheat_000.ogg',
     }, {
       key: 'laserCooling',
       path: 'assets/audio/sfx/laserCooling.ogg',
@@ -51,5 +51,35 @@ describe('BootScene', () => {
       key: 'forceField_001',
       path: 'assets/audio/sfx/forceField_001.ogg',
     }]);
+  });
+
+  it('starts the menu scene by default after boot', () => {
+    const scene = new BootScene();
+    let startedScene = null;
+    let texturesGenerated = 0;
+    const originalDocument = globalThis.document;
+    const originalLocation = globalThis.location;
+
+    scene._generateTextures = () => {
+      texturesGenerated++;
+    };
+    scene.scene = {
+      start: (sceneKey) => {
+        startedScene = sceneKey;
+      },
+    };
+    globalThis.document = {
+      getElementById: () => ({ classList: { add: () => {} } }),
+    };
+    globalThis.location = { search: '' };
+
+    try {
+      scene.create();
+      assert.equal(texturesGenerated, 1);
+      assert.equal(startedScene, 'MenuScene');
+    } finally {
+      globalThis.document = originalDocument;
+      globalThis.location = originalLocation;
+    }
   });
 });

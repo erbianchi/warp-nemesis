@@ -89,7 +89,7 @@ export const BONUSES = Object.freeze({
     value:       BONUS_EFFECT_VALUES.COOLING_BOOST.recoveryMs,
     recoveryMs:  BONUS_EFFECT_VALUES.COOLING_BOOST.recoveryMs,
     durationMs:  BONUS_EFFECT_VALUES.COOLING_BOOST.durationMs,
-    weight:      1,
+    weight:      2,
     pickupSound: BONUS_PICKUP_SOUNDS.FORCE_FIELD,
     pending:     false,
   },
