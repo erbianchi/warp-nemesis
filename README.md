@@ -137,10 +137,10 @@ The long-term game direction is still larger than the current playable slice. Th
 | 1 | Done | Skeleton, menu, starfield, moveable player |
 | 2 | Done | Core firing loop, bullet pool, heat HUD slice |
 | 3 | Done | Enemy spawning, collisions, explosions, RunState |
-| 4 | In Progress | Level progression, level-clear flow, post-level store |
+| 4 | Done | Level progression, level-clear flow, post-level store |
 | 5 | Planned | Bosses and boss health bar |
 | 6 | In Progress | Bonuses, shared shields, weapon pickups, pickup audio |
-| 7 | In Progress | Meta progression and persistent cross-run bonuses |
+| 7 | In Progress | Meta progression, store, ship select, per-run upgrade drafting |
 | 8 | Planned | Additional content, art, audio, and polish |
 
 ## License

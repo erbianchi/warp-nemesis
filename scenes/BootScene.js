@@ -15,7 +15,7 @@ export class BootScene extends Phaser.Scene {
       'assets/particles/flares.json'
     );
     this.load.audio('laserSmall_000', 'assets/audio/sfx/laserSmall_000.ogg');
-    this.load.audio('laserOverheat_000', 'assets/audio/sfx/laserOverheat_000..ogg');
+    this.load.audio('laserOverheat_000', 'assets/audio/sfx/laserOverheat_000.ogg');
     this.load.audio('laserCooling', 'assets/audio/sfx/laserCooling.ogg');
     this.load.audio('explosionSkirm_000', 'assets/audio/sfx/explosionSkirm_000.ogg');
     this.load.audio('forceField_001', 'assets/audio/sfx/forceField_001.ogg');

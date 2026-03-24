@@ -12,7 +12,7 @@ Built with **Phaser 3** (HTML/JS/CSS). Modular architecture. Single-page app, no
 
 | Layer | Choice |
 |---|---|
-| Game framework | Phaser 3 (CDN: `https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js`) |
+| Game framework | Phaser 3 (bundled locally as `phaser.min.js`) |
 | Language | Vanilla ES6+ modules (no TypeScript, no bundler) |
 | Styling | CSS (minimal — canvas-based game, CSS handles UI chrome only) |
 | Entry point | `index.html` |
@@ -33,90 +33,113 @@ No npm, no webpack, no Vite. Keep the dev loop frictionless. A simple `python -m
 ├── config/
 │   ├── game.config.js          # Global constants (canvas size, physics, gravity)
 │   ├── levels.config.js        # Level definitions (enemies, waves, scrollspeed, boss)
+│   ├── enemies.config.js       # Enemy stat definitions and plane presets
 │   ├── weapons.config.js       # All weapon definitions
-│   ├── ships.config.js         # All player ship definitions
-│   └── bonuses.config.js       # All bonus/pickup definitions
+│   ├── ships.config.js         # All player ship definitions (stub)
+│   ├── bonuses.config.js       # All bonus/pickup definitions
+│   ├── store.config.js         # Meta-progression store inventory
+│   ├── debug.config.js         # Debug/dev flags
+│   └── events.config.js        # Centralized event name constants
 │
 ├── scenes/
-│   ├── BootScene.js            # Asset preload
-│   ├── MenuScene.js            # Main menu, ship select
-│   ├── HUDScene.js             # Persistent HUD overlay (runs parallel to game)
+│   ├── BootScene.js            # Asset preload + texture generation
+│   ├── MenuScene.js            # Main menu, transitions to GameScene
+│   ├── HUDScene.js             # Persistent HUD overlay — stub
 │   ├── GameScene.js            # Core game loop, orchestrator
-│   ├── LevelTransitionScene.js # Between-level screen (score, upgrades)
-│   ├── GameOverScene.js        # Death screen
-│   └── VictoryScene.js         # Win screen
+│   ├── LevelTransitionScene.js # Level-end meta store (score display + purchases)
+│   ├── GameOverScene.js        # Death screen — stub
+│   └── VictoryScene.js         # Win screen — stub
 │
 ├── entities/
-│   ├── PlayerShip.js           # Player entity, state machine
+│   ├── PlayerShip.js           # Player entity — stub
 │   ├── EnemyBase.js            # Abstract base class for enemies
+│   ├── BonusPickup.js          # Bonus pickup entity (physics body, config-driven)
 │   ├── enemies/
-│   │   ├── Fighter.js
-│   │   ├── Bomber.js
-│   │   ├── Interceptor.js
-│   │   ├── TurretDrone.js
-│   │   ├── Kamikaze.js
-│   │   └── [others as needed]
+│   │   ├── Skirm.js            # Implemented: 9 tween-driven dances
+│   │   ├── Raptor.js           # Implemented: sinusoidal flight, 8-way bullets
+│   │   ├── Mine.js             # Implemented: gravity well hazard overlay
+│   │   ├── Fighter.js          # Stub
+│   │   ├── Bomber.js           # Stub
+│   │   ├── Interceptor.js      # Stub
+│   │   ├── TurretDrone.js      # Stub
+│   │   └── Kamikaze.js         # Stub
 │   └── bosses/
-│       ├── BossBase.js
-│       └── [one file per boss, named Boss_L1.js … Boss_L7.js]
+│       ├── BossBase.js         # Stub
+│       └── Boss_L1.js … Boss_L7.js  # All stubs
 │
 ├── weapons/
-│   ├── WeaponManager.js        # Attach/detach weapons, fire routing
-│   ├── Bullet.js               # Base projectile
-│   └── [one file per weapon type: Laser.js, SpreadShot.js, Missile.js, etc.]
+│   ├── WeaponManager.js        # Attach/detach weapons, fire routing, heat system
+│   ├── Bullet.js               # Stub (bullet logic lives in WeaponManager)
+│   └── [weapon class files]    # All stubs — weapon types implemented via config in WeaponManager
 │
 ├── systems/
-│   ├── WaveSpawner.js          # Reads level config, schedules enemy waves
-│   ├── ScrollingBackground.js  # Parallax starfield layers
-│   ├── CollisionSystem.js      # All overlap/collider registrations
-│   ├── BonusSystem.js          # Bonus drop logic, pickup handling
-│   ├── RunState.js             # Roguelike run state (singleton): score, lives, active weapons, upgrades
-│   └── EffectsSystem.js        # Explosions, screen flash, particles
+│   ├── WaveSpawner.js          # Pool-based wave/squadron/plane spawning
+│   ├── FormationController.js  # Drives the "straight" dance formation
+│   ├── ScrollingBackground.js  # Scrolling starfield
+│   ├── CollisionSystem.js      # Stub (collision logic in GameScene)
+│   ├── BonusSystem.js          # Bonus drop rolls, pickup lifecycle, collection payloads
+│   ├── ShieldController.js     # Reusable shield logic + visual ring, attachable to any object
+│   ├── MetaProgression.js      # Cross-run persistence: meta currency, store purchases, localStorage
+│   ├── RunState.js             # Per-run state singleton: score, lives, weapon loadout, upgrades
+│   └── EffectsSystem.js        # Physics-driven fragment explosions, shockwave push
 │
 ├── ui/
-│   ├── HUD.js                  # Health bar, shield bar, weapon slots, score
-│   ├── ShipSelectUI.js         # Ship selection screen component
-│   └── UpgradeUI.js            # Between-level upgrade picker
+│   ├── HUD.js                  # Stub
+│   ├── ShipSelectUI.js         # Stub
+│   └── UpgradeUI.js            # Stub
 │
 ├── assets/
 │   ├── sprites/                # PNG spritesheets and individual sprites
-│   ├── audio/                  # SFX and music (OGG + MP3 fallback)
+│   ├── audio/                  # SFX and music (OGG)
 │   └── tilemaps/               # Optional: Tiled JSON for level terrain
 │
 └── tests/
     ├── helpers/
-    │   └── phaser.mock.js      # Minimal Phaser stubs (scene, physics, events) for unit tests
+    │   └── phaser.mock.js      # Minimal Phaser stubs for unit tests
     ├── config/
     │   ├── game.config.test.js
     │   ├── levels.config.test.js
     │   ├── weapons.config.test.js
     │   ├── ships.config.test.js
     │   ├── bonuses.config.test.js
+    │   ├── store.config.test.js
+    │   ├── debug.config.test.js
     │   └── events.config.test.js
+    ├── scenes/
+    │   ├── BootScene.test.js
+    │   ├── GameScene.test.js
+    │   ├── GameScene.formation.test.js
+    │   └── LevelTransitionScene.test.js
     ├── systems/
     │   ├── RunState.test.js
     │   ├── WaveSpawner.test.js
     │   ├── BonusSystem.test.js
-    │   ├── CollisionSystem.test.js
+    │   ├── ShieldController.test.js
+    │   ├── MetaProgression.test.js
+    │   ├── CollisionSystem.test.js  # Empty stub
     │   ├── EffectsSystem.test.js
     │   └── ScrollingBackground.test.js
     ├── entities/
-    │   ├── PlayerShip.test.js
+    │   ├── PlayerShip.test.js   # Empty stub
     │   ├── EnemyBase.test.js
+    │   ├── BonusPickup.test.js
     │   └── enemies/
-    │       ├── Fighter.test.js
-    │       ├── Bomber.test.js
-    │       ├── Interceptor.test.js
-    │       ├── Kamikaze.test.js
-    │       └── TurretDrone.test.js
+    │       ├── Skirm.test.js
+    │       ├── Raptor.test.js
+    │       ├── Mine.test.js
+    │       ├── Fighter.test.js  # Empty stub
+    │       ├── Bomber.test.js   # Empty stub
+    │       ├── Interceptor.test.js  # Empty stub
+    │       ├── Kamikaze.test.js     # Empty stub
+    │       └── TurretDrone.test.js  # Empty stub
     ├── weapons/
     │   ├── WeaponManager.test.js
-    │   ├── Bullet.test.js
-    │   ├── Laser.test.js
-    │   └── Missile.test.js
+    │   ├── Bullet.test.js       # Empty stub
+    │   ├── Laser.test.js        # Empty stub
+    │   └── Missile.test.js      # Empty stub
     └── ui/
-        ├── HUD.test.js
-        └── UpgradeUI.test.js
+        ├── HUD.test.js          # Empty stub
+        └── UpgradeUI.test.js    # Empty stub
 ```
 
 ---
@@ -374,35 +397,46 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 
 ---
 
-## Current State (as of 2026-03-21)
+## Current State (as of 2026-03-24)
 
 ### What is implemented and working
-- `BootScene` — generates all placeholder textures (player, skirm, bullets, particles)
+- `BootScene` — generates all placeholder textures (player, skirm, raptor, mine, bullets, particles); loads SFX (laserSmall_000, laserOverheat_000, laserCooling, explosionSkirm_000, forceField_001)
 - `MenuScene` — Start button, transitions to GameScene
 - `GameScene` — main loop: player movement, weapon firing with heat system, enemy management, bullet AABB, physics-driven fragment explosions, collision (bullets → enemy, enemy body → player); exports `isHeatWarningActive`, `resolveHeatBarStyle`
+- `LevelTransitionScene` — level-end meta store: displays level number, run score, total wallet balance; shows store items with purchase buttons; persists purchases to localStorage via `MetaProgression`; "Continue" button advances to next level
 - `ScrollingBackground` — scrolling starfield (dots only; speed-line rendering removed, reserved for future use)
 - **Player rubber-band**: spring-damper on the ship's horizontal scale when moving back (S/↓); stretches X to ~135%, compresses Y slightly, bounces back — visual only, hitbox unchanged
 - `WeaponManager` — laser weapon, bullet pool, 2-slot display; weapon heat accumulates per shot, recovers when not firing, hard-locks on overheat and resumes after `PLAYER_OVERHEAT_RECOVERY_SHOTS` cool down; in the warning zone, fires ONE bullet using the `bullet_laser_warning` texture (two thin beams baked into a single 11 px sprite, centered on the ship) — one damage event, no double-dip
 - `EffectsSystem` — physics-driven fragment explosions (real Arcade bodies, gravity, drag); directional momentum inheritance; directional shockwave push on nearby enemies and bullets
-- `RunState` — score and kill tracking
+- `BonusSystem` — weighted random bonus drop rolls per enemy death; spawns `BonusPickup` entities with optional shield; manages pickup lifecycle and collection payloads
+- `BonusPickup` — physics-body bonus entity; config-driven label, color, shield; auto-expires; emits collection event
+- `ShieldController` — reusable shield logic attachable to any game object; manages `maxPoints` / `currentPoints`; routes incoming damage (shield absorbs first, returns HP overflow); visual ring via Phaser Graphics
+- `MetaProgression` — cross-run persistence via `localStorage`; tracks total wallet (cumulative score); applies purchased store effects (starting HP / starting shield bonuses) to new runs; handles legacy key migration
+- `RunState` — per-run state singleton: score, kills, lives, weapon loadout, upgrades
 - `EnemyBase` — abstract base class: Phaser sprite + stats + fire cooldown + spring-damper push system (`applyPush`) + velocity tracking for directional explosions
-- `Skirm` — first enemy type; 5 tween-driven dances: `sweep_left`, `sweep_right`, `zigzag`, `side_cross`, `fan_out`
-- `FormationController` — the "straight" dance: 8 ships fly the loop path together, settle into a 2-row slot formation, drift + shoot in sequence, do pattern runs every 10s
-- `WaveSpawner` — roguelike pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning; `replayLastSquadron()` for respawn
+- `Skirm` — enemy type; 9 tween-driven dances: `straight`, `sweep_left`, `sweep_right`, `zigzag`, `drift_drop`, `jink_drop`, `whirl`, `hourglass`, `side_cross`, `fan_out`
+- `Raptor` — enemy type: sinusoidal lateral flight, 8-way radial bullet burst
+- `Mine` — hazard overlay enemy: gravity well that pulls player bullets; no HP, removed on contact
+- `FormationController` — drives the "straight" dance: 8 ships fly the loop path together, settle into a 2-row slot formation, drift + shoot in sequence, run attack patterns every 10s
+- `WaveSpawner` — pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning; `replayLastSquadron()` for respawn
 - `levels.config.js` — currently **1 level, 1 wave, 1 squadron** (8 Skirms, straight/formation dance). Expand when new enemies and dances are ready.
-- `enemies.config.js` — `skirm` stats + `standard`, `heavy`, `light`, `ace` plane presets
+- `enemies.config.js` — `skirm`, `raptor`, `mine` stats + `standard`, `heavy`, `light`, `ace` plane presets
+- `bonuses.config.js` — full bonus pool with weights, labels, and shield config
+- `store.config.js` — meta store items: `hp50` (+50 starting HP, 50k), `shield50` (+50 starting shield, 50k)
+- `debug.config.js` — dev/debug flags
 - **Player ship** — green triangle (28×36, same AABB as old rectangle); 3 lives displayed top-left as triangle icon + "× N"; respawn on life loss (1.5 s pause, screen clear, replay last squadron)
 - **HUD** — score (animated count-up), lives (top-left), weapon slot boxes (bottom-right), status bars (bottom-left): HP bar green 0–200 init 10, shield bar blue 0–400 init 0, heat bar red/yellow-blinking 0–`PLAYER_HEAT_MAX` shots
 - **Damage model** — shield absorbs hits first; HP decreases by damage; HP ≤ 0 costs 1 life; HP resets to `PLAYER_HP_DEFAULT` on respawn
 
 ### What is stub / not yet implemented
 - `PlayerShip.js` — empty; player is currently a plain triangle in `GameScene`
-- All enemy types except Skirm (`Fighter`, `Bomber`, `Interceptor`, `Kamikaze`, `TurretDrone`)
-- All bosses (`BossBase`, `Boss_L1` … `Boss_L7`)
-- All weapons except laser (`SpreadShot`, `Missile`, `Plasma`, `Railgun`, `DualLaser`, `Bomb`)
-- `BonusSystem`, `CollisionSystem` — not yet extracted from GameScene
-- `HUDScene`, `LevelTransitionScene`, `GameOverScene`, `VictoryScene` — empty stubs
-- `ships.config.js`, `bonuses.config.js` — empty
+- Enemy types: `Fighter`, `Bomber`, `Interceptor`, `Kamikaze`, `TurretDrone` — all empty
+- All bosses: `BossBase`, `Boss_L1` … `Boss_L7` — all empty
+- Weapon class files (`Bullet.js`, `Laser.js`, `SpreadShot.js`, etc.) — all empty; weapon behavior is implemented via config in `WeaponManager` directly, not via separate classes
+- `CollisionSystem` — empty; collision logic lives inline in `GameScene`
+- `HUDScene`, `GameOverScene`, `VictoryScene` — empty stubs
+- `HUD.js`, `UpgradeUI.js`, `ShipSelectUI.js` — empty stubs
+- `ships.config.js` — empty
 - Levels 2–7 — not defined
 
 ### Key architectural rules
@@ -411,6 +445,8 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 - All event names live in `config/events.config.js`. Never inline event strings.
 - Formation (straight dance) is driven by `FormationController`, not by individual enemy entities.
 - `WaveSpawner` emits `SQUADRON_SPAWNED` after each squadron spawns; `GameScene` listens to create `FormationController` for straight-dance squadrons.
+- Weapon behavior is config-driven via `WeaponManager` — separate weapon class files are stubs and not required for new weapon types.
+- `MetaProgression` uses `localStorage` key `warp-nemesis.metaProgression`; do not change the key without a migration.
 - Keep `config/` as the authoritative source for all balance numbers.
 - Phaser **3.x** only. Arcade Physics throughout — no Matter.js.
 - Target **60fps** on a mid-range laptop.
