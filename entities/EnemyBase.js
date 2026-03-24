@@ -67,7 +67,7 @@ export class EnemyBase extends _BaseSprite {
     /** @type {number} */
     this.damage = stats.damage;
     /** @type {number} */
-    this.contactDamage = stats.contactDamage ?? stats.damage;
+    this.contactDamage = stats.contactDamage ?? (stats.hp + Math.max(0, stats.shield ?? 0));
     /** @type {number} */
     this.speed = stats.speed;
     /** @type {number} */
