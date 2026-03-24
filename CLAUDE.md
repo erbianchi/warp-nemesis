@@ -400,42 +400,43 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 ## Current State (as of 2026-03-24)
 
 ### What is implemented and working
-- `BootScene` — generates all placeholder textures (player, skirm, raptor, mine, bullets, particles); loads SFX (laserSmall_000, laserOverheat_000, laserCooling, explosionSkirm_000, forceField_001)
-- `MenuScene` — Start button, transitions to GameScene
-- `GameScene` — main loop: player movement, weapon firing with heat system, enemy management, bullet AABB, physics-driven fragment explosions, collision (bullets → enemy, enemy body → player); exports `isHeatWarningActive`, `resolveHeatBarStyle`
+- `BootScene` — generates all placeholder textures (player, skirm, raptor, mine, bullets, bonus octagon, particles); loads SFX (laserSmall_000, laserOverheat_000, laserCooling, explosionSkirm_000, forceField_001); unlocks AudioContext on first interaction
+- `MenuScene` — Start button, keyboard shortcuts; unlocks AudioContext before transitioning
+- `GameScene` — main orchestrator: player movement, weapon firing with heat system, enemy management, bullet AABB, physics-driven fragment explosions, collision (bullets → enemy, enemy body → player, bonuses → player); HUD drawn inline (score, lives, status bars, weapon slots); exports `isHeatWarningActive`, `resolveHeatBarStyle`
 - `LevelTransitionScene` — level-end meta store: displays level number, run score, total wallet balance; shows store items with purchase buttons; persists purchases to localStorage via `MetaProgression`; "Continue" button advances to next level
 - `ScrollingBackground` — scrolling starfield (dots only; speed-line rendering removed, reserved for future use)
 - **Player rubber-band**: spring-damper on the ship's horizontal scale when moving back (S/↓); stretches X to ~135%, compresses Y slightly, bounces back — visual only, hitbox unchanged
-- `WeaponManager` — laser weapon, bullet pool, 2-slot display; weapon heat accumulates per shot, recovers when not firing, hard-locks on overheat and resumes after `PLAYER_OVERHEAT_RECOVERY_SHOTS` cool down; in the warning zone, fires ONE bullet using the `bullet_laser_warning` texture (two thin beams baked into a single 11 px sprite, centered on the ship) — one damage event, no double-dip
-- `EffectsSystem` — physics-driven fragment explosions (real Arcade bodies, gravity, drag); directional momentum inheritance; directional shockwave push on nearby enemies and bullets
+- `WeaponManager` — laser weapon, bullet pool, 2-slot display; **only slot 0 fires** (slot 1 tracked but not wired); weapon heat accumulates per shot, recovers when not firing, hard-locks on overheat and resumes after `PLAYER_OVERHEAT_RECOVERY_SHOTS` cool down; plays `laserCooling` (looping) during overheat lockout; in the warning zone, fires ONE bullet using the `bullet_laser_warning` texture (two thin beams baked into a single 11 px sprite, centered on the ship) — one damage event, no double-dip
+- `EffectsSystem` — physics-driven fragment explosions (real Arcade bodies, gravity, drag); directional momentum inheritance; directional shockwave push on nearby enemies and bullets; gravity well effect used by Mine hazard
 - `BonusSystem` — weighted random bonus drop rolls per enemy death; spawns `BonusPickup` entities with optional shield; manages pickup lifecycle and collection payloads
-- `BonusPickup` — physics-body bonus entity; config-driven label, color, shield; auto-expires; emits collection event
-- `ShieldController` — reusable shield logic attachable to any game object; manages `maxPoints` / `currentPoints`; routes incoming damage (shield absorbs first, returns HP overflow); visual ring via Phaser Graphics
+- `BonusPickup` — physics-body bonus entity; config-driven label, color, shield; bobbing + spin animation; auto-expires; emits collection event
+- `ShieldController` — reusable shield logic attachable to any game object; manages `maxPoints` / `currentPoints`; routes incoming damage (shield absorbs first, returns HP overflow); visual ring + pulse/glow via Phaser Graphics; used by EnemyBase, BonusPickup, and player
 - `MetaProgression` — cross-run persistence via `localStorage`; tracks total wallet (cumulative score); applies purchased store effects (starting HP / starting shield bonuses) to new runs; handles legacy key migration
 - `RunState` — per-run state singleton: score, kills, lives, weapon loadout, upgrades
 - `EnemyBase` — abstract base class: Phaser sprite + stats + fire cooldown + spring-damper push system (`applyPush`) + velocity tracking for directional explosions
-- `Skirm` — enemy type; 9 tween-driven dances: `straight`, `sweep_left`, `sweep_right`, `zigzag`, `drift_drop`, `jink_drop`, `whirl`, `hourglass`, `side_cross`, `fan_out`
-- `Raptor` — enemy type: sinusoidal lateral flight, 8-way radial bullet burst
+- `Skirm` — enemy type; **10** tween-driven dances: `straight`, `sweep_left`, `sweep_right`, `zigzag`, `drift_drop`, `jink_drop`, `whirl`, `hourglass`, `side_cross`, `fan_out`
+- `Raptor` — enemy type: sinusoidal lateral flight, 8-way radial bullet burst; wide patrol range (±90px X, ±110px Y)
 - `Mine` — hazard overlay enemy: gravity well that pulls player bullets; no HP, removed on contact
 - `FormationController` — drives the "straight" dance: 8 ships fly the loop path together, settle into a 2-row slot formation, drift + shoot in sequence, run attack patterns every 10s
-- `WaveSpawner` — pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning; `replayLastSquadron()` for respawn
-- `levels.config.js` — currently **1 level, 1 wave, 1 squadron** (8 Skirms, straight/formation dance). Expand when new enemies and dances are ready.
-- `enemies.config.js` — `skirm`, `raptor`, `mine` stats + `standard`, `heavy`, `light`, `ace` plane presets
-- `bonuses.config.js` — full bonus pool with weights, labels, and shield config
+- `WaveSpawner` — pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning; overlay squadron support; `replayLastSquadron()` for respawn
+- `levels.config.js` — **1 level (Asteroid Belt)** with **16 main squadrons** (mixed Skirm dances) + **overlay squadrons** (Raptors and Mines on specific triggers). Expand to add levels 2–7.
+- `enemies.config.js` — stats for `skirm`, `raptor`, `mine` (implemented) + `fighter`, `bomber`, `interceptor`, `kamikaze`, `turretDrone` (config only, classes are stubs) + `standard`, `heavy`, `light`, `ace` plane presets
+- `bonuses.config.js` — full bonus pool: 8 types with weights, labels, pickup sounds, shield config
 - `store.config.js` — meta store items: `hp50` (+50 starting HP, 50k), `shield50` (+50 starting shield, 50k)
-- `debug.config.js` — dev/debug flags
+- `debug.config.js` — URL query param parser (`?debugEnd=1`); handles full href, location objects, and path-style params
 - **Player ship** — green triangle (28×36, same AABB as old rectangle); 3 lives displayed top-left as triangle icon + "× N"; respawn on life loss (1.5 s pause, screen clear, replay last squadron)
-- **HUD** — score (animated count-up), lives (top-left), weapon slot boxes (bottom-right), status bars (bottom-left): HP bar green 0–200 init 10, shield bar blue 0–400 init 0, heat bar red/yellow-blinking 0–`PLAYER_HEAT_MAX` shots
+- **HUD** — drawn inline in `GameScene`: score (animated count-up), lives (top-left), weapon slot boxes (bottom-right), status bars (bottom-left): HP bar green 0–200 init 10, shield bar blue 0–400 init 0, heat bar red/yellow-blinking 0–`PLAYER_HEAT_MAX` shots
 - **Damage model** — shield absorbs hits first; HP decreases by damage; HP ≤ 0 costs 1 life; HP resets to `PLAYER_HP_DEFAULT` on respawn
 
 ### What is stub / not yet implemented
-- `PlayerShip.js` — empty; player is currently a plain triangle in `GameScene`
-- Enemy types: `Fighter`, `Bomber`, `Interceptor`, `Kamikaze`, `TurretDrone` — all empty
+- `PlayerShip.js` — empty; player is currently a plain triangle inline in `GameScene`
+- Enemy classes: `Fighter`, `Bomber`, `Interceptor`, `Kamikaze`, `TurretDrone` — all empty (configs exist in `enemies.config.js`)
 - All bosses: `BossBase`, `Boss_L1` … `Boss_L7` — all empty
-- Weapon class files (`Bullet.js`, `Laser.js`, `SpreadShot.js`, etc.) — all empty; weapon behavior is implemented via config in `WeaponManager` directly, not via separate classes
+- Weapon class files (`Bullet.js`, `Laser.js`, `SpreadShot.js`, etc.) — all empty; weapon behavior is config-driven via `WeaponManager`, separate classes not required
+- Weapon slot 1 — tracked in `WeaponManager` but not wired to fire; dual-weapon firing not yet implemented
 - `CollisionSystem` — empty; collision logic lives inline in `GameScene`
 - `HUDScene`, `GameOverScene`, `VictoryScene` — empty stubs
-- `HUD.js`, `UpgradeUI.js`, `ShipSelectUI.js` — empty stubs
+- `HUD.js`, `UpgradeUI.js`, `ShipSelectUI.js` — empty stubs; HUD is currently drawn directly in `GameScene`
 - `ships.config.js` — empty
 - Levels 2–7 — not defined
 
