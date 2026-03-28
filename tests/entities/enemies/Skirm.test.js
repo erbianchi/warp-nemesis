@@ -162,6 +162,60 @@ describe('Skirm', () => {
       assert.ok(firstLoop.y >= 0 && firstLoop.y <= GAME_CONFIG.HEIGHT, 'hourglass loop y should stay on screen');
       assert.notEqual(firstLoop.x, entry.x, 'hourglass should move off the center line during its loop');
     });
+
+    it('can use the learned policy to pick a safer lane and faster speed within class limits', () => {
+      const { skirm, scene } = makeSkirm('straight', {
+        adaptive: {
+          enabled: true,
+          minSpeedScalar: 0.9,
+          maxSpeedScalar: 1.15,
+        },
+      });
+      scene._enemyAdaptivePolicy = {
+        getPositionOffsets() { return [-1, 0, 1]; },
+        getVerticalOffsets() { return [-1, 0, 1]; },
+        getSpeedCandidates() { return [0.9, 1, 1.15]; },
+        resolveBehavior({ candidates }) {
+          return candidates.at(-1);
+        },
+      };
+      skirm.unlockAdaptiveBehavior();
+
+      const plan = skirm.resolveAdaptiveMovePlan(180, {
+        candidateY: 200,
+        rangePx: 80,
+        yRangePx: 60,
+        marginPx: 30,
+      });
+
+      assert.ok(plan.x > 180);
+      assert.ok(plan.y >= 200);
+      assert.equal(plan.speedScalar, 1.15);
+      assert.equal(skirm.adaptiveProfile.currentSpeedScalar, 1.15);
+      assert.equal(plan.actionMode, 'flank');
+    });
+
+    it('completes one authored dance pass before unlocking adaptive movement', () => {
+      const scene = createMockScene();
+      const tweenCalls = [];
+      scene.tweens.add = (config) => {
+        tweenCalls.push(config);
+        return { stop: () => {} };
+      };
+
+      const skirm = new Skirm(scene, 120, -40, {
+        ...BASE_STATS,
+        adaptive: {
+          enabled: true,
+          minSpeedScalar: 0.9,
+          maxSpeedScalar: 1.15,
+        },
+      }, 'zigzag');
+
+      assert.equal(skirm.canUseAdaptiveBehavior(), false);
+      tweenCalls[0].onComplete();
+      assert.equal(skirm.canUseAdaptiveBehavior(), true);
+    });
   });
 
   describe('combat', () => {
@@ -230,6 +284,54 @@ describe('Skirm', () => {
       assert.equal(fired[0].damage, BASE_STATS.damage);
       assert.ok(fired[0].vy > 0);
       assert.equal(fired[0].vx, 0);
+    });
+
+    it('keeps its laser firing straight down even when learned movement is enabled', () => {
+      const { skirm, scene } = makeSkirm('straight', {
+        adaptive: {
+          enabled: true,
+          minSpeedScalar: 0.9,
+          maxSpeedScalar: 1.15,
+        },
+      });
+      const fired = [];
+      scene.events.emit = (event, data) => { if (event === EVENTS.ENEMY_FIRE) fired.push(data); };
+
+      skirm.x = 100;
+      skirm.y = 120;
+      skirm.fire();
+
+      assert.equal(fired.length, 1);
+      assert.equal(fired[0].vx, 0);
+      assert.ok(fired[0].vy > 0);
+    });
+
+    it('can hold fire until the learned window looks favorable', () => {
+      const { skirm, scene } = makeSkirm();
+      scene._enemyAdaptivePolicy = {
+        scoreCurrentPosition() {
+          return {
+            score: 0.2,
+            predictedPressure: 0.3,
+            predictedEnemyWinRate: 0.4,
+          };
+        },
+      };
+      skirm.adaptiveProfile.enabled = true;
+      skirm.unlockAdaptiveBehavior();
+
+      assert.equal(skirm.shouldFireNow(), false);
+
+      skirm._fireCooldown = skirm.fireRate * 3;
+      assert.equal(skirm.shouldFireNow(), true);
+
+      scene._enemyAdaptivePolicy.scoreCurrentPosition = () => ({
+        score: 0.8,
+        predictedPressure: 0.7,
+        predictedEnemyWinRate: 0.65,
+      });
+
+      assert.equal(skirm.shouldFireNow(), true);
     });
   });
 

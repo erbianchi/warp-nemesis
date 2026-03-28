@@ -58,6 +58,9 @@ describe('getDefaultFormationBehavior', () => {
     assert.ok(DEFAULT_BEHAVIOR.cycleMs >= 5000);
     assert.ok(DEFAULT_BEHAVIOR.shootRate >= 1);
     assert.ok(DEFAULT_BEHAVIOR.pathShootRate >= 1);
+    assert.equal(typeof DEFAULT_BEHAVIOR.shotCadence.pathPattern, 'string');
+    assert.equal(typeof DEFAULT_BEHAVIOR.shotCadence.idlePattern, 'string');
+    assert.ok(DEFAULT_BEHAVIOR.shotCadence.idleVolleySize >= 1);
     assert.ok(DEFAULT_BEHAVIOR.launchStaggerMs > 0);
     assert.ok(DEFAULT_BEHAVIOR.speed >= GAME_CONFIG.SPEED_MIN);
     assert.ok(DEFAULT_BEHAVIOR.speed <= GAME_CONFIG.SPEED_MAX);
@@ -70,11 +73,18 @@ describe('resolveFormationBehavior', () => {
   it('merges controller overrides without mutating defaults', () => {
     const behavior = resolveFormationBehavior({
       shootRate: 3,
+      shotCadence: {
+        idlePattern: 'wings',
+        idleVolleySize: 3,
+      },
       rowYs: [70, 120],
       path: [{ xPct: 0.5, yPct: 0.2, dur: 100 }],
     });
 
     assert.equal(behavior.shootRate, 3);
+    assert.equal(behavior.shotCadence.idlePattern, 'wings');
+    assert.equal(behavior.shotCadence.idleVolleySize, 3);
+    assert.equal(behavior.shotCadence.pathPattern, DEFAULT_BEHAVIOR.shotCadence.pathPattern);
     assert.deepEqual(behavior.rowYs, [70, 120]);
     assert.equal(behavior.path.length, 1);
     assert.equal(DEFAULT_BEHAVIOR.path.length, 7);
@@ -361,5 +371,141 @@ describe('FormationController — scoreMultiplier forwarding through onDeath', (
 
     assert.equal(RunState.kills, 1);
     assert.equal(RunState.score, 75);  // round(50 × 1.5) = 75, only once
+  });
+});
+
+describe('FormationController firing cadence', () => {
+  it('suppresses autonomous straight-formation firing so the controller owns squad cadence', () => {
+    const scene = createMockScene();
+    const fired = [];
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_FIRE) fired.push(data);
+    };
+
+    const skirm = new Skirm(scene, 120, 120, { ...SKIRM_STATS, fireRate: 100 }, 'straight');
+    skirm._formationFireControlled = true;
+    skirm._fireCooldown = 100;
+
+    skirm.update(16);
+
+    assert.equal(fired.length, 0);
+    assert.equal(skirm._fireCooldown, 116);
+  });
+
+  it('fires bounded volleys instead of letting the whole squad beam at once', () => {
+    const scene = createMockScene();
+    const fired = [];
+    const delayed = [];
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_FIRE) fired.push(data);
+    };
+    scene.time.delayedCall = (delay, callback) => {
+      delayed.push({ delay, callback });
+      return { remove() {} };
+    };
+    scene.tweens.add = () => ({ stop() {} });
+
+    const ships = Array.from({ length: 4 }, (_, index) => {
+      const ship = new Skirm(scene, 120 + index * 18, 120, { ...SKIRM_STATS, fireRate: 200 }, 'straight');
+      ship._fireCooldown = 200;
+      return ship;
+    });
+
+    const controller = new FormationController(scene, ships, {
+      shotCadence: {
+        idlePattern: 'sweep',
+        idleVolleySize: 2,
+        intraVolleyMs: 90,
+      },
+    });
+    delayed.length = 0;
+
+    controller._fireNext();
+
+    assert.equal(delayed.length, 2);
+    delayed.forEach(entry => entry.callback());
+    assert.equal(fired.length, 2);
+  });
+
+  it('uses each ship fireRate as a cadence eligibility modifier inside the squad volley', () => {
+    const scene = createMockScene();
+    const fired = [];
+    const delayed = [];
+    scene.events.emit = (event, data) => {
+      if (event === EVENTS.ENEMY_FIRE) fired.push(data);
+    };
+    scene.time.delayedCall = (delay, callback) => {
+      delayed.push({ delay, callback });
+      return { remove() {} };
+    };
+    scene.tweens.add = () => ({ stop() {} });
+
+    const readyShip = new Skirm(scene, 140, 120, { ...SKIRM_STATS, fireRate: 250 }, 'straight');
+    readyShip._fireCooldown = 300;
+    const coolingShip = new Skirm(scene, 220, 120, { ...SKIRM_STATS, fireRate: 900 }, 'straight');
+    coolingShip._fireCooldown = 300;
+
+    const controller = new FormationController(scene, [readyShip, coolingShip], {
+      shotCadence: {
+        idlePattern: 'single',
+        idleVolleySize: 1,
+      },
+    });
+    delayed.length = 0;
+
+    controller._fireNext();
+
+    assert.equal(delayed.length, 1);
+    delayed[0].callback();
+    assert.equal(fired.length, 1);
+    assert.equal(fired[0].sourceEnemy, readyShip);
+    assert.equal(readyShip._fireCooldown, 0);
+    assert.equal(coolingShip._fireCooldown, 300);
+  });
+
+  it('queries the adaptive squad directive at runtime and applies its cadence/spread overrides', () => {
+    const scene = createMockScene();
+    let queried = false;
+    scene._enemyAdaptivePolicy = {
+      evaluateSquadDirective() {
+        queried = true;
+        return {
+          cadenceModifier: 0.85,
+          spreadMultiplier: 1.3,
+          driftMultiplier: 1.15,
+          verticalBiasPx: 18,
+          volleySizeBonus: 1,
+          pathPattern: 'single',
+          idlePattern: 'wings',
+        };
+      },
+    };
+
+    const ship = new Skirm(scene, 160, 120, {
+      ...SKIRM_STATS,
+      adaptive: {
+        enabled: true,
+        minSpeedScalar: 0.9,
+        maxSpeedScalar: 1.1,
+      },
+    }, 'straight');
+    ship.unlockAdaptiveBehavior();
+
+    const controller = new FormationController(scene, [ship], {
+      shotCadence: {
+        idlePattern: 'alternating_rows',
+        idleVolleySize: 1,
+      },
+    });
+
+    controller._refreshSquadDirective('idle');
+    const behavior = controller._getEffectiveBehavior('idle');
+    const cadence = controller._resolveShotCadence('idle');
+
+    assert.equal(queried, true);
+    assert.equal(cadence.pattern, 'wings');
+    assert.equal(cadence.volleySize, 2);
+    assert.ok(behavior.slotSpacingX > DEFAULT_BEHAVIOR.slotSpacingX);
+    assert.ok(behavior.rowYs[0] > DEFAULT_BEHAVIOR.rowYs[0]);
   });
 });

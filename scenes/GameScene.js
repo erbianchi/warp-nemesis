@@ -8,10 +8,12 @@ import { readDebugOptions }      from '../config/debug.config.js';
 import { EVENTS }                from '../config/events.config.js';
 import { ScrollingBackground }   from '../systems/ScrollingBackground.js';
 import { EffectsSystem }         from '../systems/EffectsSystem.js';
-import { WaveSpawner }           from '../systems/WaveSpawner.js';
+import { WaveSpawner, resolveStats } from '../systems/WaveSpawner.js';
 import { FormationController }   from '../systems/FormationController.js';
 import { BonusSystem }           from '../systems/BonusSystem.js';
 import { ShieldController }      from '../systems/ShieldController.js';
+import { AdaptiveStatsResolver } from '../systems/ml/AdaptiveStatsResolver.js';
+import { EnemyAdaptivePolicy }   from '../systems/ml/EnemyAdaptivePolicy.js';
 import { WeaponManager }         from '../weapons/WeaponManager.js';
 import { RunState }              from '../systems/RunState.js';
 import { MetaProgression }       from '../systems/MetaProgression.js';
@@ -95,9 +97,11 @@ export function resolveHeatBarStyle(heatShots, maxHeatShots, timeMs = 0) {
 }
 
 export class GameScene extends Phaser.Scene {
-  constructor() {
+  constructor(deps = {}) {
     super({ key: 'GameScene' });
+    this._deps = deps;
     this._levelCompletionRecorded = false;
+    this._runLearningRecorded = false;
   }
 
   // ── Setup ─────────────────────────────────────────────────────────────────
@@ -125,6 +129,9 @@ export class GameScene extends Phaser.Scene {
     this._displayedScore = 0;
     this._scoreTween     = null;
     this._hudTimeMs      = 0;
+    this._nextLearningEnemyId = 0;
+    this._runLearningRecorded = false;
+    this._levelIndex = 0;   // Level 1
     this._coolingBoostEndsAt = 0;
     this._heatWarningActive = false;
     this._nextHeatWarningShakeAt = 0;
@@ -143,6 +150,25 @@ export class GameScene extends Phaser.Scene {
     this._eBullets   = [];   // velocity-driven enemy bullet rectangles
     this._enemyGroup = this.physics.add.group();
     this._formations = [];   // active FormationControllers
+    this._enemyAdaptivePolicy = this._deps.enemyAdaptivePolicy ?? new EnemyAdaptivePolicy();
+    this._enemyAdaptivePolicy.load?.();
+    this._adaptiveStatsResolver = this._deps.adaptiveStatsResolver ?? new AdaptiveStatsResolver({
+      policy: this._enemyAdaptivePolicy,
+      baseResolveStats: resolveStats,
+    });
+    this._enemyLearningSession = this._enemyAdaptivePolicy.createRunSession?.({
+      scene: this,
+      levelNumber: (this._levelIndex ?? 0) + 1,
+      getPlayerSnapshot: () => this._getEnemyLearningPlayerSnapshot(),
+      getWeaponSnapshot: () => this._weapons?.getLearningSnapshot?.() ?? {
+        primaryWeaponKey: null,
+        heatRatio: 0,
+        isOverheated: false,
+        primaryDamageMultiplier: 1,
+      },
+      getEnemies: () => this._enemies,
+      getPlayerBullets: () => this._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [],
+    }) ?? null;
 
     // Player bullets hit enemies
     this.physics.add.overlap(
@@ -168,12 +194,14 @@ export class GameScene extends Phaser.Scene {
     this.events.on(EVENTS.SQUADRON_SPAWNED, this._onSquadronSpawned, this);
 
     // ── WaveSpawner ─────────────────────────────────────────────────────────
-    this._levelIndex = 0;   // Level 1
-
     this._spawner = new WaveSpawner(
       this,
       this._levelIndex,
-      (type, x, y, stats, dance, meta) => this._spawnEnemy(type, x, y, stats, dance, meta)
+      (type, x, y, stats, dance, meta) => this._spawnEnemy(type, x, y, stats, dance, meta),
+      Math.random,
+      {
+        statsResolver: (args) => this._adaptiveStatsResolver.resolve(args),
+      }
     );
     this._bonuses = new BonusSystem(this, {
       effects: this._effects,
@@ -268,6 +296,8 @@ export class GameScene extends Phaser.Scene {
       e.update(delta);
     }
 
+    this._enemyLearningSession?.update?.(delta);
+
     // Move enemy bullets; check player AABB collision
     const px = this._player.x;
     const py = this._player.y;
@@ -307,7 +337,12 @@ export class GameScene extends Phaser.Scene {
       if (Math.abs(b.x - px) < 15.5 && Math.abs(b.y - py) < 23) {
         const dmg = b._damage ?? 10;
         this._destroyEnemyBullet(b, i);
-        this._onPlayerHit(dmg);
+        this._onPlayerHit(dmg, {
+          sourceType: b._sourceType ?? null,
+          sourceEnemyId: b._sourceEnemyId ?? null,
+          squadId: b._squadId ?? null,
+          sourceKind: 'projectile',
+        });
       }
     }
 
@@ -486,7 +521,7 @@ export class GameScene extends Phaser.Scene {
 
   }
 
-  _onPlayerHit(damage = 10) {
+  _onPlayerHit(damage = 10, source = {}) {
     if (this._gameOver || this._respawning) return;
 
     const shieldResult = this._playerShieldFx
@@ -500,6 +535,18 @@ export class GameScene extends Phaser.Scene {
       this._playerShield = Math.max(0, this._playerShield - shieldResult.absorbed);
       this._drawStatusBars();
     }
+
+    this.events.emit(EVENTS.PLAYER_HIT, {
+      damage,
+      absorbed: shieldResult.absorbed ?? 0,
+      hpDamage: shieldResult.overflow ?? 0,
+      sourceType: source.sourceType ?? null,
+      sourceEnemyId: source.sourceEnemyId ?? null,
+      squadId: source.squadId ?? null,
+      sourceKind: source.sourceKind ?? null,
+      playerX: this._player?.x ?? WIDTH / 2,
+      playerY: this._player?.y ?? HEIGHT - 80,
+    });
 
     if (shieldResult.overflow <= 0) {
       return;
@@ -644,6 +691,7 @@ export class GameScene extends Phaser.Scene {
     this._resetPlayerHeat();
     this._resetPlayerBonuses();
     this._gameOver = true;
+    this._finalizeEnemyLearning('enemy_win');
 
     this._explode(this._player.x, this._player.y);
     this._player.setVisible(false);
@@ -697,11 +745,28 @@ export class GameScene extends Phaser.Scene {
         enemy = new Skirm(this, x, y, stats, dance);
         break;
     }
+    enemy._learningId = `enemy-${++this._nextLearningEnemyId}`;
     enemy._overlayRaid = Boolean(meta.overlay);
     enemy._spawnWaveId = meta.waveId ?? null;
     enemy._sourceEventId = meta.sourceEventId ?? null;
+    enemy._squadId = meta.squadId ?? null;
+    enemy._squadTemplateId = meta.squadTemplateId ?? null;
+    enemy._squadSpawnCount = meta.squadSize ?? 1;
+    enemy._formationType = meta.formation ?? null;
+    enemy._spawnDance = dance;
     this._enemies.push(enemy);
     this._enemyGroup.add(enemy);
+    this.events.emit(EVENTS.ENEMY_SPAWNED, {
+      enemy,
+      type,
+      squadId: enemy._squadId,
+      squadTemplateId: enemy._squadTemplateId,
+      squadSize: enemy._squadSpawnCount,
+      formation: enemy._formationType,
+      dance,
+      overlay: enemy._overlayRaid,
+      waveId: enemy._spawnWaveId,
+    });
   }
 
   _countMainWaveEnemies() {
@@ -713,6 +778,7 @@ export class GameScene extends Phaser.Scene {
   /** Remove an off-screen enemy silently (no score awarded). */
   _removeEnemy(enemy, idx) {
     enemy.alive = false;
+    enemy.markEscaped?.();
     enemy.setActive(false).setVisible(false);
     if (enemy.body) enemy.body.stop();
     this._enemyGroup.remove(enemy);
@@ -732,7 +798,10 @@ export class GameScene extends Phaser.Scene {
     this._consumePlayerBullet(bullet);
     if (!enemy.alive || damage <= 0) return;
     if (shotPayload) shotPayload.hitEnemies.add(enemy);
-    enemy.takeDamage(damage, scoreMultiplier);
+    enemy.takeDamage(damage, {
+      scoreMultiplier,
+      cause: 'player_bullet',
+    });
   }
 
   _onBulletHitBonus(bullet, bonus) {
@@ -753,11 +822,30 @@ export class GameScene extends Phaser.Scene {
   _onEnemyTouchPlayer(player, enemy) {
     if (!enemy.alive) return;
     const dmg = enemy.contactDamage ?? enemy.damage ?? 10;
-    enemy.die();
-    this._onPlayerHit(dmg);
+    enemy.die({ cause: 'player_collision' });
+    this._onPlayerHit(dmg, {
+      sourceType: enemy.enemyType,
+      sourceEnemyId: enemy._learningId ?? null,
+      squadId: enemy._squadId ?? null,
+      sourceKind: 'contact',
+    });
   }
 
-  _onEnemyFire({ x, y, vx = 0, vy = 0, damage, width = 3, height = 10, color = 0xff4400 }) {
+  _onEnemyFire({
+    x,
+    y,
+    vx = 0,
+    vy = 0,
+    damage,
+    width = 3,
+    height = 10,
+    color = 0xff4400,
+    sourceType = null,
+    sourceEnemy = null,
+    sourceEnemyId = null,
+    squadId = null,
+    squadTemplateId = null,
+  }) {
     const bullet = this.add.rectangle(x, y, width, height, color).setDepth(9);
     const rotation = (vx === 0 && vy === 0)
       ? 0
@@ -768,6 +856,11 @@ export class GameScene extends Phaser.Scene {
     bullet._vx = vx;
     bullet._vy = vy;
     bullet._damage = damage;
+    bullet._sourceType = sourceType;
+    bullet._sourceEnemy = sourceEnemy;
+    bullet._sourceEnemyId = sourceEnemyId ?? sourceEnemy?._learningId ?? null;
+    bullet._squadId = squadId;
+    bullet._squadTemplateId = squadTemplateId;
     bullet._hitboxWidth = Math.abs(width * cos) + Math.abs(height * sin);
     bullet._hitboxHeight = Math.abs(width * sin) + Math.abs(height * cos);
     bullet.setRotation?.(rotation);
@@ -1039,6 +1132,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   _showLevelCompleteCard() {
+    this._finalizeEnemyLearning('player_win');
     this._recordLevelCompletion();
     this._bg?.fadeToBlack?.(LEVEL_CLEAR_FADE_MS);
 
@@ -1062,6 +1156,32 @@ export class GameScene extends Phaser.Scene {
     if (this._levelCompletionRecorded) return;
     this._levelCompletionRecorded = true;
     MetaProgression.recordCompletedLevel(RunState.score);
+  }
+
+  _getEnemyLearningPlayerSnapshot() {
+    return {
+      x: this._player?.x ?? WIDTH / 2,
+      y: this._player?.y ?? HEIGHT - 80,
+      hasShield: (this._playerShield ?? 0) > 0,
+      shieldRatio: PLAYER_SHIELD_MAX > 0 ? (this._playerShield ?? 0) / PLAYER_SHIELD_MAX : 0,
+      hpRatio: PLAYER_HP_MAX > 0 ? (this._playerHp ?? 0) / PLAYER_HP_MAX : 0,
+    };
+  }
+
+  _finalizeEnemyLearning(outcome) {
+    if (this._runLearningRecorded) return;
+    this._runLearningRecorded = true;
+    let learningState = null;
+    try {
+      learningState = this._enemyAdaptivePolicy?.trainFromSession?.(this._enemyLearningSession, outcome) ?? null;
+    } catch {
+      learningState = this._enemyAdaptivePolicy?.getSnapshot?.() ?? null;
+    }
+    this.events.emit?.(EVENTS.RUN_ENDED, {
+      outcome,
+      runScore: RunState.score,
+      learningState,
+    });
   }
 
   // ── HUD ───────────────────────────────────────────────────────────────────

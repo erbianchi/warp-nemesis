@@ -85,6 +85,26 @@ describe('Raptor', () => {
       assert.ok(raptor.y >= 96 && raptor.y <= 484);
       assert.equal(raptor.active, true);
     });
+
+    it('unlocks adaptive behavior only after the entry pass completes', () => {
+      const scene = createMockScene();
+      const raptor = new Raptor(scene, -40, 220, {
+        ...BASE_STATS,
+        adaptive: {
+          enabled: true,
+          minSpeedScalar: 0.9,
+          maxSpeedScalar: 1.1,
+        },
+      }, 'side_left');
+
+      assert.equal(raptor.canUseAdaptiveBehavior(), false);
+
+      for (let index = 0; index < 20; index += 1) {
+        raptor.update(250);
+      }
+
+      assert.equal(raptor.canUseAdaptiveBehavior(), true);
+    });
   });
 
   describe('fire()', () => {

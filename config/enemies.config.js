@@ -1,5 +1,26 @@
 /** @module enemies.config */
 
+const DEFAULT_ADAPTIVE = Object.freeze({
+  enabled: true,
+  minSpeedScalar: 0.85,
+  maxSpeedScalar: 1.15,
+  minTrainingSpawns: 1,
+});
+
+const HEAVY_ADAPTIVE = Object.freeze({
+  enabled: true,
+  minSpeedScalar: 0.85,
+  maxSpeedScalar: 1.25,
+  minTrainingSpawns: 1,
+});
+
+const SKIRM_ADAPTIVE = Object.freeze({
+  enabled: true,
+  minSpeedScalar: 0.9,
+  maxSpeedScalar: 1.15,
+  minTrainingSpawns: 1,
+});
+
 /**
  * Base stats for each enemy type.
  * Actual in-game stats are computed by WaveSpawner:
@@ -18,6 +39,7 @@ export const ENEMIES = {
     score: 50,
     dropChance: 0.10,
     bulletSpeed: 220,
+    adaptive: SKIRM_ADAPTIVE,
   },
 
   /** Raptor — heavy slow gunship. Larger frame, shielded, fires an 8-way star burst. */
@@ -30,6 +52,7 @@ export const ENEMIES = {
     score: 300,
     dropChance: 0.18,
     bulletSpeed: 230, // heavy bolts, but fast enough to feel threatening
+    adaptive: HEAVY_ADAPTIVE,
   },
 
   /** Mine — slow drifting gravity trap. Heavy contact damage, no ranged attack. */
@@ -42,6 +65,7 @@ export const ENEMIES = {
     score: 200,
     dropChance: 0.10,
     bulletSpeed: 0,
+    adaptive: HEAVY_ADAPTIVE,
   },
 
   fighter: {
@@ -52,6 +76,7 @@ export const ENEMIES = {
     score: 100,
     dropChance: 0.15,
     bulletSpeed: 280,
+    adaptive: DEFAULT_ADAPTIVE,
   },
 
   bomber: {
@@ -62,6 +87,7 @@ export const ENEMIES = {
     score: 250,
     dropChance: 0.35,
     bulletSpeed: 200,
+    adaptive: HEAVY_ADAPTIVE,
   },
 
   interceptor: {
@@ -72,6 +98,7 @@ export const ENEMIES = {
     score: 150,
     dropChance: 0.10,
     bulletSpeed: 350,
+    adaptive: DEFAULT_ADAPTIVE,
   },
 
   turretDrone: {
@@ -82,6 +109,7 @@ export const ENEMIES = {
     score: 200,
     dropChance: 0.20,
     bulletSpeed: 260,
+    adaptive: DEFAULT_ADAPTIVE,
   },
 
   kamikaze: {
@@ -92,6 +120,7 @@ export const ENEMIES = {
     score: 80,
     dropChance: 0.05,
     bulletSpeed: 0,
+    adaptive: DEFAULT_ADAPTIVE,
   },
 };
 

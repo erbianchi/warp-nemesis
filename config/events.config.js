@@ -7,6 +7,7 @@ export const EVENTS = {
   GAME_OVER:      'game:over',
   LEVEL_COMPLETE: 'level:complete',
   LEVEL_START:    'level:start',
+  RUN_ENDED:      'run:ended',
 
   // Player
   PLAYER_HIT:     'player:hit',
@@ -15,8 +16,10 @@ export const EVENTS = {
   SHIELD_CHANGED: 'player:shield_changed',
 
   // Enemies / waves
+  ENEMY_SPAWNED:       'enemy:spawned',
   ENEMY_KILLED:        'enemy:killed',
   ENEMY_DIED:          'enemy:died',      // emitted by EnemyBase on death (score, drops)
+  ENEMY_ESCAPED:       'enemy:escaped',
   ENEMY_FIRE:          'enemy:fire',      // emitted by enemy entities when shooting
   BOSS_PHASE:          'boss:phase_changed',
   WAVE_START:          'wave:start',

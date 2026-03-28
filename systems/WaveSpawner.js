@@ -15,7 +15,7 @@ import { EVENTS } from '../config/events.config.js';
  * @param {number} difficultyBase   - Level multiplier
  * @param {number} difficultyFactor - Wave multiplier
  * @param {object} planeOverrides   - { preset?, hpModifier?, damageModifier?, speedModifier?, fireRateModifier?, shieldModifier? }
- * @returns {{ hp: number, damage: number, contactDamage?: number, speed: number, fireRate: number, score: number, dropChance: number, bulletSpeed: number, shield: number }}
+ * @returns {{ hp: number, damage: number, contactDamage?: number, speed: number, baseSpeed: number, fireRate: number, score: number, dropChance: number, bulletSpeed: number, shield: number }}
  */
 export function resolveStats(type, difficultyBase, difficultyFactor, planeOverrides = {}) {
   const base = ENEMIES[type];
@@ -39,6 +39,7 @@ export function resolveStats(type, difficultyBase, difficultyFactor, planeOverri
       ? undefined
       : Math.round(base.contactDamage * difficulty * damageMod),
     speed:       Math.round(base.speed      * speedMod),
+    baseSpeed:   base.speed,
     fireRate:    Math.round(base.fireRate   / fireRateMod),
     score:       Math.round(base.score      * difficulty),
     dropChance:  base.dropChance,
@@ -206,11 +207,18 @@ export class WaveSpawner {
    * @param {number}       levelIndex - 0-based index into LEVELS
    * @param {Function}     spawnFn    - spawnFn(type, x, y, stats, dance, meta)
    * @param {Function}     [rng]      - Optional RNG for pool sampling (default Math.random)
+   * @param {{statsResolver?: Function}} [options={}]
    */
-  constructor(scene, levelIndex, spawnFn, rng = Math.random) {
+  constructor(scene, levelIndex, spawnFn, rng = Math.random, options = {}) {
     this._scene  = scene;
     this._spawnFn = spawnFn;
     this._rng     = rng;
+    this._statsResolver = options.statsResolver ?? ((args) => resolveStats(
+      args.type,
+      args.difficultyBase,
+      args.difficultyFactor,
+      args.planeOverrides
+    ));
 
     this._levelConfig = LEVELS[levelIndex];
     if (!this._levelConfig) {
@@ -226,6 +234,7 @@ export class WaveSpawner {
     this._waitingForWave  = false;
     this._nextWaveAt      = 0;
     this._done            = false;
+    this._nextSquadId     = 1;
   }
 
   /**
@@ -338,16 +347,30 @@ export class WaveSpawner {
     const { difficultyBase } = this._levelConfig;
     const difficultyFactor = meta.difficultyFactor ?? this._currentWave?.difficultyFactor ?? 1;
     const defaultDance = squadron.dance ?? 'straight';
+    const squadId = `wave-${meta.waveId ?? this._currentWave?.id ?? 'na'}-squad-${this._nextSquadId++}`;
     const spawnMeta = {
       overlay: Boolean(meta.overlay),
       sourceEventId: meta.sourceEvent?.id ?? null,
       waveId: meta.waveId ?? this._currentWave?.id ?? null,
+      squadId,
+      squadTemplateId: squadron.id ?? null,
+      squadSize: squadron.planes.length,
+      formation: squadron.formation ?? null,
+      dance: defaultDance,
     };
 
     const positions = resolveFormationPositions(squadron, width, height, this._rng);
 
     squadron.planes.forEach((plane, i) => {
-      const stats = resolveStats(plane.type, difficultyBase, difficultyFactor, plane);
+      const stats = this._statsResolver({
+        type: plane.type,
+        difficultyBase,
+        difficultyFactor,
+        planeOverrides: plane,
+        squadron,
+        wave: this._currentWave,
+        spawnMeta,
+      });
       const pos   = positions[i] ?? positions[positions.length - 1];
       const dance = plane.dance ?? defaultDance;
       this._spawnFn(plane.type, pos.x, pos.y, stats, dance, spawnMeta);
@@ -364,6 +387,7 @@ export class WaveSpawner {
       overlay: spawnMeta.overlay,
       sourceEventId: spawnMeta.sourceEventId,
       waveId: spawnMeta.waveId,
+      squadId: spawnMeta.squadId,
     });
   }
 

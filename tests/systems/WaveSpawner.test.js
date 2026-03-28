@@ -239,6 +239,35 @@ describe('WaveSpawner', () => {
     assert.equal(spawner._squadronQueue.length, 0, 'the single selected squadron should have been dispatched');
   });
 
+  it('uses an injected stats resolver when spawning enemies', () => {
+    const spawner = new WaveSpawner(
+      scene,
+      0,
+      spawnFn,
+      Math.random,
+      {
+        statsResolver: () => ({
+          hp: 10,
+          damage: 10,
+          contactDamage: undefined,
+          speed: 999,
+          baseSpeed: 80,
+          fireRate: 1000,
+          score: 50,
+          dropChance: 0,
+          bulletSpeed: 220,
+          shield: 0,
+        }),
+      }
+    );
+
+    spawner.start();
+    spawner.update(16);
+
+    assert.ok(spawned.length > 0);
+    assert.equal(spawned[0].stats.speed, 999);
+  });
+
   it('per-plane dance overrides the squadron default dance', () => {
     const spawner = new WaveSpawner(scene, 0, spawnFn);
     spawner._currentWave = { difficultyFactor: 1.0 };

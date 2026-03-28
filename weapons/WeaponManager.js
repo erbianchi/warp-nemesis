@@ -77,6 +77,9 @@ export class WeaponManager {
   /** Current heat recovery step in milliseconds per recovered heat shot. */
   get heatRecoveryStepMs() { return this._heatRecoveryStepMs; }
 
+  /** Current slot 1 weapon key. */
+  get primaryWeaponKey() { return this._slots[0]; }
+
   /** True while slot 1 is locked by overheat and still cooling back down. */
   get isCoolingDown() {
     return Boolean(this._slots[0]) && this._isOverheated;
@@ -182,6 +185,19 @@ export class WeaponManager {
           : '',
       };
     });
+  }
+
+  /**
+   * Lightweight state snapshot used by the enemy learning system.
+   * @returns {{primaryWeaponKey: string|null, heatRatio: number, isOverheated: boolean, primaryDamageMultiplier: number}}
+   */
+  getLearningSnapshot() {
+    return {
+      primaryWeaponKey: this.primaryWeaponKey ?? null,
+      heatRatio: this._maxHeatShots > 0 ? this._heatShots / this._maxHeatShots : 0,
+      isOverheated: this._isOverheated,
+      primaryDamageMultiplier: this._primaryDamageMultiplier,
+    };
   }
 
   /**

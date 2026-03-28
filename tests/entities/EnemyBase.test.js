@@ -110,18 +110,56 @@ describe('EnemyBase', () => {
     assert.equal(enemy.shield, 0);
     assert.equal(enemy.hp, 0);
     assert.equal(enemy.alive, false);
-    assert.deepEqual(events.at(-1), {
-      event: EVENTS.ENEMY_DIED,
-      data: {
-        x: 100,
-        y: 100,
-        type: 'test_enemy',
-        vx: 0,
-        vy: 0,
-        score: 25,
-        scoreMultiplier: 1.5,
-        dropChance: 0,
+    assert.equal(events.at(-1).event, EVENTS.ENEMY_DIED);
+    assert.equal(events.at(-1).data.enemy, enemy);
+    assert.equal(events.at(-1).data.x, 100);
+    assert.equal(events.at(-1).data.y, 100);
+    assert.equal(events.at(-1).data.type, 'test_enemy');
+    assert.equal(events.at(-1).data.vx, 0);
+    assert.equal(events.at(-1).data.vy, 0);
+    assert.equal(events.at(-1).data.score, 25);
+    assert.equal(events.at(-1).data.scoreMultiplier, 1.5);
+    assert.equal(events.at(-1).data.dropChance, 0);
+    assert.equal(events.at(-1).data.cause, 'destroyed');
+  });
+
+  it('keeps adaptive movement locked until explicitly unlocked', () => {
+    enemy = new TestEnemy(scene, 100, 100, {
+      ...TEST_STATS,
+      speed: 80,
+      adaptive: {
+        enabled: true,
+        minSpeedScalar: 0.9,
+        maxSpeedScalar: 1.15,
       },
     });
+    scene._enemyAdaptivePolicy = {
+      getPositionOffsets() { return [-1, 0, 1]; },
+      getVerticalOffsets() { return [-1, 0, 1]; },
+      getSpeedCandidates() { return [0.9, 1, 1.15]; },
+      resolveBehavior({ candidates }) {
+        return candidates.at(-1);
+      },
+    };
+
+    const lockedPlan = enemy.resolveAdaptiveMovePlan(180, {
+      candidateY: 160,
+      rangePx: 80,
+      yRangePx: 60,
+    });
+    assert.equal(lockedPlan.x, 180);
+    assert.equal(lockedPlan.y, 160);
+    assert.equal(lockedPlan.speedScalar, 1);
+
+    enemy.unlockAdaptiveBehavior();
+
+    const unlockedPlan = enemy.resolveAdaptiveMovePlan(180, {
+      candidateY: 160,
+      rangePx: 80,
+      yRangePx: 60,
+    });
+    assert.ok(unlockedPlan.x > 180);
+    assert.ok(unlockedPlan.y >= 160);
+    assert.equal(unlockedPlan.speedScalar, 1.15);
   });
 });

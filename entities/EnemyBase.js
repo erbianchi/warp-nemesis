@@ -1,7 +1,14 @@
 /** @module EnemyBase */
 
 import { EVENTS } from '../config/events.config.js';
+import { GAME_CONFIG } from '../config/game.config.js';
+import { ENEMY_LEARNING_CONFIG } from '../config/enemyLearning.config.js';
 import { ShieldController } from '../systems/ShieldController.js';
+import { buildPlayerBulletThreatSnapshot } from '../systems/ml/EnemyPolicyMath.js';
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
 
 /**
  * In-browser: Phaser is a CDN global, available before any ES module evaluates.
@@ -71,6 +78,10 @@ export class EnemyBase extends _BaseSprite {
     /** @type {number} */
     this.speed = stats.speed;
     /** @type {number} */
+    this._nativeSpeed = stats.speed;
+    /** @type {number} */
+    this.baseSpeed = stats.baseSpeed ?? stats.speed;
+    /** @type {number} */
     this.fireRate = stats.fireRate;
     /** @type {number} */
     this.scoreValue = stats.score;
@@ -78,11 +89,32 @@ export class EnemyBase extends _BaseSprite {
     this.dropChance = stats.dropChance;
     /** @type {number} */
     this.bulletSpeed = stats.bulletSpeed;
+    /** @type {{enabled: boolean, minSpeedScalar: number, maxSpeedScalar: number, currentSpeedScalar: number, predictedEnemyWinRate: number, predictedPressure: number, predictedCollisionRisk: number, predictedBulletRisk: number}} */
+    this.adaptiveProfile = {
+      enabled: stats.adaptive?.enabled ?? false,
+      minSpeedScalar: stats.adaptive?.minSpeedScalar ?? 1,
+      maxSpeedScalar: stats.adaptive?.maxSpeedScalar ?? 1,
+      currentSpeedScalar: 1,
+      predictedEnemyWinRate: stats.adaptive?.predictedEnemyWinRate ?? 0.5,
+      predictedSurvival: stats.adaptive?.predictedSurvival ?? 0.5,
+      predictedPressure: stats.adaptive?.predictedPressure ?? 0.5,
+      predictedCollisionRisk: stats.adaptive?.predictedCollisionRisk ?? 0.5,
+      predictedBulletRisk: stats.adaptive?.predictedBulletRisk ?? 0.5,
+    };
+    this._adaptiveUnlocked = !this.adaptiveProfile.enabled;
 
     /** @type {boolean} */
     this.alive = true;
     /** @type {boolean} */
     this._destroyed = false;
+    /** @type {boolean} */
+    this._learningResolved = false;
+    /** @type {number} */
+    this._movementSpeedMultiplier = 1;
+    /** @type {number} */
+    this._baseMovementSpeedMultiplier = this.baseSpeed > 0
+      ? Math.max(0.25, this._nativeSpeed / this.baseSpeed)
+      : 1;
 
     /** @type {number} - accumulated ms since last shot */
     this._fireCooldown = 0;
@@ -108,6 +140,7 @@ export class EnemyBase extends _BaseSprite {
         this.maxShield = maxPoints;
       },
     });
+    this._applyAdaptiveSpeedScalar(1);
     this.setupMovement();
     this.setupWeapon();
   }
@@ -175,9 +208,12 @@ export class EnemyBase extends _BaseSprite {
 
     if (this.y < 0) return; // don't fire until on screen
     this._fireCooldown += delta;
+    if (this._formationFireControlled) return;
     if (this.fireRate > 0 && this._fireCooldown >= this.fireRate) {
-      this._fireCooldown = 0;
-      this.fire();
+      if (this.shouldFireNow()) {
+        this._fireCooldown = 0;
+        this.fire();
+      }
     }
   }
 
@@ -186,17 +222,23 @@ export class EnemyBase extends _BaseSprite {
   /**
    * Apply damage to this enemy.
    * @param {number} amount
-   * @param {number} [scoreMultiplier=1]
+   * @param {number|{scoreMultiplier?: number, cause?: string}} [options=1]
    */
-  takeDamage(amount, scoreMultiplier = 1) {
+  takeDamage(amount, options = 1) {
     if (!this.alive) return;
+    const resolvedOptions = typeof options === 'object' && options !== null
+      ? options
+      : { scoreMultiplier: options };
     const shieldResult = this._shield.takeDamage(amount);
     if (shieldResult.overflow <= 0) return;
 
     this.hp -= shieldResult.overflow;
     if (this.hp <= 0) {
       this.hp = 0;
-      this.die({ scoreMultiplier });
+      this.die({
+        scoreMultiplier: resolvedOptions.scoreMultiplier ?? 1,
+        cause: resolvedOptions.cause,
+      });
     }
   }
 
@@ -263,7 +305,9 @@ export class EnemyBase extends _BaseSprite {
    * @param {{scoreMultiplier?: number}} [opts]
    */
   onDeath(opts = {}) {
+    this._learningResolved = true;
     this.scene.events.emit(EVENTS.ENEMY_DIED, {
+      enemy:       this,
       x:          this.x,
       y:          this.y,
       type:       this.enemyType,
@@ -272,7 +316,282 @@ export class EnemyBase extends _BaseSprite {
       score:      this.scoreValue,
       scoreMultiplier: opts.scoreMultiplier ?? 1,
       dropChance: this.dropChance,
+      cause:      opts.cause ?? 'destroyed',
+      squadId:    this._squadId ?? null,
+      squadTemplateId: this._squadTemplateId ?? null,
     });
+  }
+
+  /** Emit a one-shot escape event for learning telemetry. */
+  markEscaped() {
+    if (this._learningResolved) return;
+    this._learningResolved = true;
+    this.scene.events.emit(EVENTS.ENEMY_ESCAPED, {
+      enemy: this,
+      x: this.x,
+      y: this.y,
+      type: this.enemyType,
+      squadId: this._squadId ?? null,
+      squadTemplateId: this._squadTemplateId ?? null,
+    });
+  }
+
+  _applyAdaptiveSpeedScalar(speedScalar = 1) {
+    const minSpeedScalar = this.adaptiveProfile?.minSpeedScalar ?? 1;
+    const maxSpeedScalar = this.adaptiveProfile?.maxSpeedScalar ?? 1;
+    const nextScalar = clamp(speedScalar, minSpeedScalar, maxSpeedScalar);
+
+    this.adaptiveProfile.currentSpeedScalar = nextScalar;
+    this.speed = Math.max(1, Math.round((this._nativeSpeed ?? 1) * nextScalar));
+    this._movementSpeedMultiplier = (this._baseMovementSpeedMultiplier ?? 1) * nextScalar;
+    return nextScalar;
+  }
+
+  _getPlayerSnapshot() {
+    return this.scene?._getEnemyLearningPlayerSnapshot?.() ?? {
+      x: this.scene?._player?.x ?? GAME_CONFIG.WIDTH / 2,
+      y: this.scene?._player?.y ?? GAME_CONFIG.HEIGHT - 80,
+      hasShield: false,
+      shieldRatio: 0,
+      hpRatio: 1,
+    };
+  }
+
+  _getPlayerBulletThreatSnapshot() {
+    const playerBullets = this.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [];
+    return buildPlayerBulletThreatSnapshot(playerBullets, this, this.scene?._enemyAdaptivePolicy?._config?.normalization ?? {});
+  }
+
+  _buildAdaptiveAnchors(baseX, candidateY, rangePx, yRangePx, bounds) {
+    const player = this._getPlayerSnapshot();
+    const threat = this._getPlayerBulletThreatSnapshot();
+    const baseAnchor = {
+      mode: 'hold',
+      x: baseX,
+      y: candidateY,
+    };
+    const anchors = [
+      baseAnchor,
+      {
+        mode: 'press',
+        x: player.x ?? baseX,
+        y: clamp(
+          Math.min((player.y ?? candidateY) - 90, candidateY + yRangePx),
+          bounds.topMarginPx,
+          bounds.bottomMarginPx
+        ),
+      },
+      {
+        mode: 'retreat',
+        x: baseX,
+        y: clamp(candidateY - yRangePx, bounds.topMarginPx, bounds.bottomMarginPx),
+      },
+      {
+        mode: 'evade',
+        x: clamp(threat.suggestedSafeX ?? baseX, bounds.marginPx, GAME_CONFIG.WIDTH - bounds.marginPx),
+        y: clamp(threat.suggestedSafeY ?? candidateY, bounds.topMarginPx, bounds.bottomMarginPx),
+      },
+    ];
+
+    const playerX = player.x ?? baseX;
+    const flankOffset = Math.max(rangePx, 40);
+    anchors.push({
+      mode: 'flank',
+      x: clamp(playerX + (baseX <= playerX ? -flankOffset : flankOffset), bounds.marginPx, GAME_CONFIG.WIDTH - bounds.marginPx),
+      y: clamp(candidateY + yRangePx * 0.25, bounds.topMarginPx, bounds.bottomMarginPx),
+    });
+
+    return anchors;
+  }
+
+  /**
+   * Resolve a learned movement target and speed scalar from candidate actions.
+   * @param {number} baseX
+   * @param {{
+   *   candidateY?: number,
+   *   rangePx?: number,
+   *   yRangePx?: number,
+   *   marginPx?: number,
+   *   topMarginPx?: number,
+   *   bottomMarginPx?: number,
+   *   commit?: boolean,
+   *   speedScalars?: number[],
+   * }} [options={}]
+   * @returns {{x: number, y: number, speedScalar: number, predictedEnemyWinRate: number, predictedSurvival: number, predictedPressure: number, predictedCollisionRisk: number, predictedBulletRisk: number, score: number, actionMode?: string}}
+   */
+  resolveAdaptiveMovePlan(baseX, options = {}) {
+    const rangePx = Math.max(0, options.rangePx ?? 0);
+    const yRangePx = Math.max(0, options.yRangePx ?? Math.round(rangePx * 0.7));
+    const marginPx = Math.max(0, options.marginPx ?? 24);
+    const topMarginPx = Math.max(0, options.topMarginPx ?? 24);
+    const bottomMarginPx = Math.max(topMarginPx, options.bottomMarginPx ?? (GAME_CONFIG.HEIGHT - 24));
+    const candidateY = options.candidateY ?? this.y;
+    const commit = options.commit !== false;
+    const policy = this.scene?._enemyAdaptivePolicy;
+
+    const clampedBaseX = clamp(baseX, marginPx, GAME_CONFIG.WIDTH - marginPx);
+    const clampedBaseY = clamp(candidateY, topMarginPx, bottomMarginPx);
+    if (!this.canUseAdaptiveBehavior() || !policy?.resolveBehavior) {
+      const speedScalar = this.canUseAdaptiveBehavior()
+        ? clamp(
+            this.adaptiveProfile?.currentSpeedScalar ?? 1,
+            this.adaptiveProfile?.minSpeedScalar ?? 1,
+            this.adaptiveProfile?.maxSpeedScalar ?? 1
+          )
+        : 1;
+      if (commit) this._applyAdaptiveSpeedScalar(speedScalar);
+      return {
+        x: clampedBaseX,
+        y: clampedBaseY,
+        speedScalar,
+        predictedEnemyWinRate: this.adaptiveProfile?.predictedEnemyWinRate ?? 0.5,
+        predictedSurvival: this.adaptiveProfile?.predictedSurvival ?? 0.5,
+        predictedPressure: this.adaptiveProfile?.predictedPressure ?? 0.5,
+        predictedCollisionRisk: this.adaptiveProfile?.predictedCollisionRisk ?? 0.5,
+        predictedBulletRisk: this.adaptiveProfile?.predictedBulletRisk ?? 0.5,
+        score: 0,
+        actionMode: this._adaptiveActionMode ?? 'hold',
+      };
+    }
+
+    const xOffsets = rangePx > 0
+      ? (policy.getPositionOffsets?.() ?? [-1, -0.5, 0, 0.5, 1])
+      : [0];
+    const yOffsets = yRangePx > 0
+      ? (policy.getVerticalOffsets?.() ?? [-1, -0.5, 0, 0.5, 1])
+      : [0];
+    const speedScalars = options.speedScalars ?? policy.getSpeedCandidates?.(this.enemyType) ?? [1];
+    const candidates = [];
+    const anchors = this._buildAdaptiveAnchors(clampedBaseX, clampedBaseY, rangePx, yRangePx, {
+      marginPx,
+      topMarginPx,
+      bottomMarginPx,
+    });
+
+    for (const anchor of anchors) {
+      for (const xOffset of xOffsets) {
+        const candidateX = clamp(anchor.x + xOffset * rangePx * 0.45, marginPx, GAME_CONFIG.WIDTH - marginPx);
+        for (const yOffset of yOffsets) {
+          const candidateYValue = clamp(anchor.y + yOffset * yRangePx * 0.45, topMarginPx, bottomMarginPx);
+          for (const speedScalar of speedScalars) {
+            candidates.push({
+              x: candidateX,
+              y: candidateYValue,
+              speedScalar,
+              actionMode: anchor.mode,
+            });
+          }
+        }
+      }
+    }
+
+    const resolved = policy.resolveBehavior({
+      enemy: this,
+      enemyType: this.enemyType,
+      candidates,
+    }) ?? {
+      x: clampedBaseX,
+      y: clampedBaseY,
+      speedScalar: 1,
+      predictedEnemyWinRate: 0.5,
+      predictedSurvival: 0.5,
+      predictedPressure: 0.5,
+      predictedCollisionRisk: 0.5,
+      predictedBulletRisk: 0.5,
+      score: 0,
+      actionMode: 'hold',
+    };
+
+    const speedScalar = commit
+      ? this._applyAdaptiveSpeedScalar(resolved.speedScalar ?? 1)
+      : clamp(
+          resolved.speedScalar ?? 1,
+          this.adaptiveProfile?.minSpeedScalar ?? 1,
+          this.adaptiveProfile?.maxSpeedScalar ?? 1
+        );
+
+    this.adaptiveProfile.predictedEnemyWinRate = resolved.predictedEnemyWinRate ?? this.adaptiveProfile.predictedEnemyWinRate;
+    this.adaptiveProfile.predictedSurvival = resolved.predictedSurvival ?? this.adaptiveProfile.predictedSurvival;
+    this.adaptiveProfile.predictedPressure = resolved.predictedPressure ?? this.adaptiveProfile.predictedPressure;
+    this.adaptiveProfile.predictedCollisionRisk = resolved.predictedCollisionRisk ?? this.adaptiveProfile.predictedCollisionRisk;
+    this.adaptiveProfile.predictedBulletRisk = resolved.predictedBulletRisk ?? this.adaptiveProfile.predictedBulletRisk;
+    this._adaptiveActionMode = resolved.actionMode ?? this._adaptiveActionMode ?? 'hold';
+
+    return {
+      x: resolved.x ?? clampedBaseX,
+      y: resolved.y ?? clampedBaseY,
+      speedScalar,
+      predictedEnemyWinRate: resolved.predictedEnemyWinRate ?? 0.5,
+      predictedSurvival: resolved.predictedSurvival ?? 0.5,
+      predictedPressure: resolved.predictedPressure ?? 0.5,
+      predictedCollisionRisk: resolved.predictedCollisionRisk ?? 0.5,
+      predictedBulletRisk: resolved.predictedBulletRisk ?? 0.5,
+      score: resolved.score ?? 0,
+      actionMode: resolved.actionMode ?? 'hold',
+    };
+  }
+
+  shouldUseAdaptiveFireWindow() {
+    return Boolean(this.canUseAdaptiveBehavior() && this.scene?._enemyAdaptivePolicy?.scoreCurrentPosition);
+  }
+
+  shouldFireNow() {
+    if (!this.shouldUseAdaptiveFireWindow()) return true;
+
+    const evaluation = this.scene?._enemyAdaptivePolicy?.scoreCurrentPosition?.({
+      enemy: this,
+      enemyType: this.enemyType,
+    });
+    if (!evaluation) return true;
+
+    const policy = ENEMY_LEARNING_CONFIG.runtimePolicy ?? {};
+    return evaluation.score >= (policy.adaptiveFireScoreFloor ?? 0.22)
+      || evaluation.predictedPressure >= (policy.adaptivePressureFloor ?? 0.42)
+      || evaluation.predictedEnemyWinRate >= (policy.adaptiveWinFloor ?? 0.48)
+      || this._fireCooldown >= this.fireRate * (policy.adaptiveForceFireMultiplier ?? 2.1);
+  }
+
+  canUseAdaptiveBehavior() {
+    return Boolean(this.adaptiveProfile?.enabled && this._adaptiveUnlocked);
+  }
+
+  unlockAdaptiveBehavior() {
+    if (!this.adaptiveProfile?.enabled) return false;
+    this._adaptiveUnlocked = true;
+    return true;
+  }
+
+  /**
+   * @param {number} [speed=this.bulletSpeed]
+   * @returns {Array<{vx: number, vy: number, width?: number, height?: number, color?: number}>}
+   */
+  getNativeFireBursts(speed = this.bulletSpeed) {
+    return [{ vx: 0, vy: speed }];
+  }
+
+  /**
+   * Emit the native shot pattern for the enemy class.
+   * @param {{xOffset?: number, yOffset?: number, speedOverride?: number}} [options={}]
+   */
+  emitNativeFireBursts(options = {}) {
+    const bursts = this.getNativeFireBursts(options.speedOverride ?? this.bulletSpeed);
+    for (const burst of bursts) {
+      this.scene.events.emit(EVENTS.ENEMY_FIRE, {
+        x: this.x + (options.xOffset ?? 0),
+        y: this.y + (options.yOffset ?? 0),
+        vx: burst.vx,
+        vy: burst.vy,
+        damage: this.damage,
+        width: burst.width,
+        height: burst.height,
+        color: burst.color,
+        sourceType: this.enemyType,
+        sourceEnemy: this,
+        sourceEnemyId: this._learningId ?? null,
+        squadId: this._squadId ?? null,
+        squadTemplateId: this._squadTemplateId ?? null,
+      });
+    }
   }
 
   /**

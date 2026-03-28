@@ -132,6 +132,40 @@ export function installPhaserGlobal() {
 
 /** Create a mock Phaser scene with stubbed add/physics/input/events APIs. */
 export function createMockScene() {
+  const createEmitter = () => {
+    const listeners = new Map();
+    return {
+      on(event, handler, context) {
+        const bucket = listeners.get(event) ?? [];
+        bucket.push({ handler, context });
+        listeners.set(event, bucket);
+        return this;
+      },
+      off(event, handler, context) {
+        if (!listeners.has(event)) return this;
+        if (!handler) {
+          listeners.delete(event);
+          return this;
+        }
+
+        const filtered = listeners.get(event).filter((entry) => (
+          entry.handler !== handler || (context && entry.context !== context)
+        ));
+
+        if (filtered.length > 0) listeners.set(event, filtered);
+        else listeners.delete(event);
+        return this;
+      },
+      emit(event, ...args) {
+        const bucket = [...(listeners.get(event) ?? [])];
+        for (const entry of bucket) {
+          entry.handler.apply(entry.context ?? this, args);
+        }
+        return this;
+      },
+    };
+  };
+
   const makeMockBody = () => ({
     velocity:              { x: 0, y: 0, normalize: () => ({ scale: () => {} }) },
     speed:                 0,
@@ -367,6 +401,6 @@ export function createMockScene() {
       },
     },
     scene:  { start: () => {} },
-    events: { emit: () => {}, on: () => {}, off: () => {} },
+    events: createEmitter(),
   };
 }

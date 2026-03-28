@@ -13,6 +13,7 @@ Built with **Phaser 3** (HTML/JS/CSS). Modular architecture. Single-page app, no
 | Layer | Choice |
 |---|---|
 | Game framework | Phaser 3 (CDN: `https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js`) |
+| ML runtime | TensorFlow.js (script tag in `index.html`) |
 | Language | Vanilla ES6+ modules (no TypeScript, no bundler) |
 | Styling | CSS (minimal — canvas-based game, CSS handles UI chrome only) |
 | Entry point | `index.html` |
@@ -32,6 +33,7 @@ No npm, no webpack, no Vite. Keep the dev loop frictionless. A simple `python -m
 │
 ├── config/
 │   ├── game.config.js          # Global constants (canvas size, physics, gravity)
+│   ├── enemyLearning.config.js # Adaptive enemy-learning and model-training settings
 │   ├── levels.config.js        # Level definitions (enemies, waves, scrollspeed, boss)
 │   ├── weapons.config.js       # All weapon definitions
 │   ├── ships.config.js         # All player ship definitions
@@ -73,7 +75,20 @@ No npm, no webpack, no Vite. Keep the dev loop frictionless. A simple `python -m
 │   ├── BonusSystem.js          # Bonus drop logic, pickup handling
 │   ├── ShieldController.js     # Reusable shield logic + shield bar visuals
 │   ├── RunState.js             # Roguelike run state (singleton): score, lives, active weapons, upgrades
-│   └── EffectsSystem.js        # Explosions, screen flash, particles
+│   ├── EffectsSystem.js        # Explosions, screen flash, particles
+│   └── ml/
+│       ├── AdaptiveStatsResolver.js
+│       ├── EnemyAdaptivePolicy.js
+│       ├── EnemyDatasetStore.js
+│       ├── EnemyFeatureEncoder.js
+│       ├── EnemyLearningSession.js
+│       ├── EnemyLearningStore.js
+│       ├── EnemyPolicyMath.js
+│       ├── LogisticRegressor.js
+│       ├── SquadDatasetStore.js
+│       ├── SquadFeatureEncoder.js
+│       ├── SquadLearningStore.js
+│       └── SquadPolicyNetwork.js
 │
 ├── ui/
 │   ├── HUD.js                  # Health bar, shield bar, weapon slots, score
@@ -101,7 +116,12 @@ No npm, no webpack, no Vite. Keep the dev loop frictionless. A simple `python -m
     │   ├── BonusSystem.test.js
     │   ├── CollisionSystem.test.js
     │   ├── EffectsSystem.test.js
-    │   └── ScrollingBackground.test.js
+    │   ├── ScrollingBackground.test.js
+    │   └── ml/
+    │       ├── EnemyAdaptivePolicy.test.js
+    │       ├── EnemyFeatureEncoder.test.js
+    │       ├── EnemyLearningSession.test.js
+    │       └── LogisticRegressor.test.js
     ├── entities/
     │   ├── PlayerShip.test.js
     │   ├── EnemyBase.test.js
@@ -241,6 +261,23 @@ Between each level: `LevelTransitionScene` — shows score delta, offers **3 upg
 - Scroll speed increases. Enemy movement patterns become more aggressive.
 - No infinite scaling — 7 levels is a closed arc.
 
+### Adaptive Enemy Learning
+
+- Training happens at the end of each game, won or lost.
+- Raw gameplay datasets are stored in browser storage, then models are retrained on the full stored dataset.
+- Enemy and squad datasets are bounded to a recent rolling window. Do not let training data grow without limit.
+- Retraining must run in the background. End-of-run transitions should save datasets immediately and queue TensorFlow work without freezing the screen.
+- Enemy fire direction is class-native and must stay class-native:
+  - `Skirm` shoots downward.
+  - `Raptor` shoots its star burst.
+- Better aiming comes from learned positioning, lane choice, speed selection, and shot timing, not by steering bullets toward the player.
+- The learned action space should be broad enough to feel meaningful: vertical repositioning, flank / press / evade / retreat choices, and bullet-aware avoidance are all valid control surfaces.
+- Collision deaths are part of the feature set and should influence avoidance, especially when the player has a shield up.
+- Bullet kills must also be a first-class learning signal. Do not rely on survival labels alone for bullet avoidance.
+- Each class has a hard maximum adaptive speed in config. The learning system may choose within the class range, but never beyond it.
+- Level 1 squad telemetry bootstraps the future Level 2 squad neural network so data collection starts before Level 2 becomes playable.
+- The squad network should have a live runtime consumer. For straight formations, `FormationController` is the seam that should query the squad model and turn it into bounded cadence / spread / vertical-pressure directives.
+
 ---
 
 ## Unit Testing
@@ -376,7 +413,7 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 
 ---
 
-## Current State (as of 2026-03-23)
+## Current State (as of 2026-03-28)
 
 ### What is implemented and working
 - `BootScene` — generates placeholder textures (player, skirm, bullets, particles, bonus octagon) and preloads the current SFX set
@@ -391,14 +428,28 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 - `Mine` — slow overlay hazard with heavy contact damage and a Phaser gravity well
 - `FormationController` — squadron dance controller with alternating side entries, reforming, drift, moving fire, and top-side returns
 - `WaveSpawner` — roguelike pool-based wave/squadron/plane system; stat resolution; formation positions; squadron staggered spawning; overlay raid scheduling
+- `systems/ml/*` — adaptive enemy learning stack with browser-persisted datasets, TensorFlow-backed retraining, staged model promotion, and Level 1 squad bootstrapping for the future Level 2 squad network
 - `BonusSystem` — weighted bonus drops, shielded pickups, collection payloads, pickup-sound routing
 - `BonusPickup` — white octagon pickup entity with slower drift and optional shield shell
 - `ShieldController` — reusable shield ring, local shield bar, shield damage routing, break animation hook
 - `EffectsSystem` — explosions, shield break blasts, floating damage / pickup text, gravity-well particles
 - `levels.config.js` — currently **1 playable level** with **16 Skirm waves**, overlay Raptor/Mine events, and short wave-to-wave pacing
 - `bonuses.config.js` — live bonus definitions, pickup motion tuning, pickup sounds, random bonus shield roll config
-- `enemies.config.js` — `skirm`, `raptor`, and `mine` stats + `standard`, `heavy`, `light`, `ace` plane presets with shield modifiers
+- `enemies.config.js` — `skirm`, `raptor`, and `mine` stats + `standard`, `heavy`, `light`, `ace` plane presets with shield modifiers and per-class adaptive speed caps
 - `debug.config.js` — URL query driven runtime debug flags such as `?debugEnd=1` for jumping straight to the level-complete sequence
+
+### Current adaptive-learning behavior
+- End-of-game learning saves raw enemy and squad datasets into browser storage.
+- Enemy bullet kills produce a direct bullet-risk training label in addition to generic survival pressure.
+- Enemy and squad datasets are pruned to a recent rolling window before retraining.
+- Retraining is queued in the background so level-complete and game-over screens stay responsive.
+- Retrained weights are staged and promoted on the next game load; the current run never changes mid-flight.
+- `Skirm` keeps its downward shot and `Raptor` keeps its native star burst. Learned policy affects movement, positioning, and allowed speed within class bounds.
+- Straight-formation `Skirm` squads fire through `FormationController` cadence patterns. Do not stack a squad controller loop on top of each ship's autonomous fire loop.
+- After the first basic dance completes, `FormationController` also queries the squad network at runtime and applies bounded cadence / spread / vertical-slot directives to the living squad.
+- Player-bullet threat and survival pressure are part of the runtime decision process, so enemies can actively dodge and choose better shot windows.
+- Level 1 squad telemetry already feeds the future Level 2 squad neural network.
+- The current `Skirm` adaptive top speed is intentionally conservative to keep Level 1 readable.
 
 ### What is stub / not yet implemented
 - `PlayerShip.js` — empty; player is currently a plain rectangle in GameScene
@@ -415,8 +466,10 @@ Do not open `index.html` directly as `file://` — ES modules require HTTP.
 - `GameScene` is the orchestrator only — it creates systems, delegates, and listens to events. No raw game logic inline.
 - All event names live in `config/events.config.js`. Never inline event strings.
 - Formation (straight dance) is driven by `FormationController`, not by individual enemy entities.
+- Squad firing cadence for straight formations belongs in `FormationController` via per-squad controller config such as `shotCadence`. Individual `fireRate` still matters as readiness within the squad cadence.
 - `WaveSpawner` emits `SQUADRON_SPAWNED` after each squadron spawns; `GameScene` listens to create `FormationController` for straight-dance squadrons.
 - Keep `config/` as the authoritative source for all balance numbers.
+- Heavy model retraining should stay off the critical render path. Save datasets synchronously if needed, but queue TensorFlow retraining in the background.
 - Phaser **3.x** only. Arcade Physics throughout — no Matter.js.
 - Target **60fps** on a mid-range laptop.
 

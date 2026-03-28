@@ -22,6 +22,21 @@ const SKIRM_STATS = resolveStats('skirm', 1.0, 1.0, {});
 const MINE_STATS = resolveStats('mine', 1.0, 1.0, {});
 const RAPTOR_STATS = resolveStats('raptor', 1.0, 1.0, {});
 
+function createLocalStorageMock(initialEntries = {}) {
+  const store = new Map(Object.entries(initialEntries));
+  return {
+    getItem(key) {
+      return store.has(key) ? store.get(key) : null;
+    },
+    setItem(key, value) {
+      store.set(key, String(value));
+    },
+    removeItem(key) {
+      store.delete(key);
+    },
+  };
+}
+
 function createHeatWarningScene(heatShots) {
   const calls = [];
   const scene = new GameScene();
@@ -97,6 +112,116 @@ describe('GameScene create', () => {
       assert.equal(scene._playerShield, 50);
     } finally {
       MetaProgression.getStartingBonuses = originalGetStartingBonuses;
+    }
+  });
+
+  it('wires adaptive model metadata into the spawner stats resolver', () => {
+    const enemyAdaptivePolicy = {
+      load() {},
+      getModifiers(enemyType) {
+        return {
+          enabled: enemyType === 'skirm',
+          minSpeedScalar: enemyType === 'skirm' ? 0.9 : 1,
+          maxSpeedScalar: enemyType === 'skirm' ? 1.25 : 1,
+          predictedEnemyWinRate: 0.61,
+          predictedPressure: 0.57,
+          predictedCollisionRisk: 0.22,
+          predictedBulletRisk: 0.19,
+        };
+      },
+      createRunSession() {
+        return {
+          update() {},
+          destroy() {},
+        };
+      },
+      resolveBehavior() { return null; },
+      getSpeedCandidates() { return [0.9, 1, 1.25]; },
+      getPositionOffsets() { return [-1, 0, 1]; },
+    };
+    const scene = new GameScene({ enemyAdaptivePolicy });
+    Object.assign(scene, createMockScene());
+
+    scene.create();
+
+    const adaptedStats = scene._spawner._statsResolver({
+      type: 'skirm',
+      difficultyBase: 1,
+      difficultyFactor: 1,
+      planeOverrides: {},
+    });
+
+    assert.equal(adaptedStats.speed, SKIRM_STATS.speed);
+    assert.equal(adaptedStats.adaptive.minSpeedScalar, 0.9);
+    assert.equal(adaptedStats.adaptive.maxSpeedScalar, 1.25);
+    assert.equal(adaptedStats.adaptive.predictedCollisionRisk, 0.22);
+  });
+
+  it('loads persisted enemy learning from browser storage when a new game starts', async () => {
+    const hadLocalStorage = Object.prototype.hasOwnProperty.call(globalThis, 'localStorage');
+    const previousLocalStorage = globalThis.localStorage;
+    const { ENEMY_LEARNING_STORAGE_KEY } = await import('../../systems/ml/EnemyLearningStore.js');
+
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      writable: true,
+      value: createLocalStorageMock(),
+    });
+
+    globalThis.localStorage.setItem(ENEMY_LEARNING_STORAGE_KEY, JSON.stringify({
+      featureVersion: 6,
+      enemyModels: {
+        skirm: {
+          winModel: { weights: [], bias: 0 },
+          survivalModel: { weights: [], bias: 0 },
+          pressureModel: { weights: [], bias: 0 },
+          collisionModel: { weights: [], bias: 0 },
+          bulletModel: { weights: [], bias: 0 },
+          sampleCount: 3,
+          lastScores: {
+            win: 0.61,
+            survival: 0.55,
+            pressure: 0.52,
+            collision: 0.28,
+            bullet: 0.31,
+          },
+        },
+      },
+    }));
+
+    try {
+      const scene = new GameScene();
+      Object.assign(scene, createMockScene());
+
+      scene.create();
+
+      const adaptedStats = scene._spawner._statsResolver({
+        type: 'skirm',
+        difficultyBase: 1,
+        difficultyFactor: 1,
+        planeOverrides: {},
+      });
+
+      assert.equal(adaptedStats.speed, SKIRM_STATS.speed);
+      assert.equal(adaptedStats.adaptive.sampleCount, 3);
+      assert.equal(adaptedStats.adaptive.predictedEnemyWinRate, 0.61);
+      assert.equal(adaptedStats.adaptive.predictedCollisionRisk, 0.28);
+
+      scene._spawnEnemy('skirm', 140, 80, adaptedStats, 'straight', {});
+      const spawned = scene._enemies.at(-1);
+      assert.equal(spawned.adaptiveProfile.minSpeedScalar, 0.9);
+      assert.equal(spawned.adaptiveProfile.maxSpeedScalar, 1.15);
+      assert.equal(spawned.adaptiveProfile.predictedEnemyWinRate, 0.61);
+    } finally {
+      if (hadLocalStorage) {
+        Object.defineProperty(globalThis, 'localStorage', {
+          configurable: true,
+          writable: true,
+          value: previousLocalStorage,
+        });
+      } else {
+        delete globalThis.localStorage;
+      }
     }
   });
 
@@ -305,13 +430,13 @@ describe('GameScene bullet damage', () => {
   it('uses the shared hot-shot payload when a warning beam hits an enemy', () => {
     const scene = new GameScene();
     let hitDamage = 0;
-    let hitScoreMultiplier = 0;
+    let hitOptions = null;
     let hiddenBullet = null;
     const enemy = {
       alive: true,
-      takeDamage: (damage, scoreMultiplier) => {
+      takeDamage: (damage, options) => {
         hitDamage = damage;
-        hitScoreMultiplier = scoreMultiplier;
+        hitOptions = options;
       },
     };
     const shotPayload = {
@@ -342,7 +467,10 @@ describe('GameScene bullet damage', () => {
 
     assert.equal(hiddenBullet, bullet);
     assert.equal(hitDamage, 12);
-    assert.equal(hitScoreMultiplier, 1.2);
+    assert.deepEqual(hitOptions, {
+      scoreMultiplier: 1.2,
+      cause: 'player_bullet',
+    });
     assert.ok(shotPayload.hitEnemies.has(enemy));
     assert.equal(bullet.body.enable, false);
   });
@@ -674,19 +802,19 @@ describe('GameScene enemy spawning', () => {
   it('prefers enemy-specific contact damage in the shared enemy-touch path', () => {
     const scene = new GameScene();
     let playerDamage = 0;
-    let died = false;
+    let died = null;
     const mine = {
       alive: true,
       damage: 10,
       contactDamage: 200,
-      die: () => { died = true; },
+      die: (opts) => { died = opts; },
     };
 
     scene._onPlayerHit = (damage) => { playerDamage = damage; };
     scene._onEnemyTouchPlayer(scene._player, mine);
 
     assert.equal(playerDamage, 200);
-    assert.equal(died, true);
+    assert.equal(died.cause, 'player_collision');
   });
 
   it('colliding with a real Mine damages the player and triggers the mine blast route', () => {
@@ -1282,6 +1410,54 @@ describe('GameScene player death', () => {
     } finally {
       MetaProgression.recordCompletedLevel = originalRecordCompletedLevel;
     }
+  });
+
+  it('trains enemy learning once when the player loses the last life', () => {
+    const outcomes = [];
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+
+    scene._player = scene.add.image(180, 420, 'spacecraft1');
+    scene._player.body = { enable: true };
+    scene._formations = [];
+    scene._explode = () => {};
+    scene._resetPlayerHeat = () => {};
+    scene._resetPlayerBonuses = () => {};
+    scene._enemyAdaptivePolicy = {
+      trainFromSession: (_session, outcome) => {
+        outcomes.push(outcome);
+        return {};
+      },
+    };
+    scene._enemyLearningSession = { destroy() {} };
+
+    scene._killPlayer();
+    scene._killPlayer();
+
+    assert.deepEqual(outcomes, ['enemy_win']);
+  });
+
+  it('does not crash the end-of-run flow when adaptive training throws', () => {
+    const emitted = [];
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene.events = {
+      emit: (...args) => emitted.push(args),
+    };
+    scene._enemyAdaptivePolicy = {
+      trainFromSession() {
+        throw new Error('training failed');
+      },
+      getSnapshot() {
+        return { enemyModels: {} };
+      },
+    };
+    scene._enemyLearningSession = { destroy() {} };
+
+    assert.doesNotThrow(() => scene._finalizeEnemyLearning('enemy_win'));
+    assert.equal(emitted.length, 1);
+    assert.equal(emitted[0][0], EVENTS.RUN_ENDED);
+    assert.equal(emitted[0][1].outcome, 'enemy_win');
   });
 });
 

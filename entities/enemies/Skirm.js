@@ -1,7 +1,6 @@
 /** @module Skirm */
 
 import { EnemyBase }    from '../EnemyBase.js';
-import { EVENTS }       from '../../config/events.config.js';
 import { GAME_CONFIG }  from '../../config/game.config.js';
 
 const { WIDTH: W, HEIGHT: H } = GAME_CONFIG;
@@ -28,6 +27,22 @@ export class Skirm extends EnemyBase {
     super(scene, x, y, 'skirm', stats, dance);
   }
 
+  _scaleDuration(durationMs, speedScalar = this.adaptiveProfile?.currentSpeedScalar ?? 1) {
+    return Math.max(1, Math.round(durationMs / ((this._baseMovementSpeedMultiplier ?? 1) * speedScalar)));
+  }
+
+  _adaptivePlan(baseX, candidateY = this.y, rangePx = 72, marginPx = 30, commit = true, yRangePx = 56) {
+    return this.resolveAdaptiveMovePlan(baseX, {
+      candidateY,
+      rangePx,
+      yRangePx,
+      marginPx,
+      topMarginPx: 24,
+      bottomMarginPx: H - 96,
+      commit,
+    });
+  }
+
   setupMovement() {
     this.body.setVelocity(0, 0);
     switch (this.dance) {
@@ -50,13 +65,7 @@ export class Skirm extends EnemyBase {
   setupWeapon() {}
 
   fire() {
-    this.scene.events.emit(EVENTS.ENEMY_FIRE, {
-      x:      this.x,
-      y:      this.y + 12,
-      vx:     0,
-      vy:     this.bulletSpeed,
-      damage: this.damage,
-    });
+    this.emitNativeFireBursts({ yOffset: 12 });
   }
 
   // ── Dances ──────────────────────────────────────────────────────────────────
@@ -68,22 +77,27 @@ export class Skirm extends EnemyBase {
    */
   _danceSweep(dir) {
     const scene = this.scene;
-    const midX  = dir === 1 ? W * 0.68 + Math.random() * 40 : W * 0.28 - Math.random() * 40;
     const midY  = H * 0.38 + Math.random() * H * 0.16;
+    const midPlan  = this._adaptivePlan(
+      dir === 1 ? W * 0.68 + Math.random() * 40 : W * 0.28 - Math.random() * 40,
+      midY,
+      84
+    );
     const exitX = dir === 1 ? W + 70 : -70;
     const exitY = midY + 60 + Math.random() * 80;
 
     scene.tweens.add({
       targets:  this,
-      x: midX, y: midY,
-      duration: 1100,
+      x: midPlan.x, y: midY,
+      duration: this._scaleDuration(1100, midPlan.speedScalar),
       ease:     'Sine.easeOut',
       onComplete: () => {
         if (!this.alive) return;
+        this.unlockAdaptiveBehavior();
         scene.tweens.add({
           targets:  this,
           x: exitX, y: exitY,
-          duration: 900,
+          duration: this._scaleDuration(900),
           ease:     'Sine.easeIn',
           onComplete: () => this._exitSilent(),
         });
@@ -102,15 +116,18 @@ export class Skirm extends EnemyBase {
       if (!this.alive) return;
       if (y > H + 40) { this._exitSilent(); return; }
 
-      const nx = Phaser.Math.Clamp(x + dir * (70 + Math.random() * 50), 30, W - 30);
       const ny = y + 70 + Math.random() * 50;
+      const plan = this._adaptivePlan(x + dir * (70 + Math.random() * 50), ny, 78);
 
       scene.tweens.add({
         targets:  this,
-        x: nx, y: ny,
-        duration: 350 + Math.random() * 150,
+        x: plan.x, y: ny,
+        duration: this._scaleDuration(350 + Math.random() * 150, plan.speedScalar),
         ease:     'Sine.easeInOut',
-        onComplete: () => zig(nx, ny, -dir),
+        onComplete: () => {
+          this.unlockAdaptiveBehavior();
+          zig(plan.x, ny, -dir);
+        },
       });
     };
 
@@ -128,15 +145,18 @@ export class Skirm extends EnemyBase {
       if (!this.alive) return;
       if (y > H + 40) { this._exitSilent(); return; }
 
-      const nx = Phaser.Math.Clamp(x + (Math.random() - 0.5) * 120, 35, W - 35);
       const ny = y + 55 + Math.random() * 65;
+      const plan = this._adaptivePlan(x + (Math.random() - 0.5) * 120, ny, 90, 35);
 
       scene.tweens.add({
         targets:  this,
-        x: nx, y: ny,
-        duration: 420 + Math.random() * 260,
+        x: plan.x, y: ny,
+        duration: this._scaleDuration(420 + Math.random() * 260, plan.speedScalar),
         ease:     'Sine.easeInOut',
-        onComplete: () => drift(nx, ny),
+        onComplete: () => {
+          this.unlockAdaptiveBehavior();
+          drift(plan.x, ny);
+        },
       });
     };
 
@@ -155,20 +175,21 @@ export class Skirm extends EnemyBase {
       if (y > H + 40) { this._exitSilent(); return; }
 
       const stepX = 48 + Math.random() * 42;
-      const nx = Phaser.Math.Clamp(x + dir * stepX, 28, W - 28);
       const ny = y + 38 + Math.random() * 38;
-      const nextDir = nx <= 40 ? 1 : nx >= W - 40 ? -1 : -dir;
+      const plan = this._adaptivePlan(x + dir * stepX, ny, 84, 28);
+      const nextDir = plan.x <= 40 ? 1 : plan.x >= W - 40 ? -1 : -dir;
 
       scene.tweens.add({
         targets:  this,
-        x: nx, y: ny,
-        duration: 120 + Math.random() * 80,
+        x: plan.x, y: ny,
+        duration: this._scaleDuration(120 + Math.random() * 80, plan.speedScalar),
         ease:     'Expo.easeOut',
         onComplete: () => {
           if (!this.alive) return;
+          this.unlockAdaptiveBehavior();
           scene.time.delayedCall(
-            45 + Math.random() * 80,
-            () => jink(nx, ny, nextDir)
+            this._scaleDuration(45 + Math.random() * 80),
+            () => jink(plan.x, ny, nextDir)
           );
         },
       });
@@ -183,8 +204,14 @@ export class Skirm extends EnemyBase {
    * feels organic while remaining highly readable and symmetrical.
    */
   _danceWhirl() {
-    const centerX = Phaser.Math.Clamp(this.x, 90, W - 90);
     const centerY = H * 0.26 + Math.random() * H * 0.10;
+    const centerPlan = this._adaptivePlan(
+      Phaser.Math.Clamp(this.x, 90, W - 90),
+      centerY,
+      76,
+      90
+    );
+    const centerX = centerPlan.x;
     const radiusX = 44 + Math.random() * 18;
     const radiusY = 34 + Math.random() * 14;
     const clockwise = Math.random() > 0.5;
@@ -215,8 +242,14 @@ export class Skirm extends EnemyBase {
    * its threat pattern visibly symmetric.
    */
   _danceHourglass() {
-    const centerX = Phaser.Math.Clamp(this.x, 96, W - 96);
     const centerY = H * 0.30 + Math.random() * H * 0.10;
+    const centerPlan = this._adaptivePlan(
+      Phaser.Math.Clamp(this.x, 96, W - 96),
+      centerY,
+      72,
+      96
+    );
+    const centerX = centerPlan.x;
     const spanX = Math.min(74, centerX - 34, W - 34 - centerX);
     const spanY = 42 + Math.random() * 16;
     const loopPoints = [
@@ -240,34 +273,37 @@ export class Skirm extends EnemyBase {
    */
   _danceSideCross() {
     const scene    = this.scene;
-    const midX     = W * 0.35 + Math.random() * W * 0.30;
     const midY     = H * 0.28 + Math.random() * H * 0.18;
+    const midPlan  = this._adaptivePlan(W * 0.35 + Math.random() * W * 0.30, midY, 92);
+    const midX     = midPlan.x;
     const hoverMs  = 500 + Math.random() * 400;
 
     scene.tweens.add({
       targets:  this,
       x: midX, y: midY,
-      duration: 1000,
+      duration: this._scaleDuration(1000, midPlan.speedScalar),
       ease:     'Sine.easeOut',
       onComplete: () => {
         if (!this.alive) return;
+        this.unlockAdaptiveBehavior();
         // brief hover drift
-        const hx = Phaser.Math.Clamp(midX + (Math.random() - 0.5) * 40, 40, W - 40);
+        const hoverPlan = this._adaptivePlan(midX + (Math.random() - 0.5) * 40, midY, 64, 40);
+        const hx = hoverPlan.x;
         scene.tweens.add({
           targets:  this,
           x: hx, y: midY + (Math.random() - 0.5) * 20,
-          duration: hoverMs,
+          duration: this._scaleDuration(hoverMs, hoverPlan.speedScalar),
           ease:     'Sine.easeInOut',
           onComplete: () => {
             if (!this.alive) return;
             const player = scene._player;
-            const tx = player
-              ? Phaser.Math.Clamp(player.x + (Math.random() - 0.5) * 60, 30, W - 30)
-              : midX;
+            const divePlan = player
+              ? this._adaptivePlan(player.x + (Math.random() - 0.5) * 60, H + 80, 88)
+              : this._adaptivePlan(midX, H + 80, 88);
             scene.tweens.add({
               targets:  this,
-              x: tx, y: H + 80,
-              duration: 1000,
+              x: divePlan.x, y: H + 80,
+              duration: this._scaleDuration(1000, divePlan.speedScalar),
               ease:     'Cubic.easeIn',
               onComplete: () => this._exitSilent(),
             });
@@ -283,34 +319,42 @@ export class Skirm extends EnemyBase {
    */
   _danceFanOut() {
     const scene   = this.scene;
-    const spreadX = Phaser.Math.Clamp(this.x + (Math.random() - 0.5) * W * 0.65, 40, W - 40);
     const spreadY = H * 0.14 + Math.random() * H * 0.14;
+    const spreadPlan = this._adaptivePlan(this.x + (Math.random() - 0.5) * W * 0.65, spreadY, 110, 40);
+    const spreadX = spreadPlan.x;
     const holdMs  = 900 + Math.random() * 500;
 
     scene.tweens.add({
       targets:  this,
       x: spreadX, y: spreadY,
-      duration: 750,
+      duration: this._scaleDuration(750, spreadPlan.speedScalar),
       ease:     'Sine.easeOut',
       onComplete: () => {
         if (!this.alive) return;
+        this.unlockAdaptiveBehavior();
         // slight drift while holding
+        const holdPlan = this._adaptivePlan(
+          spreadX + (Math.random() - 0.5) * 30,
+          spreadY + (Math.random() - 0.5) * 15,
+          36,
+          40
+        );
         scene.tweens.add({
           targets:  this,
-          x: spreadX + (Math.random() - 0.5) * 30,
-          y: spreadY + (Math.random() - 0.5) * 15,
-          duration: holdMs,
+          x: holdPlan.x,
+          y: holdPlan.y,
+          duration: this._scaleDuration(holdMs, holdPlan.speedScalar),
           ease:     'Sine.easeInOut',
           onComplete: () => {
             if (!this.alive) return;
             const player = scene._player;
-            const tx = player
-              ? Phaser.Math.Clamp(player.x + (Math.random() - 0.5) * 70, 30, W - 30)
-              : spreadX;
+            const divePlan = player
+              ? this._adaptivePlan(player.x + (Math.random() - 0.5) * 70, H + 80, 92)
+              : this._adaptivePlan(spreadX, H + 80, 92);
             scene.tweens.add({
               targets:  this,
-              x: tx, y: H + 80,
-              duration: 950,
+              x: divePlan.x, y: H + 80,
+              duration: this._scaleDuration(950, divePlan.speedScalar),
               ease:     'Cubic.easeIn',
               onComplete: () => this._exitSilent(),
             });
@@ -334,20 +378,25 @@ export class Skirm extends EnemyBase {
     const runStep = (index = 0) => {
       if (!this.alive) return;
       const step = loopPoints[index % loopPoints.length];
+      const stepPlan = this._adaptivePlan(step.x, step.y, 52, 32, false, 30);
       scene.tweens.add({
         targets:  this,
-        x:        step.x,
-        y:        step.y,
-        duration: step.duration ?? 320,
+        x:        stepPlan.x,
+        y:        stepPlan.y,
+        duration: this._scaleDuration(step.duration ?? 320, stepPlan.speedScalar),
         ease:     step.ease ?? 'Sine.easeInOut',
         onComplete: () => {
           if (!this.alive) return;
           const pauseMs = step.pauseMs ?? 0;
+          const nextIndex = index + 1;
+          if (nextIndex % loopPoints.length === 0) {
+            this.unlockAdaptiveBehavior();
+          }
           if (pauseMs > 0) {
-            scene.time.delayedCall(pauseMs, () => runStep(index + 1));
+            scene.time.delayedCall(this._scaleDuration(pauseMs), () => runStep(nextIndex));
             return;
           }
-          runStep(index + 1);
+          runStep(nextIndex);
         },
       });
     };
@@ -356,7 +405,7 @@ export class Skirm extends EnemyBase {
       targets:  this,
       x:        entryTarget.x,
       y:        entryTarget.y,
-      duration: opts.enterDuration ?? 720,
+      duration: this._scaleDuration(opts.enterDuration ?? 720),
       ease:     opts.enterEase ?? 'Sine.easeOut',
       onComplete: () => runStep(0),
     });
@@ -366,6 +415,7 @@ export class Skirm extends EnemyBase {
   _exitSilent() {
     if (!this.alive) return;
     this.alive = false;
+    this.markEscaped?.();
     this.setActive(false).setVisible(false);
     if (this.body) this.body.enable = false;
     this.destroy();
