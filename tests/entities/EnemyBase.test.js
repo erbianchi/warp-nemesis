@@ -162,4 +162,57 @@ describe('EnemyBase', () => {
     assert.ok(unlockedPlan.y >= 160);
     assert.equal(unlockedPlan.speedScalar, 1.15);
   });
+
+  it('enforces the hard class max speed even when adaptive speed scalars ask for more', () => {
+    enemy = new TestEnemy(scene, 100, 100, {
+      ...TEST_STATS,
+      speed: 80,
+      baseSpeed: 80,
+      speedCap: 92,
+      adaptive: {
+        enabled: true,
+        minSpeedScalar: 0.9,
+        maxSpeedScalar: 1.4,
+        maxSpeed: 92,
+      },
+    });
+
+    const resolvedScalar = enemy._applyAdaptiveSpeedScalar(1.4);
+
+    assert.equal(enemy.speed, 92);
+    assert.equal(resolvedScalar, 92 / 80);
+    assert.equal(enemy.resolveMovementDurationScale(1.6), 92 / 80);
+  });
+
+  it('extends tween travel time when the requested move would exceed the hard max speed', () => {
+    enemy = new TestEnemy(scene, 100, 100, {
+      ...TEST_STATS,
+      speed: 80,
+      baseSpeed: 80,
+      speedCap: 92,
+      adaptive: {
+        enabled: true,
+        minSpeedScalar: 0.9,
+        maxSpeedScalar: 1.4,
+        maxSpeed: 92,
+      },
+    });
+
+    assert.equal(enemy.getMaxMovementSpeed(), 92);
+    assert.equal(enemy.resolveTravelDurationMs(600, 284, 100), 2000);
+    assert.equal(enemy.resolveTravelDurationMs(2200, 284, 100), 2200);
+  });
+
+  it('keeps charging fire cooldown while off-screen so entry time is not discarded', () => {
+    enemy = new TestEnemy(scene, 100, -20, {
+      ...TEST_STATS,
+      fireRate: 1000,
+    });
+
+    assert.equal(enemy._fireCooldown, 0);
+
+    enemy.update(120);
+
+    assert.equal(enemy._fireCooldown, 120);
+  });
 });

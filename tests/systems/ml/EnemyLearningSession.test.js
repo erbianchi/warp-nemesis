@@ -147,4 +147,67 @@ describe('EnemyLearningSession', () => {
     assert.equal(example.labels.collision, 0);
     assert.ok(example.labels.survival < 0.25);
   });
+
+  it('builds a player style profile from the run telemetry', () => {
+    const scene = createMockScene();
+    const enemy = {
+      enemyType: 'skirm',
+      x: 120,
+      y: 90,
+      speed: 100,
+      active: true,
+      alive: true,
+      _learningId: 'enemy-style',
+    };
+    const playerFrames = [
+      { x: 110, y: 500, heatRatio: 0.20, isOverheated: false },
+      { x: 182, y: 486, heatRatio: 0.58, isOverheated: false },
+      { x: 124, y: 474, heatRatio: 0.86, isOverheated: true },
+      { x: 196, y: 468, heatRatio: 0.74, isOverheated: true },
+    ];
+    let frameIndex = 0;
+
+    const session = new EnemyLearningSession({
+      scene,
+      getPlayerSnapshot: () => ({
+        x: playerFrames[frameIndex].x,
+        y: playerFrames[frameIndex].y,
+        hasShield: true,
+        shieldRatio: 0.65,
+        hpRatio: 0.82,
+      }),
+      getWeaponSnapshot: () => ({
+        primaryWeaponKey: 'laser',
+        heatRatio: playerFrames[frameIndex].heatRatio,
+        isOverheated: playerFrames[frameIndex].isOverheated,
+      }),
+      getEnemies: () => [enemy],
+    });
+
+    scene.events.emit(EVENTS.ENEMY_SPAWNED, {
+      enemy,
+      type: enemy.enemyType,
+    });
+
+    playerFrames.forEach((_, index) => {
+      frameIndex = index;
+      session.update(250);
+    });
+    scene.events.emit(EVENTS.PLAYER_HIT, {
+      sourceType: 'skirm',
+      sourceEnemyId: 'enemy-style',
+      absorbed: 8,
+      hpDamage: 4,
+    });
+
+    const profile = session.buildPlayerStyleProfile();
+
+    assert.equal(profile.sampleCount, playerFrames.length);
+    assert.ok(profile.laneBiasX < -0.2 && profile.laneBiasX > -0.6, `expected a modest left bias, got ${profile.laneBiasX}`);
+    assert.ok(profile.dodgeIntensity > 0.25, `expected visible lateral movement, got ${profile.dodgeIntensity}`);
+    assert.ok(profile.reversalRate > 0.4, `expected several reversals, got ${profile.reversalRate}`);
+    assert.ok(profile.heatGreed > 0.45, `expected hot firing profile, got ${profile.heatGreed}`);
+    assert.ok(profile.overheatRate > 0.25, `expected some overheated samples, got ${profile.overheatRate}`);
+    assert.equal(profile.preferredWeaponKey, 'laser');
+  });
 });

@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js';
 
@@ -8,6 +8,7 @@ const { GAME_CONFIG } = await import('../../config/game.config.js');
 const { RunState } = await import('../../systems/RunState.js');
 const { MetaProgression } = await import('../../systems/MetaProgression.js');
 const { EVENTS } = await import('../../config/events.config.js');
+const { LEVELS } = await import('../../config/levels.config.js');
 const { EffectsSystem } = await import('../../systems/EffectsSystem.js');
 const { resolveStats } = await import('../../systems/WaveSpawner.js');
 const { Skirm } = await import('../../entities/enemies/Skirm.js');
@@ -37,6 +38,50 @@ function createLocalStorageMock(initialEntries = {}) {
   };
 }
 
+function createDancePolicyStub() {
+  return {
+    _encoder: {
+      buildSample(sample) {
+        return sample;
+      },
+      encodeSample() {
+        return { vector: new Array(33).fill(0) };
+      },
+    },
+    load() {},
+    getDanceNetwork() {
+      return {
+        predict() {
+          return {
+            mode: 'press',
+            confidence: 0.78,
+            probabilities: [0.04, 0.78, 0.08, 0.05, 0.05],
+          };
+        },
+      };
+    },
+    getModifiers() {
+      return {
+        enabled: false,
+        minSpeedScalar: 1,
+        maxSpeedScalar: 1,
+        sampleCount: 0,
+        predictedEnemyWinRate: 0.5,
+        predictedSurvival: 0.5,
+        predictedPressure: 0.5,
+        predictedCollisionRisk: 0.5,
+        predictedBulletRisk: 0.5,
+      };
+    },
+    createRunSession() {
+      return {
+        update() {},
+        destroy() {},
+      };
+    },
+  };
+}
+
 function createHeatWarningScene(heatShots) {
   const calls = [];
   const scene = new GameScene();
@@ -58,6 +103,10 @@ function createHeatWarningScene(heatShots) {
   scene._nextHeatWarningShakeAt = 0;
   return { scene, calls };
 }
+
+beforeEach(() => {
+  RunState.reset();
+});
 
 describe('GameScene create', () => {
   it('creates the player from the spacecraft1 sprite', () => {
@@ -117,7 +166,26 @@ describe('GameScene create', () => {
 
   it('wires adaptive model metadata into the spawner stats resolver', () => {
     const enemyAdaptivePolicy = {
+      _encoder: {
+        buildSample(sample) {
+          return sample;
+        },
+        encodeSample() {
+          return { vector: new Array(33).fill(0) };
+        },
+      },
       load() {},
+      getDanceNetwork() {
+        return {
+          predict() {
+            return {
+              mode: 'hold',
+              confidence: 0.6,
+              probabilities: [0.6, 0.1, 0.1, 0.1, 0.1],
+            };
+          },
+        };
+      },
       getModifiers(enemyType) {
         return {
           enabled: enemyType === 'skirm',
@@ -222,6 +290,106 @@ describe('GameScene create', () => {
       } else {
         delete globalThis.localStorage;
       }
+    }
+  });
+
+  it('generates runtime waves before building the spawner when starting directly on level 2', () => {
+    const scene = new GameScene({
+      enemyAdaptivePolicy: createDancePolicyStub(),
+    });
+    Object.assign(scene, createMockScene());
+    RunState.reset();
+    RunState.level = 2;
+
+    try {
+      scene.create();
+
+      assert.equal(scene._levelIndex, 1);
+      assert.ok(scene._spawner._levelConfig.waves.length > 0);
+      assert.ok(scene._spawner._levelConfig.waves.every((wave) => (
+        Array.isArray(wave.squadrons) && wave.squadrons.length >= 1
+      )));
+    } finally {
+      RunState.reset();
+    }
+  });
+
+  it('honors the ?level2=1 debug flag for a fresh direct Level 2 start', () => {
+    const scene = new GameScene({
+      enemyAdaptivePolicy: createDancePolicyStub(),
+    });
+    Object.assign(scene, createMockScene());
+
+    const previousLocation = globalThis.location;
+    const hadLocation = Object.prototype.hasOwnProperty.call(globalThis, 'location');
+
+    Object.defineProperty(globalThis, 'location', {
+      configurable: true,
+      writable: true,
+      value: { search: '?level2=1' },
+    });
+
+    try {
+      RunState.reset();
+      scene.create();
+
+      assert.equal(scene._levelIndex, 1);
+      assert.equal(RunState.level, 2);
+      assert.ok(scene._spawner._levelConfig.waves.length > 0);
+    } finally {
+      if (hadLocation) {
+        Object.defineProperty(globalThis, 'location', {
+          configurable: true,
+          writable: true,
+          value: previousLocation,
+        });
+      } else {
+        delete globalThis.location;
+      }
+      RunState.reset();
+    }
+  });
+
+  it('restores hp, shield, weapon state, and active cooling bonuses when continuing into the next level', () => {
+    RunState.beginNewRun({ level: 2, lives: 2 });
+    RunState.score = 840;
+    RunState.kills = 11;
+    RunState.savePlayerState({
+      hp: 37,
+      shield: 64,
+      coolingBoostRemainingMs: 5000,
+      weaponState: {
+        slots: ['tLaser', null],
+        cooldown: 220,
+        heatShots: 6,
+        isOverheated: true,
+        heatRecoveryStepMs: 50,
+        primaryDamageMultiplier: 2,
+      },
+    });
+
+    const scene = new GameScene({
+      enemyAdaptivePolicy: createDancePolicyStub(),
+    });
+    Object.assign(scene, createMockScene());
+
+    try {
+      scene.create();
+
+      assert.equal(scene._levelIndex, 1);
+      assert.equal(scene._playerLives, 2);
+      assert.equal(scene._playerHp, 37);
+      assert.equal(scene._playerShield, 64);
+      assert.equal(scene._coolingBoostEndsAt, 5000);
+      assert.equal(scene._weapons.primaryWeaponKey, 'tLaser');
+      assert.equal(scene._weapons.primaryDamageMultiplier, 2);
+      assert.equal(scene._weapons.heatRecoveryStepMs, 50);
+      assert.equal(scene._weapons.isOverheated, true);
+      assert.equal(RunState.score, 840);
+      assert.equal(RunState.kills, 11);
+      assert.equal(RunState.hasPlayerState(), false);
+    } finally {
+      RunState.reset();
     }
   });
 
@@ -1240,6 +1408,23 @@ describe('GameScene level clear', () => {
       destroy: () => { destroyedEnemyBullets += 1; },
     }];
     scene._levelIndex = 0;
+    scene._playerHp = 33;
+    scene._playerShield = 48;
+    scene._playerLives = 2;
+    scene._hudTimeMs = 1200;
+    scene._coolingBoostEndsAt = 6200;
+    scene._weapons = {
+      getPersistentState() {
+        return {
+          slots: ['tLaser', null],
+          cooldown: 140,
+          heatShots: 3,
+          isOverheated: false,
+          heatRecoveryStepMs: 50,
+          primaryDamageMultiplier: 2,
+        };
+      },
+    };
     scene.scene = {
       start: (sceneKey, data) => {
         sceneStart = { sceneKey, data };
@@ -1278,16 +1463,31 @@ describe('GameScene level clear', () => {
       assert.equal(fadeDuration, 600);
       assert.equal(textCalls[0].value, 'LEVEL COMPLETE');
       assert.equal(textCalls[1].value, 'SCORE  2450');
+      assert.deepEqual(RunState.playerState, {
+        hp: 33,
+        shield: 48,
+        coolingBoostRemainingMs: 5000,
+        weaponState: {
+          slots: ['tLaser', null],
+          cooldown: 140,
+          heatShots: 3,
+          isOverheated: false,
+          heatRecoveryStepMs: 50,
+          primaryDamageMultiplier: 2,
+        },
+      });
       assert.equal(delayedCalls[1].delay, 4000);
       delayedCalls[1].cb();
       assert.deepEqual(recordedLevelScores, [2450]);
+      assert.equal(RunState.level, 2);
+      assert.equal(RunState.lives, 2);
       assert.deepEqual(sceneStart, {
         sceneKey: 'LevelTransitionScene',
         data: {
           levelNumber: 1,
           runScore: 2450,
-          returnSceneKey: 'MenuScene',
-          continueLabel: 'BACK TO MENU',
+          returnSceneKey: 'GameScene',
+          continueLabel: 'CONTINUE TO LEVEL 2',
         },
       });
     } finally {
@@ -1458,6 +1658,91 @@ describe('GameScene player death', () => {
     assert.equal(emitted.length, 1);
     assert.equal(emitted[0][0], EVENTS.RUN_ENDED);
     assert.equal(emitted[0][1].outcome, 'enemy_win');
+  });
+
+  it('immediately trains for Level 2 and saves the player style profile before generating runtime waves', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    const originalLevel2Waves = LEVELS[1].waves;
+    const originalRecordCompletedLevel = MetaProgression.recordCompletedLevel;
+    const trainCalls = [];
+    const generationCalls = [];
+
+    scene._levelIndex = 0;
+    scene._playerHp = 24;
+    scene._playerShield = 18;
+    scene._startingPlayerHp = 24;
+    scene._startingPlayerShield = 18;
+    scene._playerLives = 2;
+    scene._hudTimeMs = 0;
+    scene._weapons = {
+      getPersistentState() {
+        return null;
+      },
+    };
+    scene._enemyLearningSession = { destroy() {} };
+    scene._enemyAdaptivePolicy = {
+      trainFromSession(_session, outcome, options) {
+        trainCalls.push({ outcome, options });
+        return {
+          playerStyleProfile: {
+            laneBiasX: -0.42,
+            aggression: 0.5,
+            dodgeIntensity: 0.36,
+            heatGreed: 0.58,
+          },
+        };
+      },
+    };
+    scene._danceGenerator = {
+      currentProfile: null,
+      setPlayerStyleProfile(profile) {
+        this.currentProfile = profile;
+        return this;
+      },
+      generateAndInjectWaves(levels, levelIndex, count) {
+        generationCalls.push({
+          levelIndex,
+          count,
+          profile: this.currentProfile,
+        });
+        levels[levelIndex].waves = [{ id: 1, difficultyFactor: 1.2, squadrons: [{ id: 'generated', planes: [{}] }] }];
+        return levels[levelIndex].waves;
+      },
+    };
+    scene._bg = {
+      fadeToBlack() {},
+    };
+
+    try {
+      MetaProgression.recordCompletedLevel = () => ({
+        totalScore: RunState.score,
+        ownedBonuses: { hp: 0, shield: 0 },
+      });
+      RunState.reset();
+
+      scene._showLevelCompleteCard();
+
+      assert.equal(trainCalls.length, 1);
+      assert.equal(trainCalls[0].outcome, 'player_win');
+      assert.equal(trainCalls[0].options.immediate, true);
+      assert.equal(trainCalls[0].options.nextLevelNumber, 2);
+      assert.equal(RunState.level, 2);
+      assert.deepEqual(RunState.playerStyleProfile, {
+        laneBiasX: -0.42,
+        aggression: 0.5,
+        dodgeIntensity: 0.36,
+        heatGreed: 0.58,
+      });
+      assert.equal(generationCalls.length, 1);
+      assert.equal(generationCalls[0].levelIndex, 1);
+      assert.equal(generationCalls[0].count, LEVELS[1].runtimeWaveCount);
+      assert.equal(generationCalls[0].profile.laneBiasX, -0.42);
+    } finally {
+      LEVELS[1].waves = originalLevel2Waves;
+      MetaProgression.recordCompletedLevel = originalRecordCompletedLevel;
+      RunState.reset();
+    }
   });
 });
 

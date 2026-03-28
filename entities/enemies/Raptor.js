@@ -2,6 +2,9 @@
 
 import { EnemyBase } from '../EnemyBase.js';
 import { GAME_CONFIG } from '../../config/game.config.js';
+import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
+import { buildSquadSnapshot } from '../../systems/ml/EnemyPolicyMath.js';
+import { stripActionModes } from '../../systems/ml/DanceWaypointNetwork.js';
 
 const RAPTOR_WIDTH = 40;
 const RAPTOR_HEIGHT = 32;
@@ -61,7 +64,7 @@ export class Raptor extends EnemyBase {
     this._entryTargetX = entryPlan.x;
     this._anchorX = this._entryTargetX;
     this._anchorY = clamp(this.y, RAPTOR_SCREEN_MARGIN_TOP + 8, H - RAPTOR_SCREEN_MARGIN_BOTTOM);
-    this._entrySpeedX = this.speed * 3.4;
+    this._entryLerpX = 3.4;
     this._entryWaveY = 16;
     this._patrolRangeX = 90;
     this._patrolRangeY = 110;
@@ -70,6 +73,12 @@ export class Raptor extends EnemyBase {
     this._lanePhase = Math.random() * Math.PI * 2;
     this._adaptiveDecisionCooldownMs = 0;
     this._adaptiveTargetX = this._entryTargetX;
+
+    this._useNeuralFlow = (this.dance === 'neural_flow');
+    if (this._useNeuralFlow) {
+      this._neuralMode     = 'hold';
+      this._neuralCommitMs = 0;
+    }
   }
 
   setupWeapon() {}
@@ -95,7 +104,6 @@ export class Raptor extends EnemyBase {
   }
 
   _advanceFlight(delta) {
-    const dt = delta / 1000;
     this._laneClock += delta;
 
     const stillEntering = this._sideDir > 0
@@ -103,17 +111,23 @@ export class Raptor extends EnemyBase {
       : this.x > this._entryTargetX;
 
     if (stillEntering) {
-      const nextX = this.x + this._sideDir * this._entrySpeedX * dt;
-      this.x = this._sideDir > 0
-        ? Math.min(nextX, this._entryTargetX)
-        : Math.max(nextX, this._entryTargetX);
-
       const targetY = clamp(
         this._anchorY + Math.sin(this._laneClock / 880 + this._lanePhase) * this._entryWaveY,
         RAPTOR_SCREEN_MARGIN_TOP,
         H - RAPTOR_SCREEN_MARGIN_BOTTOM
       );
-      this.y += (targetY - this.y) * Math.min(1, dt * 2.4);
+      this.moveTowardPoint(
+        this._entryTargetX,
+        targetY,
+        delta,
+        this._entryLerpX,
+        2.4
+      );
+      return;
+    }
+
+    if (this._useNeuralFlow) {
+      this._advanceNeuralFlowPhrase(delta);
       return;
     }
 
@@ -143,7 +157,169 @@ export class Raptor extends EnemyBase {
       this._adaptiveDecisionCooldownMs = 180;
     }
 
-    this.x += (this._adaptiveTargetX - this.x) * Math.min(1, dt * this._patrolLerpX * (this.adaptiveProfile?.currentSpeedScalar ?? 1));
-    this.y += (this._anchorY - this.y) * Math.min(1, dt * this._patrolLerpY);
+    this.moveTowardPoint(
+      this._adaptiveTargetX,
+      this._anchorY,
+      delta,
+      this._patrolLerpX * (this.adaptiveProfile?.currentSpeedScalar ?? 1),
+      this._patrolLerpY
+    );
+  }
+
+  /**
+   * Neural-flow patrol: commitment-window approach.
+   * Every (durationMs + holdMs) the network is queried for the next action
+   * mode and anchor targets are updated.  Movement uses the existing lerp.
+   * @param {number} delta  ms since last frame
+   */
+  _advanceNeuralFlowPhrase(delta) {
+    this._neuralCommitMs -= delta;
+
+    if (this._neuralCommitMs <= 0) {
+      if (!this.canUseAdaptiveBehavior()) {
+        this.unlockAdaptiveBehavior();
+      }
+      const cfg     = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
+      const newMode = this._sampleNeuralMode(this._neuralMode);
+      this._neuralMode         = newMode;
+      this._adaptiveActionMode = newMode;
+
+      const anchor          = this._resolveNeuralAnchor(newMode);
+      this._adaptiveTargetX = anchor.x;
+      this._anchorY         = anchor.y;
+
+      const timing          = (cfg.phraseTiming ?? {})[newMode] ?? { durationMs: 500, holdMs: 300 };
+      this._neuralCommitMs  = timing.durationMs + timing.holdMs;
+    }
+
+    this.moveTowardPoint(
+      this._adaptiveTargetX,
+      this._anchorY,
+      delta,
+      this._patrolLerpX * (this.adaptiveProfile?.currentSpeedScalar ?? 1),
+      this._patrolLerpY
+    );
+  }
+
+  /**
+   * Query the DanceWaypointNetwork for the next action mode.
+   * Applies mode hysteresis; falls back to position-scoring argmax when untrained.
+   * @param {string} currentMode
+   * @returns {string}
+   */
+  _sampleNeuralMode(currentMode) {
+    const policy  = this.scene?._enemyAdaptivePolicy;
+    const network = policy?.getDanceNetwork?.();
+    const cfg     = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
+
+    if (network?.isTrained) {
+      const temperature = this._resolveNeuralTemperature(network);
+      const player      = this._getPlayerSnapshot();
+      const threat      = this._getPlayerBulletThreatSnapshot();
+      const liveEnemies = this.scene?._enemies ?? [];
+      const squad       = buildSquadSnapshot(liveEnemies, this._squadId ?? null, this);
+      const weapon      = this.scene?._weapons?.getLearningSnapshot?.() ?? {};
+
+      const sample = policy._encoder?.buildSample?.({
+        enemyType: this.enemyType,
+        player,
+        weapon,
+        enemyX:    this.x,
+        enemyY:    this.y,
+        speed:     this.speed,
+        squad,
+        threat,
+        actionMode: 'hold', // placeholder — stripped before inference
+      });
+      if (sample) {
+        const encoded = policy._encoder.encodeSample(sample);
+        const { mode, probabilities } = network.sample(
+          stripActionModes(encoded.vector),
+          temperature
+        );
+        const hysteresis    = cfg.modeHysteresisThreshold ?? 0.15;
+        const MODES         = ['hold', 'press', 'flank', 'evade', 'retreat'];
+        const currentModeIdx = MODES.indexOf(currentMode);
+        const newModeIdx     = MODES.indexOf(mode);
+        if (currentModeIdx >= 0 && newModeIdx >= 0 && mode !== currentMode) {
+          if ((probabilities[newModeIdx] ?? 0) - (probabilities[currentModeIdx] ?? 0) < hysteresis) {
+            return currentMode;
+          }
+        }
+        return mode;
+      }
+    }
+
+    // Fallback: position-scoring argmax
+    if (policy?.resolveBehavior) {
+      const anchors = this._buildAdaptiveAnchors(this.x, this.y, 72, 56, {
+        marginPx: RAPTOR_SCREEN_MARGIN_X,
+        topMarginPx: RAPTOR_SCREEN_MARGIN_TOP,
+        bottomMarginPx: H - RAPTOR_SCREEN_MARGIN_BOTTOM,
+      });
+      const best = policy.resolveBehavior({
+        enemy:      this,
+        enemyType:  this.enemyType,
+        candidates: anchors.map(a => ({ x: a.x, y: a.y, speedScalar: 1, actionMode: a.mode })),
+      });
+      return best?.actionMode ?? 'hold';
+    }
+
+    return 'hold';
+  }
+
+  /**
+   * Map an action mode to a movement anchor position (Raptor bounds).
+   * @param {string} mode
+   * @returns {{ x: number, y: number }}
+   */
+  _resolveNeuralAnchor(mode) {
+    const player = this._getPlayerSnapshot();
+    const threat = this._getPlayerBulletThreatSnapshot();
+    const clampX = (x) => Math.max(RAPTOR_SCREEN_MARGIN_X, Math.min(W - RAPTOR_SCREEN_MARGIN_X, x));
+    const clampY = (y) => Math.max(RAPTOR_SCREEN_MARGIN_TOP, Math.min(H - RAPTOR_SCREEN_MARGIN_BOTTOM, y));
+
+    switch (mode) {
+      case 'press':
+        return {
+          x: clampX(player.x ?? this.x),
+          y: clampY(Math.min((player.y ?? this.y) - 100, this.y + 80)),
+        };
+      case 'flank': {
+        const px   = player.x ?? W / 2;
+        const side = this.x <= px ? -1 : 1;
+        return {
+          x: clampX(px + side * (100 + Math.random() * 40)),
+          y: clampY(this.y + (Math.random() - 0.5) * 60),
+        };
+      }
+      case 'evade':
+        return {
+          x: clampX(threat.suggestedSafeX ?? this.x),
+          y: clampY(threat.suggestedSafeY ?? this.y),
+        };
+      case 'retreat':
+        return {
+          x: clampX(this.x),
+          y: clampY(this.y - 70 - Math.random() * 40),
+        };
+      case 'hold':
+      default:
+        return { x: clampX(this.x), y: clampY(this.y) };
+    }
+  }
+
+  /**
+   * Compute softmax temperature from training data volume.
+   * @param {import('../../systems/ml/DanceWaypointNetwork.js').DanceWaypointNetwork} network
+   * @returns {number}
+   */
+  _resolveNeuralTemperature(network) {
+    const cfg      = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
+    const tInit    = cfg.temperatureInitial        ?? 2.0;
+    const tFinal   = cfg.temperatureFinal          ?? 0.7;
+    const converge = cfg.temperatureSampleConverge ?? 200;
+    const t = Math.min((network?.sampleCount ?? 0) / Math.max(1, converge), 1);
+    return tInit - (tInit - tFinal) * t;
   }
 }

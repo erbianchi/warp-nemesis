@@ -12,6 +12,10 @@ function getOverlaySquadrons(level) {
   return level.overlaySquadrons ?? [];
 }
 
+function usesRuntimeWaveGeneration(level) {
+  return typeof level.runtimeWaveSource === 'string' && level.runtimeWaveSource.length > 0;
+}
+
 function getTypedOverlays(level, type) {
   return getOverlaySquadrons(level).filter((overlay) => (
     Array.isArray(overlay.squadronPool)
@@ -37,7 +41,9 @@ describe('LEVELS', () => {
       assert.ok(typeof level.scrollSpeed === 'number', `L${level.id}: scrollSpeed`);
       assert.ok(typeof level.difficultyBase === 'number', `L${level.id}: difficultyBase`);
       assert.ok(Array.isArray(level.waves),             `L${level.id}: waves`);
-      assert.ok(level.waves.length >= 1,                `L${level.id}: ≥1 wave`);
+      if (!usesRuntimeWaveGeneration(level)) {
+        assert.ok(level.waves.length >= 1,              `L${level.id}: ≥1 wave`);
+      }
       assert.ok('boss' in level,                        `L${level.id}: boss`);
     }
   });
@@ -90,6 +96,24 @@ describe('LEVELS', () => {
         level.waves.forEach((wave, i) => assert.equal(wave.id, i + 1,
           `L${level.id}: wave id should be ${i + 1}`));
       }
+    });
+  });
+
+  describe('runtime-generated levels', () => {
+    it('declare their runtime wave source explicitly when shipped with no waves', () => {
+      for (const level of LEVELS) {
+        if (level.waves.length > 0) continue;
+        assert.ok(usesRuntimeWaveGeneration(level), `L${level.id}: empty wave list requires runtimeWaveSource`);
+        assert.ok(typeof level.runtimeWaveCount === 'number' && level.runtimeWaveCount >= 1,
+          `L${level.id}: runtime-generated levels need a positive runtimeWaveCount`);
+      }
+    });
+
+    it('Level 2 is configured to use the dance generator at runtime', () => {
+      const level2 = LEVELS[1];
+      assert.equal(level2.runtimeWaveSource, 'dance_generator');
+      assert.equal(level2.runtimeWaveCount, 3);
+      assert.deepEqual(level2.overlaySquadrons, []);
     });
   });
 

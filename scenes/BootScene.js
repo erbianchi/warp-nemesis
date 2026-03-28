@@ -2,6 +2,8 @@
  * Preloads all assets, then starts MenuScene.
  * Phase 1: no real assets — transitions immediately. */
 
+import { readDebugOptions } from '../config/debug.config.js';
+
 export class BootScene extends Phaser.Scene {
   constructor() {
     super({ key: 'BootScene' });
@@ -24,7 +26,8 @@ export class BootScene extends Phaser.Scene {
   create() {
     this._generateTextures();
     document.getElementById('loading-overlay')?.classList.add('hidden');
-    this.scene.start('MenuScene');
+    const debugOptions = readDebugOptions(globalThis.location ?? '');
+    this.scene.start(debugOptions.level2 ? 'GameScene' : 'MenuScene');
   }
 
   /** Generate programmatic textures used as placeholders until real sprites arrive. */

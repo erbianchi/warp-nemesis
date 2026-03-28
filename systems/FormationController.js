@@ -354,16 +354,20 @@ export class FormationController {
 
     ships.forEach((ship, i) => {
       const movementSpeedMultiplier = ship._baseMovementSpeedMultiplier ?? ship._movementSpeedMultiplier ?? 1;
+      const requestedMovementSpeed = pathBehavior.speed * movementSpeedMultiplier;
       const slotPlan = resolveAdaptiveSlot(
         ship,
         slots[i] ?? { x: WIDTH / 2, y: pathBehavior.rowYs[0] ?? 65 },
         pathBehavior
       );
+      const requestedDurationScale = requestedMovementSpeed * (slotPlan.speedScalar ?? 1);
+      const resolvedDurationScale = ship.resolveMovementDurationScale?.(requestedDurationScale) ?? requestedDurationScale;
+      const effectiveShipSpeedMultiplier = resolvedDurationScale / Math.max(0.01, pathBehavior.speed);
       const data = {
         ship,
         slot: { x: slotPlan.x, y: slotPlan.y },
         rowIndex: this._resolveRowIndex(slotPlan.y, pathBehavior),
-        speed: pathBehavior.speed * movementSpeedMultiplier * (slotPlan.speedScalar ?? 1),
+        speed: resolvedDurationScale,
         drifting: false,
         dead: false,
         landed: false,
@@ -377,7 +381,7 @@ export class FormationController {
             ships.length,
             this._pathMirror,
             this._rng,
-            movementSpeedMultiplier * (slotPlan.speedScalar ?? 1)
+            effectiveShipSpeedMultiplier
           ),
           pathBehavior,
           slotPlan.speedScalar ?? 1
@@ -419,6 +423,11 @@ export class FormationController {
     return this._rng() < this._behavior.abruptChance ? 'abrupt' : 'organic';
   }
 
+  _resolveTravelDuration(ship, targetX, targetY, requestedDurationMs) {
+    const durationMs = Math.max(1, Math.round(requestedDurationMs ?? 0));
+    return ship?.resolveTravelDurationMs?.(durationMs, targetX, targetY) ?? durationMs;
+  }
+
   _runPath(data, startIdx = 0) {
     if (data.dead) {
       this._onLanded();
@@ -427,11 +436,12 @@ export class FormationController {
 
     const pathBehavior = this._getEffectiveBehavior('path');
     this._chainStep(data.ship, data.path, startIdx, () => {
+      const requestedDuration = Math.round(pathBehavior.exitToSlotMs / data.speed);
       this._scene.tweens.add({
         targets: data.ship,
         x: data.slot.x,
         y: data.slot.y,
-        duration: Math.round(pathBehavior.exitToSlotMs / data.speed),
+        duration: this._resolveTravelDuration(data.ship, data.slot.x, data.slot.y, requestedDuration),
         ease: 'Cubic.easeOut',
         onComplete: () => {
           if (!data.adaptiveUnlocked) {
@@ -456,7 +466,7 @@ export class FormationController {
       targets: ship,
       x,
       y,
-      duration: dur,
+      duration: this._resolveTravelDuration(ship, x, y, dur),
       ease,
       onComplete: () => this._chainStep(ship, steps, idx + 1, onDone),
     });
@@ -544,7 +554,12 @@ export class FormationController {
       targets: data.ship,
       x: driftPlan.x,
       y: driftPlan.y,
-      duration: Math.max(1, Math.round(dur / (data.speed || 1))),
+      duration: this._resolveTravelDuration(
+        data.ship,
+        driftPlan.x,
+        driftPlan.y,
+        Math.max(1, Math.round(dur / (data.speed || 1)))
+      ),
       ease: 'Sine.easeInOut',
       onComplete: () => {
         if (!data.drifting) return;
@@ -552,7 +567,12 @@ export class FormationController {
           targets: data.ship,
           x: data.slot.x,
           y: data.slot.y,
-          duration: Math.max(1, Math.round(dur / (data.speed || 1))),
+          duration: this._resolveTravelDuration(
+            data.ship,
+            data.slot.x,
+            data.slot.y,
+            Math.max(1, Math.round(dur / (data.speed || 1)))
+          ),
           ease: 'Sine.easeInOut',
           onComplete: () => {
             if (!data.drifting) return;
@@ -593,7 +613,12 @@ export class FormationController {
       targets: data.ship,
       x: jinkPlan.x,
       y: jinkPlan.y,
-      duration: Math.max(1, Math.round(outMs / (data.speed || 1))),
+      duration: this._resolveTravelDuration(
+        data.ship,
+        jinkPlan.x,
+        jinkPlan.y,
+        Math.max(1, Math.round(outMs / (data.speed || 1)))
+      ),
       ease: 'Expo.easeOut',
       onComplete: () => {
         if (!data.drifting) return;
@@ -601,7 +626,12 @@ export class FormationController {
           targets: data.ship,
           x: data.slot.x,
           y: data.slot.y,
-          duration: Math.max(1, Math.round(backMs / (data.speed || 1))),
+          duration: this._resolveTravelDuration(
+            data.ship,
+            data.slot.x,
+            data.slot.y,
+            Math.max(1, Math.round(backMs / (data.speed || 1)))
+          ),
           ease: 'Quad.easeIn',
           onComplete: () => {
             if (!data.drifting) return;
@@ -651,11 +681,14 @@ export class FormationController {
     alive.forEach((data, i) => {
       const movementSpeedMultiplier = data.ship._baseMovementSpeedMultiplier ?? data.ship._movementSpeedMultiplier ?? 1;
       const slotPlan = resolveAdaptiveSlot(data.ship, newSlots[i], pathBehavior);
+      const requestedDurationScale = pathBehavior.speed * movementSpeedMultiplier * (slotPlan.speedScalar ?? 1);
+      const resolvedDurationScale = data.ship.resolveMovementDurationScale?.(requestedDurationScale) ?? requestedDurationScale;
+      const effectiveShipSpeedMultiplier = resolvedDurationScale / Math.max(0.01, pathBehavior.speed);
       data.slot = { x: slotPlan.x, y: slotPlan.y };
       data.rowIndex = this._resolveRowIndex(slotPlan.y, pathBehavior);
       data.landed = false;
       data.motionStyle = this._pickMotionStyle();
-      data.speed = pathBehavior.speed * movementSpeedMultiplier * (slotPlan.speedScalar ?? 1);
+      data.speed = resolvedDurationScale;
       data.path = applyAdaptivePath(
         data.ship,
         buildFormationPath(
@@ -664,7 +697,7 @@ export class FormationController {
           alive.length,
           this._pathMirror,
           this._rng,
-          movementSpeedMultiplier * (slotPlan.speedScalar ?? 1)
+          effectiveShipSpeedMultiplier
         ),
         pathBehavior,
         slotPlan.speedScalar ?? 1
@@ -699,16 +732,22 @@ export class FormationController {
       const slotPlan = resolveAdaptiveSlot(data.ship, newSlots[i], behavior);
       data.slot = { x: slotPlan.x, y: slotPlan.y };
       data.rowIndex = this._resolveRowIndex(slotPlan.y, behavior);
-      data.speed = behavior.speed
+      const requestedDurationScale = behavior.speed
         * (data.ship._baseMovementSpeedMultiplier ?? data.ship._movementSpeedMultiplier ?? 1)
         * (slotPlan.speedScalar ?? 1);
+      data.speed = data.ship.resolveMovementDurationScale?.(requestedDurationScale) ?? requestedDurationScale;
       data.drifting = false;
       this._scene.tweens.killTweensOf(data.ship);
       this._scene.tweens.add({
         targets: data.ship,
         x: data.slot.x,
         y: data.slot.y,
-        duration: Math.max(1, Math.round(behavior.reformMs / (data.speed || 1))),
+        duration: this._resolveTravelDuration(
+          data.ship,
+          data.slot.x,
+          data.slot.y,
+          Math.max(1, Math.round(behavior.reformMs / (data.speed || 1)))
+        ),
         ease: 'Cubic.easeOut',
         onComplete: () => {
           if (data.dead) return;

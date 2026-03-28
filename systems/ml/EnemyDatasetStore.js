@@ -41,6 +41,7 @@ function normalizeExample(example = {}) {
     },
     meta: {
       levelNumber: normalizeInteger(example.meta?.levelNumber),
+      telemetryLevelId: normalizeInteger(example.meta?.telemetryLevelId),
       outcome: typeof example.meta?.outcome === 'string' ? example.meta.outcome : 'player_win',
       squadId: typeof example.meta?.squadId === 'string' ? example.meta.squadId : null,
       waveId: typeof example.meta?.waveId === 'string' ? example.meta.waveId : null,
@@ -48,10 +49,34 @@ function normalizeExample(example = {}) {
   };
 }
 
+function resolveTelemetryKey(meta = {}) {
+  const telemetryLevelId = normalizeInteger(meta.telemetryLevelId);
+  if (telemetryLevelId > 0) return `telemetry:${telemetryLevelId}`;
+
+  const levelNumber = normalizeInteger(meta.levelNumber);
+  return levelNumber > 0 ? `legacy-level:${levelNumber}` : null;
+}
+
+function filterRecentTelemetryLevels(examples = []) {
+  const windowSize = Math.max(1, normalizeInteger(ENEMY_LEARNING_CONFIG.recentTelemetryLevels ?? 3));
+  if (examples.length <= 1) return examples;
+
+  const keepKeys = new Set();
+  for (let index = examples.length - 1; index >= 0 && keepKeys.size < windowSize; index -= 1) {
+    const key = resolveTelemetryKey(examples[index]?.meta);
+    if (!key) continue;
+    keepKeys.add(key);
+  }
+
+  if (keepKeys.size === 0) return examples;
+  return examples.filter(example => keepKeys.has(resolveTelemetryKey(example?.meta)));
+}
+
 function trimExamples(examples = []) {
+  const recentExamples = filterRecentTelemetryLevels(examples);
   const limit = Math.max(1, normalizeInteger(ENEMY_LEARNING_CONFIG.maxExamplesPerEnemyType));
-  if (examples.length <= limit) return examples;
-  return examples.slice(-limit);
+  if (recentExamples.length <= limit) return recentExamples;
+  return recentExamples.slice(-limit);
 }
 
 export function createDefaultEnemyDatasetState(enemyConfigs = ENEMIES) {
@@ -126,6 +151,7 @@ export class EnemyDatasetStore {
   appendTrainingRecords(records = [], meta = {}) {
     const nextState = this.load();
     const levelNumber = normalizeInteger(meta.levelNumber);
+    const telemetryLevelId = normalizeInteger(meta.telemetryLevelId);
     const outcome = typeof meta.outcome === 'string' ? meta.outcome : 'player_win';
     const defaultWin = outcome === 'enemy_win' ? 1 : 0;
 
@@ -144,6 +170,7 @@ export class EnemyDatasetStore {
           },
           meta: {
             levelNumber,
+            telemetryLevelId,
             outcome,
             squadId: record.summary?.squadId ?? null,
             waveId: record.summary?.waveId ?? null,

@@ -1,7 +1,9 @@
 /** @module MenuScene
  * Main menu: title, start button, keyboard shortcut. */
 
+import { readDebugOptions } from '../config/debug.config.js';
 import { GAME_CONFIG } from '../config/game.config.js';
+import { RunState } from '../systems/RunState.js';
 
 const { WIDTH, HEIGHT } = GAME_CONFIG;
 const CX = WIDTH / 2;
@@ -24,6 +26,10 @@ export class MenuScene extends Phaser.Scene {
     this._buildTitle();
     this._buildStartButton();
     this._buildHints();
+
+    if (readDebugOptions(globalThis.location ?? '').level2) {
+      this._startGame();
+    }
   }
 
   /** Subtle gradient-like backdrop using a single dark rectangle. */
@@ -57,6 +63,7 @@ export class MenuScene extends Phaser.Scene {
   _startGame() {
     this.sound?.unlock?.();
     this.sound?.context?.resume?.();
+    RunState.beginNewRun({ level: 1 });
     this.scene.start('GameScene');
   }
 }

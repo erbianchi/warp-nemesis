@@ -219,6 +219,25 @@ describe('WeaponManager', () => {
     assert.ok(pool._children.every(bullet => bullet.rotation === 0));
   });
 
+  it('restores a persisted between-level weapon state', () => {
+    manager.applyPersistentState({
+      slots: ['tLaser', null],
+      cooldown: 180,
+      heatShots: 7,
+      isOverheated: true,
+      heatRecoveryStepMs: 50,
+      primaryDamageMultiplier: 4,
+    });
+
+    assert.equal(manager.primaryWeaponKey, 'tLaser');
+    assert.equal(manager._cooldown, 180);
+    assert.equal(manager.heatShots, 7);
+    assert.equal(manager.isOverheated, true);
+    assert.equal(manager.heatRecoveryStepMs, 50);
+    assert.equal(manager.primaryDamageMultiplier, 4);
+    assert.equal(manager.getSlots()[0].multiplierLabel, 'x4');
+  });
+
   it('has exactly WEAPON_SLOTS slots', async () => {
     const { GAME_CONFIG } = await import('../../config/game.config.js');
     assert.equal(manager._slots.length, GAME_CONFIG.WEAPON_SLOTS);

@@ -38,6 +38,7 @@ function normalizeExample(example = {}) {
     },
     meta: {
       levelNumber: normalizeInteger(example.meta?.levelNumber),
+      telemetryLevelId: normalizeInteger(example.meta?.telemetryLevelId),
       squadId: typeof example.meta?.squadId === 'string' ? example.meta.squadId : null,
       squadTemplateId: typeof example.meta?.squadTemplateId === 'string' ? example.meta.squadTemplateId : null,
       formation: typeof example.meta?.formation === 'string' ? example.meta.formation : null,
@@ -48,10 +49,34 @@ function normalizeExample(example = {}) {
   };
 }
 
+function resolveTelemetryKey(meta = {}) {
+  const telemetryLevelId = normalizeInteger(meta.telemetryLevelId);
+  if (telemetryLevelId > 0) return `telemetry:${telemetryLevelId}`;
+
+  const levelNumber = normalizeInteger(meta.levelNumber);
+  return levelNumber > 0 ? `legacy-level:${levelNumber}` : null;
+}
+
+function filterRecentTelemetryLevels(examples = []) {
+  const windowSize = Math.max(1, normalizeInteger(ENEMY_LEARNING_CONFIG.recentTelemetryLevels ?? 3));
+  if (examples.length <= 1) return examples;
+
+  const keepKeys = new Set();
+  for (let index = examples.length - 1; index >= 0 && keepKeys.size < windowSize; index -= 1) {
+    const key = resolveTelemetryKey(examples[index]?.meta);
+    if (!key) continue;
+    keepKeys.add(key);
+  }
+
+  if (keepKeys.size === 0) return examples;
+  return examples.filter(example => keepKeys.has(resolveTelemetryKey(example?.meta)));
+}
+
 function trimExamples(examples = []) {
+  const recentExamples = filterRecentTelemetryLevels(examples);
   const limit = Math.max(1, normalizeInteger(ENEMY_LEARNING_CONFIG.maxSquadExamples));
-  if (examples.length <= limit) return examples;
-  return examples.slice(-limit);
+  if (recentExamples.length <= limit) return recentExamples;
+  return recentExamples.slice(-limit);
 }
 
 export function createDefaultSquadDatasetState() {
@@ -110,6 +135,7 @@ export class SquadDatasetStore {
   appendTrainingRecords(records = [], meta = {}) {
     const nextState = this.load();
     const levelNumber = normalizeInteger(meta.levelNumber);
+    const telemetryLevelId = normalizeInteger(meta.telemetryLevelId);
     const outcome = typeof meta.outcome === 'string' ? meta.outcome : 'player_win';
     const defaultWin = outcome === 'enemy_win' ? 1 : 0;
 
@@ -124,6 +150,7 @@ export class SquadDatasetStore {
           },
           meta: {
             levelNumber,
+            telemetryLevelId,
             squadId: record.squadId ?? null,
             squadTemplateId: record.squadTemplateId ?? null,
             formation: record.formation ?? null,

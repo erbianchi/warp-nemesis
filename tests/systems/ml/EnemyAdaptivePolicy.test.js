@@ -23,6 +23,9 @@ const {
 const {
   SquadFeatureEncoder,
 } = await import('../../../systems/ml/SquadFeatureEncoder.js');
+const {
+  LogisticRegressor,
+} = await import('../../../systems/ml/LogisticRegressor.js');
 
 const hadLocalStorage = Object.prototype.hasOwnProperty.call(globalThis, 'localStorage');
 const originalLocalStorage = globalThis.localStorage;
@@ -54,6 +57,49 @@ function createSessionRecord(vector, enemyCount = 2, levelNumber = 1) {
           { vector, labels: { win: 0.25, survival: 0, pressure: 0, collision: 1, bullet: 1 } },
         ],
         summary: { spawnCount: enemyCount },
+      }];
+    },
+    buildSquadTrainingRecords() {
+      return [];
+    },
+    buildPlayerStyleProfile() {
+      return {
+        sampleCount: 12,
+        laneBiasX: -0.35,
+        aggression: 0.42,
+        dodgeIntensity: 0.38,
+        reversalRate: 0.26,
+        heatGreed: 0.54,
+        overheatRate: 0.12,
+        shieldReliance: 0.48,
+        hpRatio: 0.74,
+        shieldRatio: 0.36,
+        pressureExposure: 0.44,
+        enemyDensity: 0.52,
+        nearestEnemyDistanceNorm: 0.42,
+        preferredWeaponKey: 'laser',
+      };
+    },
+    destroy() {},
+  };
+}
+
+function createSeparableSessionRecord(levelNumber = 1) {
+  return {
+    _levelNumber: levelNumber,
+    buildTrainingRecords() {
+      return [{
+        enemyType: 'skirm',
+        enemyCount: 6,
+        examples: [
+          { vector: [1, 1, 0.8], labels: { win: 1, survival: 1, pressure: 1, collision: 0, bullet: 0 } },
+          { vector: [1.1, 0.9, 0.75], labels: { win: 1, survival: 0.95, pressure: 1, collision: 0, bullet: 0 } },
+          { vector: [0.9, 1.2, 0.7], labels: { win: 0.95, survival: 1, pressure: 0.9, collision: 0, bullet: 0 } },
+          { vector: [-1, -1, -0.8], labels: { win: 0, survival: 0.1, pressure: 0, collision: 1, bullet: 1 } },
+          { vector: [-1.1, -0.9, -0.75], labels: { win: 0.05, survival: 0.15, pressure: 0, collision: 1, bullet: 1 } },
+          { vector: [-0.9, -1.2, -0.7], labels: { win: 0, survival: 0.05, pressure: 0.1, collision: 0.95, bullet: 1 } },
+        ],
+        summary: { spawnCount: 6 },
       }];
     },
     buildSquadTrainingRecords() {
@@ -114,6 +160,28 @@ describe('EnemyAdaptivePolicy', () => {
     assert.equal(reloadedModifiers.sampleCount, afterEnemyWin.sampleCount);
     assert.equal(reloadedModifiers.minSpeedScalar, afterEnemyWin.minSpeedScalar);
     assert.equal(reloadedModifiers.maxSpeedScalar, afterEnemyWin.maxSpeedScalar);
+  });
+
+  it('trains stored logistic models that actually separate positive and negative telemetry', () => {
+    const policy = new EnemyAdaptivePolicy();
+    policy.load();
+    policy.trainFromSession(createSeparableSessionRecord(), 'player_win');
+
+    const rawState = JSON.parse(globalThis.localStorage.getItem(ENEMY_LEARNING_STORAGE_KEY));
+    const winRegressor = new LogisticRegressor(rawState.enemyModels.skirm.winModel);
+    const collisionRegressor = new LogisticRegressor(rawState.enemyModels.skirm.collisionModel);
+
+    const positiveVector = [1, 1, 0.8];
+    const negativeVector = [-1, -1, -0.8];
+
+    assert.ok(
+      winRegressor.predictProbability(positiveVector) > winRegressor.predictProbability(negativeVector),
+      'win model should prefer the positive telemetry cluster'
+    );
+    assert.ok(
+      collisionRegressor.predictProbability(negativeVector) > collisionRegressor.predictProbability(positiveVector),
+      'collision model should prefer the negative telemetry cluster'
+    );
   });
 
   it('uses Level 1 squad data to bootstrap the level 2 squad network', () => {
@@ -288,6 +356,64 @@ describe('EnemyAdaptivePolicy', () => {
         globalThis.document = previousDocument;
       }
     }
+  });
+
+  it('applies immediate transition retraining for Level 2 and returns the player style profile', () => {
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    globalThis.window = {};
+    globalThis.document = {};
+
+    try {
+      const policy = new EnemyAdaptivePolicy();
+      policy.load();
+
+      const result = policy.trainFromSession(
+        createSessionRecord([0.4, 0.2, 0.1], 2, 1),
+        'player_win',
+        { immediate: true, nextLevelNumber: 2 }
+      );
+
+      const rawState = JSON.parse(globalThis.localStorage.getItem(ENEMY_LEARNING_STORAGE_KEY));
+
+      assert.equal(result.usedImmediateTraining, true);
+      assert.ok(result.playerStyleProfile);
+      assert.equal(result.playerStyleProfile.preferredWeaponKey, 'laser');
+      assert.equal(result.telemetryLevelId, 1);
+      assert.equal(rawState.enemyModels.skirm.sampleCount, 6);
+      assert.equal(globalThis.localStorage.getItem(ENEMY_LEARNING_STAGED_STORAGE_KEY), null);
+    } finally {
+      if (previousWindow === undefined) {
+        delete globalThis.window;
+      } else {
+        globalThis.window = previousWindow;
+      }
+      if (previousDocument === undefined) {
+        delete globalThis.document;
+      } else {
+        globalThis.document = previousDocument;
+      }
+    }
+  });
+
+  it('retains raw telemetry for only the last 3 completed levels', () => {
+    const policy = new EnemyAdaptivePolicy();
+    policy.load();
+
+    for (let levelNumber = 1; levelNumber <= 4; levelNumber += 1) {
+      policy.trainFromSession(
+        createSessionRecord([levelNumber, 0.2, 0.1], 2, levelNumber),
+        'player_win'
+      );
+    }
+
+    const rawDataset = JSON.parse(globalThis.localStorage.getItem(ENEMY_DATASET_STORAGE_KEY));
+    const keptTelemetryIds = [...new Set(
+      rawDataset.enemyExamples.skirm.map(example => example.meta.telemetryLevelId)
+    )];
+
+    assert.deepEqual(keptTelemetryIds, [2, 3, 4]);
+    assert.ok(rawDataset.enemyExamples.skirm.every(example => example.meta.levelNumber >= 2));
   });
 
   it('scores runtime movement candidates with the learned pressure and collision models', () => {

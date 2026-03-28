@@ -14,6 +14,8 @@ import { BonusSystem }           from '../systems/BonusSystem.js';
 import { ShieldController }      from '../systems/ShieldController.js';
 import { AdaptiveStatsResolver } from '../systems/ml/AdaptiveStatsResolver.js';
 import { EnemyAdaptivePolicy }   from '../systems/ml/EnemyAdaptivePolicy.js';
+import { DanceGenerator }        from '../systems/ml/DanceGenerator.js';
+import { LEVELS }                from '../config/levels.config.js';
 import { WeaponManager }         from '../weapons/WeaponManager.js';
 import { RunState }              from '../systems/RunState.js';
 import { MetaProgression }       from '../systems/MetaProgression.js';
@@ -118,11 +120,17 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard.once('keydown', () => this._unlockAudio());
 
     this._playerSpeed    = PLAYER_SPEED_DEFAULT;
-    this._playerLives    = PLAYER_LIVES_DEFAULT;
     this._levelCompletionRecorded = false;
     this._resolveStartingPlayerStats();
-    this._playerHp       = this._startingPlayerHp;
-    this._playerShield   = this._startingPlayerShield;
+    const savedPlayerState = this._prepareRunState();
+    this._playerHp       = Math.min(
+      PLAYER_HP_MAX,
+      Math.max(0, Math.round(savedPlayerState?.hp ?? this._startingPlayerHp))
+    );
+    this._playerShield   = Math.min(
+      PLAYER_SHIELD_MAX,
+      Math.max(0, Math.round(savedPlayerState?.shield ?? this._startingPlayerShield))
+    );
     this._gameOver       = false;
     this._respawning     = false;
     this._levelClearing  = false;
@@ -131,19 +139,18 @@ export class GameScene extends Phaser.Scene {
     this._hudTimeMs      = 0;
     this._nextLearningEnemyId = 0;
     this._runLearningRecorded = false;
-    this._levelIndex = 0;   // Level 1
-    this._coolingBoostEndsAt = 0;
+    this._coolingBoostEndsAt = Math.max(0, Math.round(savedPlayerState?.coolingBoostRemainingMs ?? 0));
     this._heatWarningActive = false;
     this._nextHeatWarningShakeAt = 0;
     this._rbOffset = 0;   // rubber-band spring displacement (0 = neutral)
     this._rbVel    = 0;   // spring velocity
 
-    RunState.reset();
     RunState.lives = this._playerLives;
 
     this._buildWeaponDisplay();
     this._buildStatusBars();
     this._buildHUD();
+    this._updateTimedBonuses(0);
 
     // ── Enemy management ────────────────────────────────────────────────────
     this._enemies    = [];   // live enemy instances
@@ -152,6 +159,12 @@ export class GameScene extends Phaser.Scene {
     this._formations = [];   // active FormationControllers
     this._enemyAdaptivePolicy = this._deps.enemyAdaptivePolicy ?? new EnemyAdaptivePolicy();
     this._enemyAdaptivePolicy.load?.();
+    this._danceGenerator = new DanceGenerator({
+      network: this._enemyAdaptivePolicy.getDanceNetwork(),
+      encoder: this._enemyAdaptivePolicy._encoder,
+      playerStyleProfile: RunState.playerStyleProfile ?? null,
+    });
+    this._ensureRuntimeWavesReady();
     this._adaptiveStatsResolver = this._deps.adaptiveStatsResolver ?? new AdaptiveStatsResolver({
       policy: this._enemyAdaptivePolicy,
       baseResolveStats: resolveStats,
@@ -403,6 +416,43 @@ export class GameScene extends Phaser.Scene {
       PLAYER_SHIELD_MAX,
       PLAYER_SHIELD_DEFAULT + (startingBonuses.shield ?? 0)
     );
+  }
+
+  _prepareRunState() {
+    const savedPlayerState = RunState.consumePlayerState?.() ?? null;
+
+    if (!savedPlayerState) {
+      this._resetRuntimeGeneratedLevels();
+      const requestedLevel = this._debugOptions?.level2
+        ? 2
+        : Math.max(1, Math.round(RunState.level ?? 1));
+      RunState.beginNewRun?.({
+        level: requestedLevel,
+        lives: PLAYER_LIVES_DEFAULT,
+      });
+    }
+
+    this._playerLives = Math.max(1, Math.round(RunState.lives ?? PLAYER_LIVES_DEFAULT));
+    this._levelIndex = Math.max(0, Math.round((RunState.level ?? 1) - 1));
+    this._weapons?.applyPersistentState?.(savedPlayerState?.weaponState ?? null);
+
+    return savedPlayerState;
+  }
+
+  _resetRuntimeGeneratedLevels() {
+    for (const level of LEVELS) {
+      if (level?.runtimeWaveSource !== 'dance_generator') continue;
+      level.waves = [];
+    }
+  }
+
+  _buildPersistentPlayerState() {
+    return {
+      hp: Math.min(PLAYER_HP_MAX, Math.max(0, Math.round(this._playerHp ?? this._startingPlayerHp))),
+      shield: Math.min(PLAYER_SHIELD_MAX, Math.max(0, Math.round(this._playerShield ?? this._startingPlayerShield))),
+      coolingBoostRemainingMs: Math.max(0, Math.round((this._coolingBoostEndsAt ?? 0) - (this._hudTimeMs ?? 0))),
+      weaponState: this._weapons?.getPersistentState?.() ?? null,
+    };
   }
 
   /**
@@ -691,6 +741,8 @@ export class GameScene extends Phaser.Scene {
     this._resetPlayerHeat();
     this._resetPlayerBonuses();
     this._gameOver = true;
+    RunState.clearPlayerState?.();
+    RunState.clearPlayerStyleProfile?.();
     this._finalizeEnemyLearning('enemy_win');
 
     this._explode(this._player.x, this._player.y);
@@ -710,7 +762,10 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(20);
 
     this.time.delayedCall(4000, () => this.scene.start('MenuScene'));
-    this.input.keyboard.once('keydown-ENTER', () => this.scene.start('GameScene'));
+    this.input.keyboard.once('keydown-ENTER', () => {
+      RunState.beginNewRun?.({ level: 1, lives: PLAYER_LIVES_DEFAULT });
+      this.scene.start('GameScene');
+    });
   }
 
   _onSquadronSpawned({ count, squadron, overlay = false }) {
@@ -1132,7 +1187,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   _showLevelCompleteCard() {
-    this._finalizeEnemyLearning('player_win');
+    const nextLevelIndex = (this._levelIndex ?? 0) + 1;
+    const hasNextLevel   = nextLevelIndex < LEVELS.length;
+    const nextLevelConfig = LEVELS[nextLevelIndex];
+    const immediateTransitionLearning = hasNextLevel && nextLevelConfig?.runtimeWaveSource === 'dance_generator';
+    const learningState = this._finalizeEnemyLearning('player_win', {
+      immediate: immediateTransitionLearning,
+      nextLevelNumber: nextLevelIndex + 1,
+    });
+
     this._recordLevelCompletion();
     this._bg?.fadeToBlack?.(LEVEL_CLEAR_FADE_MS);
 
@@ -1144,11 +1207,34 @@ export class GameScene extends Phaser.Scene {
       fontSize: '18px', fill: '#ffffff', fontFamily: 'monospace',
     }).setOrigin(0.5).setDepth(20);
 
+    if (hasNextLevel) {
+      RunState.savePlayerStyleProfile?.(learningState?.playerStyleProfile ?? RunState.playerStyleProfile ?? null);
+      this._danceGenerator?.setPlayerStyleProfile?.(RunState.playerStyleProfile ?? null);
+    } else {
+      RunState.clearPlayerStyleProfile?.();
+    }
+
+    if (hasNextLevel && nextLevelConfig?.runtimeWaveSource === 'dance_generator') {
+      this._danceGenerator?.generateAndInjectWaves(
+        LEVELS,
+        nextLevelIndex,
+        nextLevelConfig.runtimeWaveCount
+      );
+    }
+
+    if (hasNextLevel) {
+      RunState.savePlayerState?.(this._buildPersistentPlayerState());
+      RunState.lives = this._playerLives;
+      RunState.level = nextLevelIndex + 1;
+    } else {
+      RunState.clearPlayerState?.();
+    }
+
     this.time.delayedCall(LEVEL_CLEAR_CARD_DELAY_MS, () => this.scene.start('LevelTransitionScene', {
       levelNumber: (this._levelIndex ?? 0) + 1,
       runScore: RunState.score,
-      returnSceneKey: 'MenuScene',
-      continueLabel: 'BACK TO MENU',
+      returnSceneKey: hasNextLevel ? 'GameScene' : 'MenuScene',
+      continueLabel:  hasNextLevel ? `CONTINUE TO LEVEL ${nextLevelIndex + 1}` : 'BACK TO MENU',
     }));
   }
 
@@ -1156,6 +1242,19 @@ export class GameScene extends Phaser.Scene {
     if (this._levelCompletionRecorded) return;
     this._levelCompletionRecorded = true;
     MetaProgression.recordCompletedLevel(RunState.score);
+  }
+
+  _ensureRuntimeWavesReady() {
+    const levelConfig = LEVELS[this._levelIndex];
+    if (!levelConfig) return;
+    if ((levelConfig.waves?.length ?? 0) > 0) return;
+    if (levelConfig.runtimeWaveSource !== 'dance_generator') return;
+
+    this._danceGenerator?.generateAndInjectWaves(
+      LEVELS,
+      this._levelIndex,
+      levelConfig.runtimeWaveCount
+    );
   }
 
   _getEnemyLearningPlayerSnapshot() {
@@ -1168,12 +1267,12 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
-  _finalizeEnemyLearning(outcome) {
+  _finalizeEnemyLearning(outcome, options = {}) {
     if (this._runLearningRecorded) return;
     this._runLearningRecorded = true;
     let learningState = null;
     try {
-      learningState = this._enemyAdaptivePolicy?.trainFromSession?.(this._enemyLearningSession, outcome) ?? null;
+      learningState = this._enemyAdaptivePolicy?.trainFromSession?.(this._enemyLearningSession, outcome, options) ?? null;
     } catch {
       learningState = this._enemyAdaptivePolicy?.getSnapshot?.() ?? null;
     }
@@ -1182,6 +1281,7 @@ export class GameScene extends Phaser.Scene {
       runScore: RunState.score,
       learningState,
     });
+    return learningState;
   }
 
   // ── HUD ───────────────────────────────────────────────────────────────────

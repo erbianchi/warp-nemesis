@@ -10,6 +10,11 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function average(values = []) {
+  if (!Array.isArray(values) || values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
 function resolveEventSignal(sampleTimeMs, eventTimes, windowMs) {
   if (!Array.isArray(eventTimes) || eventTimes.length === 0) return 0;
 
@@ -54,6 +59,10 @@ export class EnemyLearningSession {
     this._levelNumber = Math.max(1, Math.round(options.levelNumber ?? 1));
     this._enemyRegistry = new Map();
     this._squadRegistry = new Map();
+    this._playerSamples = [];
+    this._playerHitEvents = 0;
+    this._playerHpDamageTaken = 0;
+    this._playerShieldDamageTaken = 0;
     this._elapsedMs = 0;
     this._sampleRemainderMs = 0;
     this._destroyed = false;
@@ -103,6 +112,8 @@ export class EnemyLearningSession {
     const playerBullets = this._getPlayerBullets?.() ?? [];
     const sampledSquads = new Set();
 
+    this._recordPlayerSample(player, weapon, liveEnemies);
+
     for (const enemy of liveEnemies) {
       const registry = this._enemyRegistry.get(enemy);
       if (!registry?.enemyType) continue;
@@ -131,6 +142,40 @@ export class EnemyLearningSession {
         sampledSquads.add(registry.squadId);
         this._sampleSquad(registry.squadId, liveEnemies, player, weapon);
       }
+    }
+  }
+
+  _recordPlayerSample(player, weapon, liveEnemies) {
+    const normalization = ENEMY_LEARNING_CONFIG.normalization ?? {};
+    const diagonal = Math.max(1, normalization.diagonal ?? 1);
+    const nearestEnemyDistance = (liveEnemies ?? []).reduce((closest, enemy) => (
+      Math.min(
+        closest,
+        Math.hypot((enemy?.x ?? 0) - (player?.x ?? 0), (enemy?.y ?? 0) - (player?.y ?? 0))
+      )
+    ), Number.POSITIVE_INFINITY);
+    const maxSamples = Math.max(48, (ENEMY_LEARNING_CONFIG.maxSamplesPerEnemy ?? 40) * 16);
+
+    this._playerSamples.push({
+      timeMs: this._elapsedMs,
+      xNorm: clamp((player?.x ?? 0) / Math.max(1, normalization.width ?? 1), 0, 1),
+      yNorm: clamp((player?.y ?? 0) / Math.max(1, normalization.height ?? 1), 0, 1),
+      hpRatio: clamp(player?.hpRatio ?? 1, 0, 1),
+      hasShield: player?.hasShield ? 1 : 0,
+      shieldRatio: clamp(player?.shieldRatio ?? 0, 0, 1),
+      heatRatio: clamp(weapon?.heatRatio ?? 0, 0, 1),
+      isOverheated: weapon?.isOverheated ? 1 : 0,
+      primaryWeaponKey: typeof weapon?.primaryWeaponKey === 'string' ? weapon.primaryWeaponKey : 'laser',
+      liveEnemyCountNorm: clamp((liveEnemies?.length ?? 0) / 16, 0, 1.5),
+      nearestEnemyDistanceNorm: clamp(
+        (Number.isFinite(nearestEnemyDistance) ? nearestEnemyDistance : diagonal) / diagonal,
+        0,
+        1.5
+      ),
+    });
+
+    while (this._playerSamples.length > maxSamples) {
+      this._playerSamples.shift();
     }
   }
 
@@ -248,6 +293,9 @@ export class EnemyLearningSession {
 
   _onPlayerHit(payload = {}) {
     const enemyId = payload.sourceEnemyId ?? null;
+    this._playerHitEvents += 1;
+    this._playerHpDamageTaken += Math.max(0, payload.hpDamage ?? 0);
+    this._playerShieldDamageTaken += Math.max(0, payload.absorbed ?? 0);
     if (!enemyId) return;
 
     for (const [enemy, registry] of this._enemyRegistry.entries()) {
@@ -448,6 +496,102 @@ export class EnemyLearningSession {
     }
 
     return records;
+  }
+
+  /**
+   * Summarize the current run into a compact style profile that can steer the
+   * next level's generator toward this player's habits.
+   * @returns {object}
+   */
+  buildPlayerStyleProfile() {
+    const samples = this._playerSamples;
+    const latest = samples.at(-1) ?? null;
+
+    if (!latest) {
+      return {
+        sampleCount: 0,
+        laneBiasX: 0,
+        aggression: 0.18,
+        dodgeIntensity: 0,
+        reversalRate: 0,
+        heatGreed: 0.12,
+        overheatRate: 0,
+        shieldReliance: 0.45,
+        hpRatio: 1,
+        shieldRatio: 0.6,
+        pressureExposure: 0,
+        enemyDensity: 0,
+        nearestEnemyDistanceNorm: 1,
+        preferredWeaponKey: 'laser',
+      };
+    }
+
+    let lateralTravel = 0;
+    let moveCount = 0;
+    let reversals = 0;
+    let previousDirection = 0;
+
+    for (let index = 1; index < samples.length; index += 1) {
+      const deltaX = samples[index].xNorm - samples[index - 1].xNorm;
+      const absDeltaX = Math.abs(deltaX);
+      if (absDeltaX < 0.0025) continue;
+
+      lateralTravel += absDeltaX;
+      moveCount += 1;
+
+      const direction = Math.sign(deltaX);
+      if (previousDirection !== 0 && direction !== 0 && direction !== previousDirection) {
+        reversals += 1;
+      }
+      previousDirection = direction || previousDirection;
+    }
+
+    const weaponCounts = new Map();
+    samples.forEach((sample) => {
+      const key = sample.primaryWeaponKey ?? 'laser';
+      weaponCounts.set(key, (weaponCounts.get(key) ?? 0) + 1);
+    });
+    const preferredWeaponKey = [...weaponCounts.entries()]
+      .sort((left, right) => right[1] - left[1])[0]?.[0] ?? 'laser';
+    const sampleCount = samples.length;
+    const moveDivisor = Math.max(1, moveCount);
+    const avgXNorm = average(samples.map(sample => sample.xNorm));
+
+    return {
+      sampleCount,
+      laneBiasX: clamp((avgXNorm - 0.5) * 2, -1, 1),
+      aggression: clamp(1 - average(samples.map(sample => sample.yNorm)), 0, 1),
+      dodgeIntensity: clamp((lateralTravel / moveDivisor) * 6.5, 0, 1),
+      reversalRate: clamp(reversals / Math.max(1, moveCount - 1), 0, 1),
+      heatGreed: clamp(
+        average(samples.map(sample => sample.heatRatio)) * 0.78
+        + average(samples.map(sample => sample.isOverheated)) * 0.34,
+        0,
+        1
+      ),
+      overheatRate: clamp(average(samples.map(sample => sample.isOverheated)), 0, 1),
+      shieldReliance: clamp(
+        average(samples.map(sample => sample.hasShield)) * 0.55
+        + average(samples.map(sample => sample.shieldRatio)) * 0.45,
+        0,
+        1
+      ),
+      hpRatio: clamp(latest.hpRatio ?? 1, 0, 1),
+      shieldRatio: clamp(latest.shieldRatio ?? 0, 0, 1),
+      pressureExposure: clamp(
+        (this._playerHitEvents / Math.max(1, sampleCount)) * 3.2
+        + average(samples.map(sample => sample.liveEnemyCountNorm)) * 0.14,
+        0,
+        1
+      ),
+      enemyDensity: clamp(average(samples.map(sample => sample.liveEnemyCountNorm)), 0, 1),
+      nearestEnemyDistanceNorm: clamp(
+        average(samples.map(sample => sample.nearestEnemyDistanceNorm)),
+        0,
+        1.5
+      ),
+      preferredWeaponKey,
+    };
   }
 
   destroy() {

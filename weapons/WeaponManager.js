@@ -201,6 +201,60 @@ export class WeaponManager {
   }
 
   /**
+   * Serialize the weapon state that should persist between levels.
+   * @returns {{slots: Array<string|null>, cooldown: number, heatShots: number, isOverheated: boolean, heatRecoveryStepMs: number, primaryDamageMultiplier: number}}
+   */
+  getPersistentState() {
+    return {
+      slots: [...this._slots],
+      cooldown: Math.max(0, this._cooldown ?? 0),
+      heatShots: Math.max(0, this._heatShots ?? 0),
+      isOverheated: Boolean(this._isOverheated),
+      heatRecoveryStepMs: Math.max(1, this._heatRecoveryStepMs ?? this._baseHeatRecoveryStepMs),
+      primaryDamageMultiplier: Math.max(1, this._primaryDamageMultiplier ?? 1),
+    };
+  }
+
+  /**
+   * Restore a persisted between-level weapon state.
+   * @param {object|null} state
+   * @returns {object}
+   */
+  applyPersistentState(state = null) {
+    const slots = Array(GAME_CONFIG.WEAPON_SLOTS).fill(null);
+    const savedSlots = Array.isArray(state?.slots) ? state.slots : [];
+
+    for (let index = 0; index < slots.length; index++) {
+      const weaponKey = savedSlots[index];
+      slots[index] = typeof weaponKey === 'string' && WEAPONS[weaponKey] ? weaponKey : null;
+    }
+
+    if (!slots[0] || !WEAPONS[slots[0]]) {
+      slots[0] = DEFAULT_PRIMARY_WEAPON;
+    }
+
+    this._slots = slots;
+    this._cfg = WEAPONS[this._slots[0]];
+    this._cooldown = Math.max(0, Number(state?.cooldown) || 0);
+    this._heatShots = Math.min(
+      this._maxHeatShots,
+      Math.max(0, Number(state?.heatShots) || 0)
+    );
+    this._isOverheated = Boolean(state?.isOverheated) && this._heatShots > 0;
+    this._heatRecoveryStepMs = Math.max(
+      1,
+      Number(state?.heatRecoveryStepMs) || this._baseHeatRecoveryStepMs
+    );
+    this._primaryDamageMultiplier = Math.max(
+      1,
+      Number(state?.primaryDamageMultiplier) || 1
+    );
+    this._lastShotInfo = null;
+    this._syncCoolingSound(this.isCoolingDown);
+    return this.getPersistentState();
+  }
+
+  /**
    * Tick cooldown and recycle bullets that have left the canvas.
    * Call once per frame before tryFire.
    * @param {number} delta - ms since last frame

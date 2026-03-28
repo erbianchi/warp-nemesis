@@ -31,6 +31,8 @@ export function resolveStats(type, difficultyBase, difficultyFactor, planeOverri
   const shieldMod   = planeOverrides.shieldModifier    ?? preset.shieldModifier ?? 1;
 
   const difficulty = difficultyBase * difficultyFactor;
+  const resolvedSpeed = Math.round(base.speed * speedMod);
+  const speedCap = Math.max(1, Math.round(base.maxSpeed ?? resolvedSpeed));
 
   return {
     hp:          Math.round(base.hp         * difficulty * hpMod),
@@ -38,7 +40,8 @@ export function resolveStats(type, difficultyBase, difficultyFactor, planeOverri
     contactDamage: base.contactDamage == null
       ? undefined
       : Math.round(base.contactDamage * difficulty * damageMod),
-    speed:       Math.round(base.speed      * speedMod),
+    speed:       Math.min(resolvedSpeed, speedCap),
+    speedCap,
     baseSpeed:   base.speed,
     fireRate:    Math.round(base.fireRate   / fireRateMod),
     score:       Math.round(base.score      * difficulty),

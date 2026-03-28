@@ -34,7 +34,8 @@ export const ENEMIES = {
   skirm: {
     hp: 10,
     damage: 10,
-    speed: 80,        // slow
+    speed: 80,        // slow base cruise
+    maxSpeed: 430,    // authored dance ceiling; fast enough to keep phrases alive without uncapping jink spikes
     fireRate: 4400,   // ms between shots
     score: 50,
     dropChance: 0.10,
@@ -48,6 +49,7 @@ export const ENEMIES = {
     shield: 100,
     damage: 25,
     speed: 62,
+    maxSpeed: 78,
     fireRate: 4000,   // deliberate burst cadence, but not sleepy
     score: 300,
     dropChance: 0.18,
@@ -61,6 +63,7 @@ export const ENEMIES = {
     damage: 0,
     contactDamage: 200,
     speed: 30,
+    maxSpeed: 30,
     fireRate: 0,
     score: 200,
     dropChance: 0.10,
@@ -72,6 +75,7 @@ export const ENEMIES = {
     hp: 20,
     damage: 10,
     speed: 120,
+    maxSpeed: 138,
     fireRate: 1500,   // ms between shots
     score: 100,
     dropChance: 0.15,
@@ -83,6 +87,7 @@ export const ENEMIES = {
     hp: 50,
     damage: 20,
     speed: 70,
+    maxSpeed: 88,
     fireRate: 2500,
     score: 250,
     dropChance: 0.35,
@@ -94,6 +99,7 @@ export const ENEMIES = {
     hp: 15,
     damage: 8,
     speed: 220,
+    maxSpeed: 260,
     fireRate: 1000,
     score: 150,
     dropChance: 0.10,
@@ -105,6 +111,7 @@ export const ENEMIES = {
     hp: 40,
     damage: 12,
     speed: 50,
+    maxSpeed: 68,
     fireRate: 800,
     score: 200,
     dropChance: 0.20,
@@ -116,6 +123,7 @@ export const ENEMIES = {
     hp: 10,
     damage: 30,   // collision damage — rams the player
     speed: 280,
+    maxSpeed: 320,
     fireRate: 0,  // no ranged attack
     score: 80,
     dropChance: 0.05,

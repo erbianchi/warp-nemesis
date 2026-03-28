@@ -32,13 +32,15 @@ function normalizeQueryInput(source = '') {
  * Parse browser query params into local debug options.
  * @param {string|{search?: string, href?: string, pathname?: string, hash?: string}} [search='']
  *   A raw URL search string, full href, or location-like object.
- * @returns {{debugEnd: boolean}}
+ * @returns {{debugEnd: boolean, level2: boolean}}
  */
 export function readDebugOptions(search = '') {
   const params = new URLSearchParams(normalizeQueryInput(search));
   const rawDebugEnd = params.get('debugEnd');
+  const rawLevel2 = params.get('level2');
 
   return {
     debugEnd: rawDebugEnd !== null && TRUTHY_QUERY_VALUES.has(String(rawDebugEnd).toLowerCase()),
+    level2: rawLevel2 !== null && TRUTHY_QUERY_VALUES.has(String(rawLevel2).toLowerCase()),
   };
 }

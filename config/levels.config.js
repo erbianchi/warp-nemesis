@@ -470,4 +470,20 @@ export const LEVELS = [
     waves: createLevel1Waves(),
     overlaySquadrons: createLevel1OverlaySquadrons(),
   },
+  {
+    id: 2,
+    theme: 'Enemy Carrier Approach',
+    scrollSpeed: 100,
+    difficultyBase: 1.3,
+    midBoss: null,
+    boss: null,
+
+    // Populated at runtime by DanceGenerator before Level 2 starts.
+    // Three TensorFlow-guided waves built from mirrored controller phrases,
+    // cutter squadrons, and side-entry Raptor pressure.
+    runtimeWaveSource: 'dance_generator',
+    runtimeWaveCount: 3,
+    waves: [],
+    overlaySquadrons: [],
+  },
 ];

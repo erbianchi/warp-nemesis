@@ -79,6 +79,16 @@ export class EnemyBase extends _BaseSprite {
     this.speed = stats.speed;
     /** @type {number} */
     this._nativeSpeed = stats.speed;
+    const adaptiveMaxSpeed = Math.max(
+      1,
+      Math.round(
+        stats.adaptive?.maxSpeed
+        ?? stats.speedCap
+        ?? (stats.speed * (stats.adaptive?.maxSpeedScalar ?? 1))
+      )
+    );
+    /** @type {number} */
+    this._maxSpeed = adaptiveMaxSpeed;
     /** @type {number} */
     this.baseSpeed = stats.baseSpeed ?? stats.speed;
     /** @type {number} */
@@ -94,6 +104,7 @@ export class EnemyBase extends _BaseSprite {
       enabled: stats.adaptive?.enabled ?? false,
       minSpeedScalar: stats.adaptive?.minSpeedScalar ?? 1,
       maxSpeedScalar: stats.adaptive?.maxSpeedScalar ?? 1,
+      maxSpeed: adaptiveMaxSpeed,
       currentSpeedScalar: 1,
       predictedEnemyWinRate: stats.adaptive?.predictedEnemyWinRate ?? 0.5,
       predictedSurvival: stats.adaptive?.predictedSurvival ?? 0.5,
@@ -206,8 +217,8 @@ export class EnemyBase extends _BaseSprite {
       if (moved) this._syncBodyToSprite();
     }
 
-    if (this.y < 0) return; // don't fire until on screen
     this._fireCooldown += delta;
+    if (this.y < 0) return; // don't fire until on screen, but let entry time count toward the first shot
     if (this._formationFireControlled) return;
     if (this.fireRate > 0 && this._fireCooldown >= this.fireRate) {
       if (this.shouldFireNow()) {
@@ -339,12 +350,93 @@ export class EnemyBase extends _BaseSprite {
   _applyAdaptiveSpeedScalar(speedScalar = 1) {
     const minSpeedScalar = this.adaptiveProfile?.minSpeedScalar ?? 1;
     const maxSpeedScalar = this.adaptiveProfile?.maxSpeedScalar ?? 1;
-    const nextScalar = clamp(speedScalar, minSpeedScalar, maxSpeedScalar);
+    const requestedScalar = clamp(speedScalar, minSpeedScalar, maxSpeedScalar);
+    const maxSpeed = this.adaptiveProfile?.maxSpeed ?? this._maxSpeed ?? Math.max(1, this._nativeSpeed ?? 1);
+    const resolvedSpeed = Math.min(
+      Math.max(1, Math.round((this._nativeSpeed ?? 1) * requestedScalar)),
+      maxSpeed
+    );
+    const resolvedScalar = clamp(
+      resolvedSpeed / Math.max(1, this._nativeSpeed ?? 1),
+      minSpeedScalar,
+      maxSpeedScalar
+    );
 
-    this.adaptiveProfile.currentSpeedScalar = nextScalar;
-    this.speed = Math.max(1, Math.round((this._nativeSpeed ?? 1) * nextScalar));
-    this._movementSpeedMultiplier = (this._baseMovementSpeedMultiplier ?? 1) * nextScalar;
-    return nextScalar;
+    this.adaptiveProfile.currentSpeedScalar = resolvedScalar;
+    this.speed = resolvedSpeed;
+    this._movementSpeedMultiplier = resolvedSpeed / Math.max(1, this.baseSpeed ?? this._nativeSpeed ?? 1);
+    return resolvedScalar;
+  }
+
+  getMaxMovementSpeed() {
+    return Math.max(
+      1,
+      this.adaptiveProfile?.maxSpeed
+      ?? this._maxSpeed
+      ?? this.speed
+      ?? this._nativeSpeed
+      ?? this.baseSpeed
+      ?? 1
+    );
+  }
+
+  resolveMovementDurationScale(requestedMultiplier = 1) {
+    const baseSpeed = Math.max(1, this.baseSpeed ?? this._nativeSpeed ?? 1);
+    const maxSpeed = this.getMaxMovementSpeed();
+    const resolvedSpeed = Math.min(
+      Math.max(1, Math.round(baseSpeed * requestedMultiplier)),
+      maxSpeed
+    );
+    return resolvedSpeed / baseSpeed;
+  }
+
+  resolveTravelDurationMs(requestedDurationMs, targetX, targetY, originX = this.x, originY = this.y) {
+    const baseDuration = Math.max(1, Math.round(requestedDurationMs ?? 0));
+    const distance = Math.hypot((targetX ?? originX) - originX, (targetY ?? originY) - originY);
+    if (distance <= 0.01) return baseDuration;
+
+    const minDurationMs = Math.ceil((distance / this.getMaxMovementSpeed()) * 1000);
+    return Math.max(baseDuration, minDurationMs);
+  }
+
+  applyClampedMovement(nextX, nextY, deltaMs) {
+    const dt = Math.max(0, deltaMs) / 1000;
+    if (dt <= 0) return { x: this.x, y: this.y, distance: 0, maxDistance: 0 };
+
+    const startX = this.x;
+    const startY = this.y;
+    let dx = nextX - startX;
+    let dy = nextY - startY;
+    const distance = Math.hypot(dx, dy);
+    const maxDistance = this.getMaxMovementSpeed() * dt;
+
+    if (distance > maxDistance && distance > 0.0001) {
+      const scale = maxDistance / distance;
+      dx *= scale;
+      dy *= scale;
+      nextX = startX + dx;
+      nextY = startY + dy;
+    }
+
+    this.x = nextX;
+    this.y = nextY;
+    this._syncBodyToSprite();
+
+    return {
+      x: this.x,
+      y: this.y,
+      distance: Math.hypot(this.x - startX, this.y - startY),
+      maxDistance,
+    };
+  }
+
+  moveTowardPoint(targetX, targetY, deltaMs, responseX = 1, responseY = responseX) {
+    const dt = Math.max(0, deltaMs) / 1000;
+    if (dt <= 0) return { x: this.x, y: this.y, distance: 0, maxDistance: 0 };
+
+    const nextX = this.x + (targetX - this.x) * Math.min(1, dt * Math.max(0, responseX));
+    const nextY = this.y + (targetY - this.y) * Math.min(1, dt * Math.max(0, responseY));
+    return this.applyClampedMovement(nextX, nextY, deltaMs);
   }
 
   _getPlayerSnapshot() {

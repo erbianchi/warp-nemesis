@@ -46,6 +46,82 @@ describe('LogisticRegressor', () => {
     assert.ok(probability > 0.1 && probability < 0.7);
   });
 
+  it('separates a simple linearly separable batch after batch training', () => {
+    const regressor = new LogisticRegressor();
+    const vectors = [
+      [1, 1],
+      [1.2, 0.9],
+      [0.8, 1.1],
+      [-1, -1],
+      [-1.1, -0.8],
+      [-0.9, -1.2],
+    ];
+    const labels = [1, 1, 1, 0, 0, 0];
+
+    regressor.trainBatch(vectors, labels, {
+      learningRate: 0.18,
+      regularization: 0.0005,
+      epochs: 6,
+    });
+
+    assert.ok(
+      regressor.predictProbability([1, 1]) > 0.8,
+      'positive cluster should score as likely positive'
+    );
+    assert.ok(
+      regressor.predictProbability([-1, -1]) < 0.2,
+      'negative cluster should score as likely negative'
+    );
+  });
+
+  it('preserves learned predictions across getState() round-trips', () => {
+    const regressor = new LogisticRegressor();
+    const vectors = [
+      [0],
+      [1],
+      [2],
+      [3],
+      [4],
+      [5],
+    ];
+    const labels = [0, 0, 0, 1, 1, 1];
+
+    regressor.trainBatch(vectors, labels, {
+      learningRate: 0.18,
+      regularization: 0.0005,
+      epochs: 6,
+    });
+
+    const positiveBefore = regressor.predictProbability([5]);
+    const negativeBefore = regressor.predictProbability([0]);
+    const reloaded = new LogisticRegressor(regressor.getState());
+
+    assert.equal(reloaded.predictProbability([5]), positiveBefore);
+    assert.equal(reloaded.predictProbability([0]), negativeBefore);
+  });
+
+  it('learns in the async fallback batch path too', async () => {
+    const regressor = new LogisticRegressor();
+    const vectors = [
+      [1, 1],
+      [1.2, 0.9],
+      [0.8, 1.1],
+      [-1, -1],
+      [-1.1, -0.8],
+      [-0.9, -1.2],
+    ];
+    const labels = [1, 1, 1, 0, 0, 0];
+
+    await regressor.trainBatchAsync(vectors, labels, {
+      learningRate: 0.18,
+      regularization: 0.0005,
+      epochs: 6,
+    });
+
+    assert.ok(regressor.predictProbability([1, 1]) > 0.8);
+    assert.ok(regressor.predictProbability([-1, -1]) < 0.2);
+  });
+
   it('trains a full batch without throwing when the TensorFlow path fails', () => {
     const previousTf = globalThis.tf;
     globalThis.tf = {

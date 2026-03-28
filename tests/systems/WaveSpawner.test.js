@@ -50,6 +50,13 @@ describe('resolveStats', () => {
     assert.equal(stats.speed, Math.round(ENEMIES.fighter.speed  * preset.speedModifier));
   });
 
+  it('never lets plane modifiers exceed an enemy class max speed', () => {
+    const stats = resolveStats('skirm', 1.0, 1.0, { speedModifier: 8 });
+
+    assert.equal(stats.speed, ENEMIES.skirm.maxSpeed);
+    assert.equal(stats.speedCap, ENEMIES.skirm.maxSpeed);
+  });
+
   it('inline modifiers override preset', () => {
     const stats = resolveStats('fighter', 1.0, 1.0, { preset: 'heavy', damageModifier: 0.5 });
     assert.equal(stats.damage, Math.round(ENEMIES.fighter.damage * 0.5));

@@ -75,6 +75,20 @@ describe('Raptor', () => {
       assert.ok(raptor.x < 520);
     });
 
+    it('never displaces farther than its hard max speed allows in a single update', () => {
+      const scene = createMockScene();
+      const raptor = new Raptor(scene, -40, 220, BASE_STATS, 'side_left');
+      const start = { x: raptor.x, y: raptor.y };
+
+      raptor.update(1000);
+
+      const distance = Math.hypot(raptor.x - start.x, raptor.y - start.y);
+      assert.ok(
+        distance <= raptor.getMaxMovementSpeed() + 0.001,
+        `expected <= ${raptor.getMaxMovementSpeed()}px, got ${distance}`
+      );
+    });
+
     it('keeps patrolling on screen instead of exiting once it has entered', () => {
       const scene = createMockScene();
       const raptor = new Raptor(scene, -40, 220, BASE_STATS, 'side_left');
@@ -99,7 +113,7 @@ describe('Raptor', () => {
 
       assert.equal(raptor.canUseAdaptiveBehavior(), false);
 
-      for (let index = 0; index < 20; index += 1) {
+      for (let index = 0; index < 40 && !raptor.canUseAdaptiveBehavior(); index += 1) {
         raptor.update(250);
       }
 

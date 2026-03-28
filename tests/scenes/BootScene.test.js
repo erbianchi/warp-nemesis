@@ -82,4 +82,30 @@ describe('BootScene', () => {
       globalThis.location = originalLocation;
     }
   });
+
+  it('jumps straight into GameScene when ?level2=1 is present', () => {
+    const scene = new BootScene();
+    let startedScene = null;
+    const originalDocument = globalThis.document;
+    const originalLocation = globalThis.location;
+
+    scene._generateTextures = () => {};
+    scene.scene = {
+      start: (sceneKey) => {
+        startedScene = sceneKey;
+      },
+    };
+    globalThis.document = {
+      getElementById: () => ({ classList: { add: () => {} } }),
+    };
+    globalThis.location = { search: '?level2=1' };
+
+    try {
+      scene.create();
+      assert.equal(startedScene, 'GameScene');
+    } finally {
+      globalThis.document = originalDocument;
+      globalThis.location = originalLocation;
+    }
+  });
 });

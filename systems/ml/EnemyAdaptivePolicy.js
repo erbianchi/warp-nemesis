@@ -12,6 +12,8 @@ import { SquadDatasetStore } from './SquadDatasetStore.js';
 import { SquadFeatureEncoder } from './SquadFeatureEncoder.js';
 import { SquadLearningStore } from './SquadLearningStore.js';
 import { SquadPolicyNetwork } from './SquadPolicyNetwork.js';
+import { DanceWaypointNetwork, stripActionModes } from './DanceWaypointNetwork.js';
+import { DanceWaypointStore } from './DanceWaypointStore.js';
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -103,6 +105,20 @@ function isBackgroundTrainingRuntime() {
   return typeof window !== 'undefined' && typeof document !== 'undefined' && typeof globalThis.setTimeout === 'function';
 }
 
+function getEnemyDatasetTelemetryCursor(datasetState = {}) {
+  return Object.values(datasetState.enemyExamples ?? {}).reduce((maxValue, examples) => (
+    examples.reduce((innerMax, example) => (
+      Math.max(innerMax, Math.max(0, Math.round(example?.meta?.telemetryLevelId ?? 0)))
+    ), maxValue)
+  ), 0);
+}
+
+function getSquadDatasetTelemetryCursor(datasetState = {}) {
+  return (datasetState.examples ?? []).reduce((maxValue, example) => (
+    Math.max(maxValue, Math.max(0, Math.round(example?.meta?.telemetryLevelId ?? 0)))
+  ), 0);
+}
+
 /**
  * Cross-run adaptive enemy policy.
  * Loads persisted class models at run start, trains them at run end, then
@@ -128,13 +144,46 @@ export class EnemyAdaptivePolicy {
     this._config = options.config ?? ENEMY_LEARNING_CONFIG;
     this._state = null;
     this._squadState = null;
+    this._danceStore = options.danceStore ?? new DanceWaypointStore(
+      (options.config ?? ENEMY_LEARNING_CONFIG).neuralDance?.storageKey
+    );
+    this._danceNetwork = null;
+    this._lastPlayerStyleProfile = null;
     this._backgroundTrainingPromise = Promise.resolve();
+    this._telemetryLevelCursor = 0;
   }
 
   load() {
     this._state = this._store.load();
     this._squadState = this._squadStore.load();
+    const enemyDataset = this._datasetStore.load();
+    const squadDataset = this._squadDatasetStore.load();
+    this._telemetryLevelCursor = Math.max(
+      getEnemyDatasetTelemetryCursor(enemyDataset),
+      getSquadDatasetTelemetryCursor(squadDataset),
+      this._telemetryLevelCursor
+    );
+    const danceState = this._danceStore.load();
+    this._danceNetwork = new DanceWaypointNetwork({
+      ...danceState,
+      hiddenUnits: this._config.neuralDance?.hiddenUnits ?? 16,
+    });
     return this.getSnapshot();
+  }
+
+  _nextTelemetryLevelId() {
+    this._telemetryLevelCursor = Math.max(0, Math.round(this._telemetryLevelCursor ?? 0)) + 1;
+    return this._telemetryLevelCursor;
+  }
+
+  /**
+   * Return the loaded DanceWaypointNetwork instance.
+   * Used by DanceGenerator (injected at GameScene level).
+   * @returns {DanceWaypointNetwork}
+   */
+  getDanceNetwork() {
+    if (!this._danceNetwork) this.load();
+    return this._danceNetwork;
   }
 
   getSnapshot() {
@@ -446,9 +495,184 @@ export class EnemyAdaptivePolicy {
         const latestSquadDataset = this._squadDatasetStore.load();
         const nextEnemyState = await this._buildEnemyStateFromDatasetAsync(latestEnemyDataset);
         const nextSquadState = await this._buildLevel2SquadStateFromDatasetAsync(latestSquadDataset);
+        const nextDanceState = await this._buildDanceNetworkFromDatasetAsync(latestEnemyDataset);
         this._store.stage(nextEnemyState);
         this._squadStore.stage(nextSquadState);
+        this._danceStore.stage(nextDanceState);
       });
+  }
+
+  _buildWeightedEnemyDataset(datasetState, records = [], meta = {}, extraWeight = 0) {
+    const duplicateCount = Math.max(0, Math.round(extraWeight));
+    if (duplicateCount <= 0) return datasetState;
+
+    const nextState = cloneJson(datasetState);
+    const levelNumber = Math.max(1, Math.round(meta.levelNumber ?? 1));
+    const telemetryLevelId = Math.max(0, Math.round(meta.telemetryLevelId ?? 0));
+    const outcome = meta.outcome === 'enemy_win' ? 'enemy_win' : 'player_win';
+    const defaultWin = outcome === 'enemy_win' ? 1 : 0;
+
+    for (const record of records) {
+      if (!nextState.enemyExamples?.[record.enemyType]) continue;
+
+      for (const example of record.examples ?? []) {
+        for (let copyIndex = 0; copyIndex < duplicateCount; copyIndex += 1) {
+          nextState.enemyExamples[record.enemyType].push({
+            vector: cloneJson(example.vector ?? []),
+            labels: {
+              win: example.labels?.win ?? defaultWin,
+              survival: example.labels?.survival ?? 0,
+              pressure: example.labels?.pressure ?? 0,
+              collision: example.labels?.collision ?? 0,
+              bullet: example.labels?.bullet ?? 0,
+            },
+            meta: {
+              levelNumber,
+              telemetryLevelId,
+              outcome,
+              squadId: record.summary?.squadId ?? null,
+              waveId: record.summary?.waveId ?? null,
+            },
+          });
+        }
+      }
+    }
+
+    return nextState;
+  }
+
+  _buildWeightedSquadDataset(datasetState, records = [], meta = {}, extraWeight = 0) {
+    const duplicateCount = Math.max(0, Math.round(extraWeight));
+    if (duplicateCount <= 0) return datasetState;
+
+    const nextState = cloneJson(datasetState);
+    const levelNumber = Math.max(1, Math.round(meta.levelNumber ?? 1));
+    const telemetryLevelId = Math.max(0, Math.round(meta.telemetryLevelId ?? 0));
+    const outcome = meta.outcome === 'enemy_win' ? 'enemy_win' : 'player_win';
+    const defaultWin = outcome === 'enemy_win' ? 1 : 0;
+
+    for (const record of records) {
+      for (const example of record.examples ?? []) {
+        for (let copyIndex = 0; copyIndex < duplicateCount; copyIndex += 1) {
+          nextState.examples.push({
+            vector: cloneJson(example.vector ?? []),
+            labels: {
+              win: example.labels?.win ?? defaultWin,
+              pressure: example.labels?.pressure ?? 0,
+              collision: example.labels?.collision ?? 0,
+            },
+            meta: {
+              levelNumber,
+              telemetryLevelId,
+              squadId: record.squadId ?? null,
+              squadTemplateId: record.squadTemplateId ?? null,
+              formation: record.formation ?? null,
+              dance: record.dance ?? null,
+              outcome,
+              overlay: record.overlay ?? false,
+            },
+          });
+        }
+      }
+    }
+
+    return nextState;
+  }
+
+  _applyImmediateTraining(enemyDatasetState, squadDatasetState) {
+    const nextEnemyState = this._buildEnemyStateFromDataset(enemyDatasetState);
+    const nextSquadState = this._buildLevel2SquadStateFromDataset(squadDatasetState);
+    const nextDanceState = this._buildDanceNetworkFromDataset(enemyDatasetState);
+
+    this._state = this._store.save(nextEnemyState);
+    this._squadState = this._squadStore.save(nextSquadState);
+    this._danceStore.save(nextDanceState);
+    this._danceNetwork = new DanceWaypointNetwork({
+      ...nextDanceState,
+      hiddenUnits: this._config.neuralDance?.hiddenUnits ?? 16,
+    });
+
+    return this.getSnapshot();
+  }
+
+  // ── Dance network training ─────────────────────────────────────────────────
+
+  /**
+   * Extract "effective moment" examples from the enemy dataset and train the
+   * DanceWaypointNetwork on them.
+   *
+   * Effective = survival > survivalFloor AND pressure > pressureFloor.
+   * Label     = action-mode one-hot extracted from the original feature vector.
+   * Input     = feature vector with the action-mode block stripped.
+   *
+   * @param {object} datasetState — result of EnemyDatasetStore.load()
+   * @returns {object}  DanceWaypointNetwork serialised state
+   */
+  _buildDanceNetworkFromDataset(datasetState) {
+    const { vectors, labels } = this._extractDanceExamples(datasetState);
+    if (vectors.length === 0) return this._danceNetwork?.getState() ?? {};
+
+    const cfg = this._config.neuralDance ?? {};
+    const network = new DanceWaypointNetwork({
+      ...(this._danceNetwork?.getState() ?? {}),
+      hiddenUnits: cfg.hiddenUnits ?? 16,
+    });
+    const result = network.trainBatch(vectors, labels, {
+      learningRate:  cfg.learningRate  ?? 0.08,
+      regularization: cfg.regularization ?? 0.001,
+      epochs:         cfg.epochs ?? 10,
+    });
+    network.sampleCount  = vectors.length;
+    network.lastAccuracy = result.accuracy;
+    return network.getState();
+  }
+
+  async _buildDanceNetworkFromDatasetAsync(datasetState) {
+    const { vectors, labels } = this._extractDanceExamples(datasetState);
+    if (vectors.length === 0) return this._danceNetwork?.getState() ?? {};
+
+    const cfg = this._config.neuralDance ?? {};
+    const network = new DanceWaypointNetwork({
+      ...(this._danceNetwork?.getState() ?? {}),
+      hiddenUnits: cfg.hiddenUnits ?? 16,
+    });
+    const result = await network.trainBatchAsync(vectors, labels, {
+      learningRate:   cfg.learningRate   ?? 0.08,
+      regularization: cfg.regularization ?? 0.001,
+      epochs:         cfg.epochs ?? 10,
+    });
+    network.sampleCount  = vectors.length;
+    network.lastAccuracy = result.accuracy;
+    return network.getState();
+  }
+
+  /**
+   * Filter the dataset for effective moments and build stripped input/label pairs.
+   * @param {object} datasetState
+   * @returns {{ vectors: number[][], labels: number[][] }}
+   */
+  _extractDanceExamples(datasetState) {
+    const cfg            = this._config.neuralDance ?? {};
+    const survivalFloor  = cfg.survivalFloor  ?? 0.55;
+    const pressureFloor  = cfg.pressureFloor  ?? 0.25;
+    const minSamples     = cfg.minSamplesForActivation ?? 40;
+
+    const vectors = [];
+    const labels  = [];
+
+    for (const examples of Object.values(datasetState.enemyExamples ?? {})) {
+      for (const example of examples) {
+        if ((example.labels?.survival ?? 0) < survivalFloor) continue;
+        if ((example.labels?.pressure ?? 0) < pressureFloor) continue;
+        const modeOneHot = example.vector.slice(28, 33);
+        if (modeOneHot.every(v => v === 0)) continue; // malformed sample
+        vectors.push(stripActionModes(example.vector));
+        labels.push(modeOneHot);
+      }
+    }
+
+    if (vectors.length < minSamples) return { vectors: [], labels: [] };
+    return { vectors, labels };
   }
 
   /**
@@ -456,29 +680,66 @@ export class EnemyAdaptivePolicy {
    * @param {'enemy_win'|'player_win'} outcome
    * @returns {object}
    */
-  trainFromSession(session, outcome) {
+  trainFromSession(session, outcome, options = {}) {
     if (!this._state) this.load();
     try {
       const records = session?.buildTrainingRecords?.(outcome) ?? [];
       const squadRecords = session?.buildSquadTrainingRecords?.(outcome) ?? [];
+      const playerStyleProfile = session?.buildPlayerStyleProfile?.() ?? null;
       const levelNumber = Math.max(1, Math.round(session?._levelNumber ?? 1));
+      const telemetryLevelId = this._nextTelemetryLevelId();
       const enemyDataset = this._datasetStore.appendTrainingRecords(records, {
         outcome,
         levelNumber,
+        telemetryLevelId,
       });
       const squadDataset = this._squadDatasetStore.appendTrainingRecords(squadRecords, {
         outcome,
         levelNumber,
+        telemetryLevelId,
       });
+      this._lastPlayerStyleProfile = playerStyleProfile;
+
+      const shouldImmediateTransitionTrain = Boolean(options?.immediate)
+        || Math.max(0, Math.round(options?.nextLevelNumber ?? 0)) === (this._config.level2Number ?? 2);
+      if (shouldImmediateTransitionTrain) {
+        const extraWeight = this._config.levelTransitionTraining?.currentRunExtraWeight ?? 0;
+        const weightedEnemyDataset = this._buildWeightedEnemyDataset(enemyDataset, records, {
+          outcome,
+          levelNumber,
+          telemetryLevelId,
+        }, extraWeight);
+        const weightedSquadDataset = this._buildWeightedSquadDataset(squadDataset, squadRecords, {
+          outcome,
+          levelNumber,
+          telemetryLevelId,
+        }, extraWeight);
+        return {
+          ...this._applyImmediateTraining(weightedEnemyDataset, weightedSquadDataset),
+          playerStyleProfile,
+          telemetryLevelId,
+          usedImmediateTraining: true,
+        };
+      }
 
       if (isBackgroundTrainingRuntime()) {
         this._scheduleBackgroundRetraining();
-        return this.getSnapshot();
+        return {
+          ...this.getSnapshot(),
+          playerStyleProfile,
+          telemetryLevelId,
+          usedImmediateTraining: false,
+        };
       }
 
       this._state = this._store.save(this._buildEnemyStateFromDataset(enemyDataset));
       this._squadState = this._squadStore.save(this._buildLevel2SquadStateFromDataset(squadDataset));
-      return this.getSnapshot();
+      return {
+        ...this.getSnapshot(),
+        playerStyleProfile,
+        telemetryLevelId,
+        usedImmediateTraining: false,
+      };
     } catch {
       return this.getSnapshot();
     } finally {

@@ -116,6 +116,41 @@ describe('Skirm', () => {
       assert.doesNotThrow(() => skirm.update(32));
     });
 
+    it('keeps sweep dances fast enough to feel like authored bursts while still respecting the class cap', () => {
+      const scene = createMockScene();
+      const tweenCalls = [];
+      scene.tweens.add = (config) => {
+        tweenCalls.push({
+          startX: config.targets.x,
+          startY: config.targets.y,
+          x: config.x,
+          y: config.y,
+          duration: config.duration,
+        });
+        return { stop: () => {} };
+      };
+
+      new Skirm(scene, 100, -40, BASE_STATS, 'sweep_right');
+
+      const firstTravel = tweenCalls[0];
+      assert.ok(firstTravel, 'expected an initial sweep tween');
+
+      const distance = Math.hypot(
+        firstTravel.x - firstTravel.startX,
+        firstTravel.y - firstTravel.startY
+      );
+      const impliedSpeed = distance / Math.max(firstTravel.duration / 1000, 0.001);
+
+      assert.ok(
+        impliedSpeed > 200,
+        `expected authored sweep pace above 200 px/s, got ${impliedSpeed}`
+      );
+      assert.ok(
+        impliedSpeed <= ENEMIES.skirm.maxSpeed + 0.001,
+        `expected sweep pace <= ${ENEMIES.skirm.maxSpeed} px/s, got ${impliedSpeed}`
+      );
+    });
+
     it('whirl enters on screen and starts a looping orbit instead of exiting', () => {
       const scene = createMockScene();
       const tweenCalls = [];

@@ -374,6 +374,51 @@ describe('FormationController — scoreMultiplier forwarding through onDeath', (
   });
 });
 
+describe('FormationController — hard speed cap', () => {
+  it('clamps path tween durations so formation travel cannot outrun the ship class cap', () => {
+    const scene = createMockScene();
+    const tweens = [];
+    scene.tweens.add = (config) => {
+      tweens.push({
+        startX: config.targets.x,
+        startY: config.targets.y,
+        x: config.x,
+        y: config.y,
+        duration: config.duration,
+      });
+      return config;
+    };
+    scene.time.delayedCall = (_delay, callback) => {
+      callback?.();
+      return { remove: () => {} };
+    };
+    scene.time.addEvent = () => ({ remove: () => {} });
+
+    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight');
+    new FormationController(scene, [skirm], {
+      speed: 4,
+      launchStaggerMs: 1,
+      path: [{ xPct: 0.84, yPct: 0.78, dur: 90 }],
+      returnToSideMs: 70,
+      exitToSlotMs: 70,
+    });
+
+    const firstTravelTween = tweens[0];
+    assert.ok(firstTravelTween, 'expected an initial formation travel tween');
+
+    const distance = Math.hypot(
+      firstTravelTween.x - firstTravelTween.startX,
+      firstTravelTween.y - firstTravelTween.startY
+    );
+    const minDuration = Math.ceil((distance / skirm.getMaxMovementSpeed()) * 1000);
+
+    assert.ok(
+      firstTravelTween.duration >= minDuration,
+      `expected >= ${minDuration}ms for ${distance.toFixed(2)}px at ${skirm.getMaxMovementSpeed()}px/s, got ${firstTravelTween.duration}ms`
+    );
+  });
+});
+
 describe('FormationController firing cadence', () => {
   it('suppresses autonomous straight-formation firing so the controller owns squad cadence', () => {
     const scene = createMockScene();

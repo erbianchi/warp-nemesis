@@ -2,6 +2,9 @@
 
 import { EnemyBase }    from '../EnemyBase.js';
 import { GAME_CONFIG }  from '../../config/game.config.js';
+import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
+import { buildSquadSnapshot } from '../../systems/ml/EnemyPolicyMath.js';
+import { stripActionModes } from '../../systems/ml/DanceWaypointNetwork.js';
 
 const { WIDTH: W, HEIGHT: H } = GAME_CONFIG;
 
@@ -28,7 +31,14 @@ export class Skirm extends EnemyBase {
   }
 
   _scaleDuration(durationMs, speedScalar = this.adaptiveProfile?.currentSpeedScalar ?? 1) {
-    return Math.max(1, Math.round(durationMs / ((this._baseMovementSpeedMultiplier ?? 1) * speedScalar)));
+    const requestedMultiplier = (this._baseMovementSpeedMultiplier ?? 1) * speedScalar;
+    const resolvedMultiplier = this.resolveMovementDurationScale?.(requestedMultiplier) ?? requestedMultiplier;
+    return Math.max(1, Math.round(durationMs / resolvedMultiplier));
+  }
+
+  _travelDurationTo(targetX, targetY, durationMs, speedScalar = this.adaptiveProfile?.currentSpeedScalar ?? 1) {
+    const requestedDuration = this._scaleDuration(durationMs, speedScalar);
+    return this.resolveTravelDurationMs?.(requestedDuration, targetX, targetY) ?? requestedDuration;
   }
 
   _adaptivePlan(baseX, candidateY = this.y, rangePx = 72, marginPx = 30, commit = true, yRangePx = 56) {
@@ -57,8 +67,9 @@ export class Skirm extends EnemyBase {
       case 'whirl':       this._danceWhirl();     break;
       case 'hourglass':   this._danceHourglass(); break;
       case 'side_cross':  this._danceSideCross(); break;
-      case 'fan_out':     this._danceFanOut();    break;
-      default:            break;
+      case 'fan_out':      this._danceFanOut();       break;
+      case 'neural_flow':  this._danceNeuralFlow();   break;
+      default:             break;
     }
   }
 
@@ -89,7 +100,7 @@ export class Skirm extends EnemyBase {
     scene.tweens.add({
       targets:  this,
       x: midPlan.x, y: midY,
-      duration: this._scaleDuration(1100, midPlan.speedScalar),
+      duration: this._travelDurationTo(midPlan.x, midY, 1100, midPlan.speedScalar),
       ease:     'Sine.easeOut',
       onComplete: () => {
         if (!this.alive) return;
@@ -97,7 +108,7 @@ export class Skirm extends EnemyBase {
         scene.tweens.add({
           targets:  this,
           x: exitX, y: exitY,
-          duration: this._scaleDuration(900),
+          duration: this._travelDurationTo(exitX, exitY, 900),
           ease:     'Sine.easeIn',
           onComplete: () => this._exitSilent(),
         });
@@ -122,7 +133,7 @@ export class Skirm extends EnemyBase {
       scene.tweens.add({
         targets:  this,
         x: plan.x, y: ny,
-        duration: this._scaleDuration(350 + Math.random() * 150, plan.speedScalar),
+        duration: this._travelDurationTo(plan.x, ny, 350 + Math.random() * 150, plan.speedScalar),
         ease:     'Sine.easeInOut',
         onComplete: () => {
           this.unlockAdaptiveBehavior();
@@ -151,7 +162,7 @@ export class Skirm extends EnemyBase {
       scene.tweens.add({
         targets:  this,
         x: plan.x, y: ny,
-        duration: this._scaleDuration(420 + Math.random() * 260, plan.speedScalar),
+        duration: this._travelDurationTo(plan.x, ny, 420 + Math.random() * 260, plan.speedScalar),
         ease:     'Sine.easeInOut',
         onComplete: () => {
           this.unlockAdaptiveBehavior();
@@ -182,7 +193,7 @@ export class Skirm extends EnemyBase {
       scene.tweens.add({
         targets:  this,
         x: plan.x, y: ny,
-        duration: this._scaleDuration(120 + Math.random() * 80, plan.speedScalar),
+        duration: this._travelDurationTo(plan.x, ny, 120 + Math.random() * 80, plan.speedScalar),
         ease:     'Expo.easeOut',
         onComplete: () => {
           if (!this.alive) return;
@@ -281,7 +292,7 @@ export class Skirm extends EnemyBase {
     scene.tweens.add({
       targets:  this,
       x: midX, y: midY,
-      duration: this._scaleDuration(1000, midPlan.speedScalar),
+      duration: this._travelDurationTo(midX, midY, 1000, midPlan.speedScalar),
       ease:     'Sine.easeOut',
       onComplete: () => {
         if (!this.alive) return;
@@ -289,10 +300,11 @@ export class Skirm extends EnemyBase {
         // brief hover drift
         const hoverPlan = this._adaptivePlan(midX + (Math.random() - 0.5) * 40, midY, 64, 40);
         const hx = hoverPlan.x;
+        const hy = midY + (Math.random() - 0.5) * 20;
         scene.tweens.add({
           targets:  this,
-          x: hx, y: midY + (Math.random() - 0.5) * 20,
-          duration: this._scaleDuration(hoverMs, hoverPlan.speedScalar),
+          x: hx, y: hy,
+          duration: this._travelDurationTo(hx, hy, hoverMs, hoverPlan.speedScalar),
           ease:     'Sine.easeInOut',
           onComplete: () => {
             if (!this.alive) return;
@@ -303,7 +315,7 @@ export class Skirm extends EnemyBase {
             scene.tweens.add({
               targets:  this,
               x: divePlan.x, y: H + 80,
-              duration: this._scaleDuration(1000, divePlan.speedScalar),
+              duration: this._travelDurationTo(divePlan.x, H + 80, 1000, divePlan.speedScalar),
               ease:     'Cubic.easeIn',
               onComplete: () => this._exitSilent(),
             });
@@ -327,7 +339,7 @@ export class Skirm extends EnemyBase {
     scene.tweens.add({
       targets:  this,
       x: spreadX, y: spreadY,
-      duration: this._scaleDuration(750, spreadPlan.speedScalar),
+      duration: this._travelDurationTo(spreadX, spreadY, 750, spreadPlan.speedScalar),
       ease:     'Sine.easeOut',
       onComplete: () => {
         if (!this.alive) return;
@@ -343,7 +355,7 @@ export class Skirm extends EnemyBase {
           targets:  this,
           x: holdPlan.x,
           y: holdPlan.y,
-          duration: this._scaleDuration(holdMs, holdPlan.speedScalar),
+          duration: this._travelDurationTo(holdPlan.x, holdPlan.y, holdMs, holdPlan.speedScalar),
           ease:     'Sine.easeInOut',
           onComplete: () => {
             if (!this.alive) return;
@@ -354,7 +366,7 @@ export class Skirm extends EnemyBase {
             scene.tweens.add({
               targets:  this,
               x: divePlan.x, y: H + 80,
-              duration: this._scaleDuration(950, divePlan.speedScalar),
+              duration: this._travelDurationTo(divePlan.x, H + 80, 950, divePlan.speedScalar),
               ease:     'Cubic.easeIn',
               onComplete: () => this._exitSilent(),
             });
@@ -362,6 +374,197 @@ export class Skirm extends EnemyBase {
         });
       },
     });
+  }
+
+  // ── Neural-flow dance ────────────────────────────────────────────────────────
+
+  /**
+   * A learned phrase-sequencer dance driven by DanceWaypointNetwork.
+   *
+   * The network predicts the next behavioral mode (hold/press/flank/evade/retreat)
+   * given the current game state.  Each mode maps to a movement anchor; the
+   * existing EnemyAdaptivePolicy position-scoring system refines the exact target
+   * within that anchor.  The enemy commits to each phrase for a configured dwell
+   * window before re-querying the network.
+   */
+  _danceNeuralFlow() {
+    const scene = this.scene;
+    const cfg = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
+    const maxPhrases = cfg.maxPhrasesBeforeExit ?? 8;
+    let phrases = 0;
+    let lastMode = 'hold';
+
+    // Enter the play area first — always top-screen, then unlock adaptive.
+    const entryX = this.x + (Math.random() - 0.5) * 80;
+    const entryY = H * 0.18 + Math.random() * H * 0.12;
+    const entryPlan = this._adaptivePlan(entryX, entryY, 80);
+
+    scene.tweens.add({
+      targets:  this,
+      x: entryPlan.x, y: entryY,
+      duration: this._travelDurationTo(entryPlan.x, entryY, 680, entryPlan.speedScalar),
+      ease:     'Sine.easeOut',
+      onComplete: () => {
+        if (!this.alive) return;
+        this.unlockAdaptiveBehavior();
+        runPhrase();
+      },
+    });
+
+    const runPhrase = () => {
+      if (!this.alive) return;
+      if (phrases >= maxPhrases) { this._exitSilent(); return; }
+      if (this.y > H + 40)       { this._exitSilent(); return; }
+      phrases++;
+
+      const mode = this._sampleNeuralMode(lastMode);
+      lastMode = mode;
+      this._adaptiveActionMode = mode;
+
+      const anchor = this._resolveNeuralAnchor(mode);
+      const plan   = this._adaptivePlan(anchor.x, anchor.y, 72, 30, true, 56);
+
+      const timing = (cfg.phraseTiming ?? {})[mode] ?? { durationMs: 500, holdMs: 300 };
+      const ease   = mode === 'evade' ? 'Expo.easeOut' : 'Sine.easeInOut';
+
+      scene.tweens.add({
+        targets:  this,
+        x: plan.x, y: plan.y,
+        duration: this._travelDurationTo(plan.x, plan.y, timing.durationMs, plan.speedScalar),
+        ease,
+        onComplete: () => {
+          if (!this.alive) return;
+          const holdMs = this._scaleDuration(timing.holdMs);
+          if (holdMs > 0) {
+            scene.time.delayedCall(holdMs, runPhrase);
+          } else {
+            runPhrase();
+          }
+        },
+      });
+    };
+  }
+
+  /**
+   * Query the DanceWaypointNetwork for the next action mode.
+   * Falls back to the position-scoring argmax when the network is untrained.
+   * Applies mode hysteresis to prevent rapid oscillation.
+   * @param {string} currentMode
+   * @returns {string}
+   */
+  _sampleNeuralMode(currentMode) {
+    const policy  = this.scene?._enemyAdaptivePolicy;
+    const network = policy?.getDanceNetwork?.();
+    const cfg     = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
+
+    if (network?.isTrained) {
+      const temperature = this._resolveNeuralTemperature(network);
+      const player  = this._getPlayerSnapshot();
+      const threat  = this._getPlayerBulletThreatSnapshot();
+      const liveEnemies = this.scene?._enemies ?? [];
+      const squad   = buildSquadSnapshot(liveEnemies, this._squadId ?? null, this);
+      const weapon  = this.scene?._weapons?.getLearningSnapshot?.() ?? {};
+
+      const sample = policy._encoder?.buildSample?.({
+        enemyType: this.enemyType,
+        player,
+        weapon,
+        enemyX:    this.x,
+        enemyY:    this.y,
+        speed:     this.speed,
+        squad,
+        threat,
+        actionMode: 'hold', // placeholder — stripped before inference
+      });
+      if (sample) {
+        const encoded = policy._encoder.encodeSample(sample);
+        const { mode, probabilities } = network.sample(
+          stripActionModes(encoded.vector),
+          temperature
+        );
+        // Hysteresis: require meaningful probability shift to switch modes
+        const hysteresis = cfg.modeHysteresisThreshold ?? 0.15;
+        const currentModeIdx = ['hold','press','flank','evade','retreat'].indexOf(currentMode);
+        const newModeIdx     = ['hold','press','flank','evade','retreat'].indexOf(mode);
+        if (currentModeIdx >= 0 && newModeIdx >= 0 && mode !== currentMode) {
+          if ((probabilities[newModeIdx] ?? 0) - (probabilities[currentModeIdx] ?? 0) < hysteresis) {
+            return currentMode;
+          }
+        }
+        return mode;
+      }
+    }
+
+    // Fallback: use position-scoring to pick the best anchor mode
+    if (policy?.resolveBehavior) {
+      const anchors = this._buildAdaptiveAnchors(this.x, this.y, 72, 56, {
+        marginPx: 30, topMarginPx: 24, bottomMarginPx: H - 96,
+      });
+      const best = policy.resolveBehavior({
+        enemy:     this,
+        enemyType: this.enemyType,
+        candidates: anchors.map(a => ({ x: a.x, y: a.y, speedScalar: 1, actionMode: a.mode })),
+      });
+      return best?.actionMode ?? 'hold';
+    }
+
+    return 'hold';
+  }
+
+  /**
+   * Map an action mode to a movement anchor position.
+   * @param {string} mode
+   * @returns {{ x: number, y: number }}
+   */
+  _resolveNeuralAnchor(mode) {
+    const player = this._getPlayerSnapshot();
+    const threat = this._getPlayerBulletThreatSnapshot();
+    const clampX = (x) => Math.max(30, Math.min(W - 30, x));
+    const clampY = (y) => Math.max(24, Math.min(H - 96, y));
+
+    switch (mode) {
+      case 'press':
+        return {
+          x: clampX(player.x ?? this.x),
+          y: clampY(Math.min((player.y ?? this.y) - 90, this.y + 60)),
+        };
+      case 'flank': {
+        const px    = player.x ?? W / 2;
+        const side  = this.x <= px ? -1 : 1;
+        return {
+          x: clampX(px + side * (80 + Math.random() * 40)),
+          y: clampY(this.y + (Math.random() - 0.5) * 40),
+        };
+      }
+      case 'evade':
+        return {
+          x: clampX(threat.suggestedSafeX ?? this.x),
+          y: clampY(threat.suggestedSafeY ?? this.y),
+        };
+      case 'retreat':
+        return {
+          x: clampX(this.x),
+          y: clampY(this.y - 50 - Math.random() * 40),
+        };
+      case 'hold':
+      default:
+        return { x: clampX(this.x), y: clampY(this.y) };
+    }
+  }
+
+  /**
+   * Compute softmax temperature from training data volume.
+   * More samples → lower temperature → more exploitative.
+   * @param {import('../../systems/ml/DanceWaypointNetwork.js').DanceWaypointNetwork} network
+   * @returns {number}
+   */
+  _resolveNeuralTemperature(network) {
+    const cfg      = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
+    const tInit    = cfg.temperatureInitial        ?? 2.0;
+    const tFinal   = cfg.temperatureFinal          ?? 0.7;
+    const converge = cfg.temperatureSampleConverge ?? 200;
+    const t = Math.min((network?.sampleCount ?? 0) / Math.max(1, converge), 1);
+    return tInit - (tInit - tFinal) * t;
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -383,7 +586,7 @@ export class Skirm extends EnemyBase {
         targets:  this,
         x:        stepPlan.x,
         y:        stepPlan.y,
-        duration: this._scaleDuration(step.duration ?? 320, stepPlan.speedScalar),
+        duration: this._travelDurationTo(stepPlan.x, stepPlan.y, step.duration ?? 320, stepPlan.speedScalar),
         ease:     step.ease ?? 'Sine.easeInOut',
         onComplete: () => {
           if (!this.alive) return;
@@ -405,7 +608,7 @@ export class Skirm extends EnemyBase {
       targets:  this,
       x:        entryTarget.x,
       y:        entryTarget.y,
-      duration: this._scaleDuration(opts.enterDuration ?? 720),
+      duration: this._travelDurationTo(entryTarget.x, entryTarget.y, opts.enterDuration ?? 720),
       ease:     opts.enterEase ?? 'Sine.easeOut',
       onComplete: () => runStep(0),
     });

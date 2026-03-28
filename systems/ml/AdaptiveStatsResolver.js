@@ -31,6 +31,7 @@ export class AdaptiveStatsResolver {
       adaptive: {
         ...modifiers,
         enemyType: options.type,
+        maxSpeed: baseStats.speedCap,
       },
     };
   }
