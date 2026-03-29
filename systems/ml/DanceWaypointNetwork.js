@@ -5,13 +5,18 @@
  * Uses TensorFlow.js when available; falls back to hand-rolled forward/backprop
  * so unit tests and server-side tooling work without a browser. */
 
+import {
+  ENEMY_ACTION_MODE_COUNT,
+  ENEMY_ACTION_MODE_OFFSET,
+} from './EnemyFeatureEncoder.js';
+
 export const ACTION_MODES = Object.freeze(['hold', 'press', 'flank', 'evade', 'retreat']);
 
 // Indices of the action-mode one-hot block inside the full EnemyFeatureEncoder
 // vector.  These features are STRIPPED from the input to avoid a circular
 // dependency (we are predicting the mode, not conditioning on it).
-export const ACTION_MODE_OFFSET = 28;
-export const ACTION_MODE_COUNT  = 5;
+export const ACTION_MODE_OFFSET = ENEMY_ACTION_MODE_OFFSET;
+export const ACTION_MODE_COUNT  = ENEMY_ACTION_MODE_COUNT;
 
 const NUM_MODES = ACTION_MODES.length;
 

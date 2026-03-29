@@ -15,6 +15,32 @@ describe('LogisticRegressor', () => {
     assert.ok(probability > 0 && probability < 1);
   });
 
+  it('does not mutate regressor state during prediction', () => {
+    const regressor = new LogisticRegressor({
+      inputSize: 2,
+      weights: [2, -1],
+      bias: 0.5,
+    });
+    const before = regressor.getState();
+
+    regressor.predictProbability([0.3, 0.2]);
+
+    assert.deepEqual(regressor.getState(), before);
+  });
+
+  it('throws on feature dimension mismatches instead of silently zero-padding at inference time', () => {
+    const regressor = new LogisticRegressor({
+      inputSize: 2,
+      weights: [1, 2],
+      bias: 0,
+    });
+
+    assert.throws(
+      () => regressor.predictProbability([1, 2, 3]),
+      /feature dimension mismatch/
+    );
+  });
+
   it('learns toward the positive class with repeated examples', () => {
     const regressor = new LogisticRegressor();
     const features = [1, 0.5, 0.25];
@@ -124,6 +150,8 @@ describe('LogisticRegressor', () => {
 
   it('trains a full batch without throwing when the TensorFlow path fails', () => {
     const previousTf = globalThis.tf;
+    const previousWarn = globalThis.console?.warn;
+    const warnings = [];
     globalThis.tf = {
       tensor2d() {
         throw new Error('tf boom');
@@ -133,6 +161,10 @@ describe('LogisticRegressor', () => {
       train: {
         sgd() {},
       },
+    };
+    globalThis.console = {
+      ...(globalThis.console ?? {}),
+      warn: (...args) => warnings.push(args.join(' ')),
     };
 
     try {
@@ -151,12 +183,52 @@ describe('LogisticRegressor', () => {
           }
         );
       });
+      assert.equal(regressor.lastTrainingBackend, 'math-fallback');
+      assert.ok(warnings.some(message => message.includes('TensorFlow batch training failed')));
     } finally {
       if (previousTf === undefined) {
         delete globalThis.tf;
       } else {
         globalThis.tf = previousTf;
       }
+      if (globalThis.console) {
+        globalThis.console.warn = previousWarn;
+      }
     }
+  });
+
+  it('uses sample weights to keep a rare positive example learnable', () => {
+    const unweighted = new LogisticRegressor();
+    const weighted = new LogisticRegressor();
+    const vectors = [
+      [1, 1],
+      [-1, -1],
+      [-1, -1],
+      [-1, -1],
+      [-1, -1],
+      [-1, -1],
+      [-1, -1],
+      [-1, -1],
+      [-1, -1],
+      [-1, -1],
+    ];
+    const labels = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+    unweighted.trainBatch(vectors, labels, {
+      learningRate: 0.18,
+      regularization: 0.0005,
+      epochs: 6,
+    });
+    weighted.trainBatch(vectors, labels, {
+      learningRate: 0.18,
+      regularization: 0.0005,
+      epochs: 6,
+      sampleWeights: [5, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    });
+
+    assert.ok(
+      weighted.predictProbability([1, 1]) > unweighted.predictProbability([1, 1]),
+      'weighted training should keep the rare positive example more influential'
+    );
   });
 });

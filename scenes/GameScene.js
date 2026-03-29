@@ -807,8 +807,10 @@ export class GameScene extends Phaser.Scene {
     enemy._squadId = meta.squadId ?? null;
     enemy._squadTemplateId = meta.squadTemplateId ?? null;
     enemy._squadSpawnCount = meta.squadSize ?? 1;
+    enemy._squadSpawnIndex = meta.squadIndex ?? 0;
     enemy._formationType = meta.formation ?? null;
     enemy._spawnDance = dance;
+    enemy.primeSquadFireCooldown?.(enemy._squadSpawnIndex, enemy._squadSpawnCount);
     this._enemies.push(enemy);
     this._enemyGroup.add(enemy);
     this.events.emit(EVENTS.ENEMY_SPAWNED, {
@@ -817,6 +819,7 @@ export class GameScene extends Phaser.Scene {
       squadId: enemy._squadId,
       squadTemplateId: enemy._squadTemplateId,
       squadSize: enemy._squadSpawnCount,
+      squadIndex: enemy._squadSpawnIndex,
       formation: enemy._formationType,
       dance,
       overlay: enemy._overlayRaid,

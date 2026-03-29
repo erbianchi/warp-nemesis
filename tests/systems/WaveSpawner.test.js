@@ -306,6 +306,31 @@ describe('WaveSpawner', () => {
     assert.equal(event.data.count, event.data.squadron.planes.length);
   });
 
+  it('passes each plane its deterministic squad index inside the spawn metadata', () => {
+    const spawner = new WaveSpawner(scene, 0, spawnFn);
+    spawner._currentWave = { difficultyFactor: 1.0 };
+
+    spawner._spawnSquadron({
+      id: 'index_test',
+      dance: 'straight',
+      formation: 'line',
+      entryEdge: 'top',
+      entryX: 0.5,
+      spacing: 60,
+      planes: [
+        { type: 'skirm' },
+        { type: 'skirm' },
+        { type: 'skirm' },
+      ],
+    });
+
+    assert.deepEqual(
+      spawned.map((entry) => entry.meta?.squadIndex),
+      [0, 1, 2]
+    );
+    assert.ok(spawned.every((entry) => entry.meta?.squadSize === 3));
+  });
+
   it('roguelike: different rng values can draw different squadrons', () => {
     const spawnedA = [];
     const spawnedB = [];

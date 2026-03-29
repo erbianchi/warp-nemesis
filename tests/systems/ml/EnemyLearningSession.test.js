@@ -6,7 +6,7 @@ const { EnemyLearningSession } = await import('../../../systems/ml/EnemyLearning
 const { EVENTS } = await import('../../../config/events.config.js');
 
 describe('EnemyLearningSession', () => {
-  it('collects per-enemy training examples with attributed pressure and collision labels', () => {
+  it('collects per-enemy decision examples with short-horizon pressure and collision attribution', () => {
     const scene = createMockScene();
     const enemies = [
       {
@@ -72,7 +72,7 @@ describe('EnemyLearningSession', () => {
 
     const [record] = session.buildTrainingRecords('player_win');
     const [squadRecord] = session.buildSquadTrainingRecords();
-    const firstExample = record.examples[0];
+    const firstExample = record.examples.find(example => example.labels.collision > 0);
     const encoder = session._encoder;
     const features = Object.fromEntries(
       encoder.getFeatureNames().map((name, index) => [name, firstExample.vector[index]])
@@ -87,11 +87,13 @@ describe('EnemyLearningSession', () => {
     assert.equal(record.summary.collisionDeathCount, 1);
     assert.ok(record.examples.length > 0);
     assert.ok(features.squadXNorm > 0);
-    assert.ok(features.distanceNorm > 0);
-    assert.ok(firstExample.labels.win > 0.25, 'local pressure should keep win labels above zero even on a player win');
+    assert.ok(features.proximityNorm > 0);
+    assert.ok(firstExample.labels.win < 0.2, 'collision within the action horizon should outweigh raw pressure');
     assert.ok(firstExample.labels.collision > 0.5);
     assert.ok(firstExample.labels.pressure > 0.8);
     assert.ok(firstExample.labels.survival < 0.25);
+    assert.ok(record.examples.every(example => example.meta.outcomeMagnitude >= 1));
+    assert.ok(record.examples.some(example => example.meta.reason === 'player_hit'));
     assert.equal(features.weapon_laser, 1);
     assert.equal(features.playerShieldUp, 1);
     assert.equal(squadRecord.levelNumber, 1);
@@ -148,6 +150,97 @@ describe('EnemyLearningSession', () => {
     assert.ok(example.labels.survival < 0.25);
   });
 
+  it('drops unresolved neutral survival samples instead of treating them as positive training data', () => {
+    const scene = createMockScene();
+    const enemy = {
+      enemyType: 'skirm',
+      x: 120,
+      y: 90,
+      speed: 100,
+      active: true,
+      alive: true,
+      _learningId: 'enemy-unresolved',
+    };
+
+    const session = new EnemyLearningSession({
+      scene,
+      getPlayerSnapshot: () => ({
+        x: 150,
+        y: 500,
+        hasShield: false,
+        shieldRatio: 0,
+        hpRatio: 1,
+      }),
+      getWeaponSnapshot: () => ({
+        primaryWeaponKey: 'laser',
+        heatRatio: 0.1,
+        isOverheated: false,
+      }),
+      getEnemies: () => [enemy],
+    });
+
+    scene.events.emit(EVENTS.ENEMY_SPAWNED, {
+      enemy,
+      type: enemy.enemyType,
+    });
+
+    session.update(250);
+    session.update(250);
+    session.update(250);
+
+    const [record] = session.buildTrainingRecords('player_win');
+    assert.equal(record.examples.length, 0);
+  });
+
+  it('keeps positive survival only for decision samples that survive a real response window', () => {
+    const scene = createMockScene();
+    const enemy = {
+      enemyType: 'skirm',
+      x: 120,
+      y: 90,
+      speed: 100,
+      active: true,
+      alive: true,
+      _learningId: 'enemy-shield-change',
+    };
+    let shieldRatio = 0.9;
+
+    const session = new EnemyLearningSession({
+      scene,
+      getPlayerSnapshot: () => ({
+        x: 150,
+        y: 500,
+        hasShield: true,
+        shieldRatio,
+        hpRatio: 1,
+      }),
+      getWeaponSnapshot: () => ({
+        primaryWeaponKey: 'laser',
+        heatRatio: 0.1,
+        isOverheated: false,
+      }),
+      getEnemies: () => [enemy],
+    });
+
+    scene.events.emit(EVENTS.ENEMY_SPAWNED, {
+      enemy,
+      type: enemy.enemyType,
+    });
+
+    session.update(250);
+    shieldRatio = 0;
+    session.update(250);
+    session.update(250);
+    session.update(250);
+
+    const [record] = session.buildTrainingRecords('player_win');
+
+    assert.equal(record.examples.length, 1);
+    assert.equal(record.examples[0].meta.reason, 'shield_change');
+    assert.equal(record.examples[0].labels.survival, 1);
+    assert.equal(record.examples[0].labels.win, 0.725);
+  });
+
   it('builds a player style profile from the run telemetry', () => {
     const scene = createMockScene();
     const enemy = {
@@ -202,12 +295,13 @@ describe('EnemyLearningSession', () => {
 
     const profile = session.buildPlayerStyleProfile();
 
-    assert.equal(profile.sampleCount, playerFrames.length);
+    assert.ok(profile.sampleCount >= playerFrames.length);
     assert.ok(profile.laneBiasX < -0.2 && profile.laneBiasX > -0.6, `expected a modest left bias, got ${profile.laneBiasX}`);
     assert.ok(profile.dodgeIntensity > 0.25, `expected visible lateral movement, got ${profile.dodgeIntensity}`);
     assert.ok(profile.reversalRate > 0.4, `expected several reversals, got ${profile.reversalRate}`);
     assert.ok(profile.heatGreed > 0.45, `expected hot firing profile, got ${profile.heatGreed}`);
     assert.ok(profile.overheatRate > 0.25, `expected some overheated samples, got ${profile.overheatRate}`);
+    assert.ok(profile.pressureExposure > 0.4, `expected event-driven samples to capture nearby pressure, got ${profile.pressureExposure}`);
     assert.equal(profile.preferredWeaponKey, 'laser');
   });
 });

@@ -41,12 +41,16 @@ describe('EnemyFeatureEncoder', () => {
     assert.equal(features.playerShieldRatio, 0.5);
     assert.equal(features.playerHpRatio, 0.75);
     assert.ok(features.enemyXNorm > 0);
-    assert.ok(features.distanceNorm > 0);
+    assert.ok(features.proximityNorm > 0);
     assert.ok(features.shotAlignment > 0);
     assert.ok(features.shieldedLaneRisk >= 0);
     assert.equal(features.bulletLaneThreat, 0);
     assert.equal(features.actionModeHold, 1);
     assert.equal(features.weapon_spreadShot, 1);
     assert.equal(features.weapon_laser, 0);
+    assert.ok(!('distanceNorm' in features));
+    assert.ok(!('absDxNorm' in features));
+    assert.ok(!('sameLane' in features));
+    assert.ok(!('abovePlayer' in features));
   });
 });

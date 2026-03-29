@@ -15,17 +15,58 @@ function average(values = []) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function resolveEventSignal(sampleTimeMs, eventTimes, windowMs) {
-  if (!Array.isArray(eventTimes) || eventTimes.length === 0) return 0;
+function resolveShieldBucket(player = {}) {
+  const shieldRatio = clamp(player?.hasShield ? (player?.shieldRatio ?? 0) : 0, 0, 1);
+  if (shieldRatio <= 0) return 0;
+  if (shieldRatio <= 0.33) return 1;
+  if (shieldRatio <= 0.66) return 2;
+  return 3;
+}
 
-  let strongest = 0;
-  for (const eventTimeMs of eventTimes) {
-    const deltaMs = Math.abs(eventTimeMs - sampleTimeMs);
-    if (!Number.isFinite(deltaMs) || deltaMs > windowMs) continue;
-    strongest = Math.max(strongest, 1 - deltaMs / Math.max(1, windowMs));
-  }
+function resolveThreatSeverity(threat = {}, normalization = {}) {
+  const maxTimeToImpactMs = Math.max(1, normalization.maxBulletTimeToImpactMs ?? 1500);
+  const laneThreat = clamp(threat?.bulletLaneThreat ?? 0, 0, 1.5);
+  const timeUrgency = clamp(
+    1 - ((threat?.bulletTimeToImpactMs ?? maxTimeToImpactMs) / maxTimeToImpactMs),
+    0,
+    1
+  );
+  return clamp(Math.max(laneThreat, timeUrgency), 0, 1);
+}
 
-  return clamp(strongest, 0, 1);
+function resolveThreatBucket(threat = {}, normalization = {}) {
+  const severity = resolveThreatSeverity(threat, normalization);
+  if (severity <= 0.2) return 0;
+  if (severity <= 0.45) return 1;
+  if (severity <= 0.7) return 2;
+  return 3;
+}
+
+function resolveOutcomeMagnitude(labels = {}) {
+  const softOutcomeMagnitude = Math.max(
+    Math.abs((labels.win ?? 0.5) - 0.5) * 2,
+    Math.abs((labels.survival ?? 0.5) - 0.5) * 2
+  );
+  const eventOutcomeMagnitude = Math.max(
+    clamp(labels.pressure ?? 0, 0, 1),
+    clamp(labels.collision ?? 0, 0, 1),
+    clamp(labels.bullet ?? 0, 0, 1)
+  );
+
+  return clamp(Math.max(softOutcomeMagnitude, eventOutcomeMagnitude), 0, 1);
+}
+
+function isHighValueReason(reason) {
+  return reason !== 'heartbeat';
+}
+
+function isSurvivalSignalReason(reason) {
+  return reason === 'action_change'
+    || reason === 'threat_change'
+    || reason === 'shield_change'
+    || reason === 'fire'
+    || reason === 'player_hit'
+    || reason === 'escape';
 }
 
 /**
@@ -65,6 +106,9 @@ export class EnemyLearningSession {
     this._playerShieldDamageTaken = 0;
     this._elapsedMs = 0;
     this._sampleRemainderMs = 0;
+    this._heartbeatRemainderMs = 0;
+    this._lastPlayerSampleTimeMs = -1;
+    this._lastPlayerShieldBucket = null;
     this._destroyed = false;
 
     this._handleEnemySpawned = (payload) => this._onEnemySpawned(payload);
@@ -94,55 +138,148 @@ export class EnemyLearningSession {
     if (this._destroyed) return;
     this._elapsedMs += deltaMs;
     this._sampleRemainderMs += deltaMs;
+    this._heartbeatRemainderMs += deltaMs;
+
+    const player = this._getPlayerSnapshot?.();
+    const liveEnemies = (this._getEnemies?.() ?? []).filter(enemy => enemy?.active !== false && enemy?.alive !== false);
+    const weapon = this._getWeaponSnapshot?.() ?? {};
+    const playerBullets = this._getPlayerBullets?.() ?? [];
 
     while (this._sampleRemainderMs >= this._sampleIntervalMs) {
       this._sampleRemainderMs -= this._sampleIntervalMs;
-      this._sample();
+      if (player && liveEnemies.length > 0) {
+        this._recordPlayerSample(player, weapon, liveEnemies);
+      }
     }
-  }
 
-  _sample() {
-    const player = this._getPlayerSnapshot?.();
-    if (!player) return;
+    if (!player || liveEnemies.length === 0) return;
 
-    const liveEnemies = (this._getEnemies?.() ?? []).filter(enemy => enemy?.active !== false && enemy?.alive !== false);
-    if (liveEnemies.length === 0) return;
+    const heartbeatIntervalMs = Math.max(
+      this._sampleIntervalMs,
+      ENEMY_LEARNING_CONFIG.heartbeatSampleIntervalMs ?? 1000
+    );
+    let heartbeatDue = false;
+    while (this._heartbeatRemainderMs >= heartbeatIntervalMs) {
+      this._heartbeatRemainderMs -= heartbeatIntervalMs;
+      heartbeatDue = true;
+    }
 
-    const weapon = this._getWeaponSnapshot?.() ?? {};
-    const playerBullets = this._getPlayerBullets?.() ?? [];
-    const sampledSquads = new Set();
+    const currentShieldBucket = resolveShieldBucket(player);
+    const shieldBucketChanged = this._lastPlayerShieldBucket !== null
+      && currentShieldBucket !== this._lastPlayerShieldBucket;
+    this._lastPlayerShieldBucket = currentShieldBucket;
 
-    this._recordPlayerSample(player, weapon, liveEnemies);
-
+    const context = { player, weapon, liveEnemies, playerBullets };
     for (const enemy of liveEnemies) {
       const registry = this._enemyRegistry.get(enemy);
       if (!registry?.enemyType) continue;
-      if (registry.samples.length >= ENEMY_LEARNING_CONFIG.maxSamplesPerEnemy) continue;
-
-      const squad = buildSquadSnapshot(liveEnemies, enemy._squadId ?? null, enemy);
       const threat = buildPlayerBulletThreatSnapshot(playerBullets, enemy, ENEMY_LEARNING_CONFIG.normalization);
-      const sample = this._encoder.buildSample({
-        enemyType: registry.enemyType,
-        player,
-        weapon,
-        enemyX: enemy.x ?? 0,
-        enemyY: enemy.y ?? 0,
-        speed: enemy.speed ?? 0,
-        squad,
-        threat,
-        actionMode: enemy._adaptiveActionMode ?? 'hold',
-      });
+      const currentThreatBucket = resolveThreatBucket(threat, ENEMY_LEARNING_CONFIG.normalization);
+      const currentActionMode = enemy._adaptiveActionMode ?? 'hold';
 
-      registry.samples.push({
-        sample,
-        timeMs: this._elapsedMs,
-      });
+      if ((registry.samples?.length ?? 0) === 0) {
+        this._recordEnemySample(enemy, registry, context, 'spawn', { force: true });
+        continue;
+      }
 
-      if (registry.squadId && !sampledSquads.has(registry.squadId)) {
-        sampledSquads.add(registry.squadId);
-        this._sampleSquad(registry.squadId, liveEnemies, player, weapon);
+      if (currentActionMode !== registry.lastActionMode) {
+        this._recordEnemySample(enemy, registry, context, 'action_change');
+        continue;
+      }
+
+      if (currentThreatBucket !== registry.lastThreatBucket) {
+        this._recordEnemySample(enemy, registry, context, 'threat_change');
+        continue;
+      }
+
+      if (shieldBucketChanged && currentShieldBucket !== registry.lastShieldBucket) {
+        this._recordEnemySample(enemy, registry, context, 'shield_change');
+        continue;
+      }
+
+      if (heartbeatDue && (this._elapsedMs - (registry.lastSampleTimeMs ?? 0)) >= heartbeatIntervalMs) {
+        this._recordEnemySample(enemy, registry, context, 'heartbeat');
       }
     }
+  }
+
+  _buildSamplingContext(focusEnemy = null) {
+    const player = this._getPlayerSnapshot?.();
+    const weapon = this._getWeaponSnapshot?.() ?? {};
+    const playerBullets = this._getPlayerBullets?.() ?? [];
+    const liveEnemies = (this._getEnemies?.() ?? []).filter(enemy => enemy?.active !== false && enemy?.alive !== false);
+
+    if (focusEnemy && !liveEnemies.includes(focusEnemy)) {
+      liveEnemies.push(focusEnemy);
+    }
+
+    return {
+      player,
+      weapon,
+      playerBullets,
+      liveEnemies,
+    };
+  }
+
+  _recordPlayerSampleOnce(player, weapon, liveEnemies) {
+    if (this._lastPlayerSampleTimeMs === this._elapsedMs) return;
+    this._recordPlayerSample(player, weapon, liveEnemies);
+    this._lastPlayerSampleTimeMs = this._elapsedMs;
+  }
+
+  _recordEnemySample(enemy, registry, context, reason, options = {}) {
+    if (!enemy || !registry?.enemyType) return false;
+    if ((registry.samples?.length ?? 0) >= ENEMY_LEARNING_CONFIG.maxSamplesPerEnemy) return false;
+
+    const player = context?.player;
+    if (!player) return false;
+
+    const debounceMs = Math.max(0, ENEMY_LEARNING_CONFIG.decisionSampleDebounceMs ?? 120);
+    const elapsedSinceLastSample = this._elapsedMs - (registry.lastSampleTimeMs ?? Number.NEGATIVE_INFINITY);
+    if (!options.force && elapsedSinceLastSample < debounceMs) {
+      return false;
+    }
+
+    const liveEnemies = context?.liveEnemies ?? [];
+    const weapon = context?.weapon ?? {};
+    const playerBullets = context?.playerBullets ?? [];
+    const squad = buildSquadSnapshot(liveEnemies, enemy._squadId ?? null, enemy);
+    const threat = buildPlayerBulletThreatSnapshot(playerBullets, enemy, ENEMY_LEARNING_CONFIG.normalization);
+    const actionMode = enemy._adaptiveActionMode ?? 'hold';
+    const threatBucket = resolveThreatBucket(threat, ENEMY_LEARNING_CONFIG.normalization);
+    const shieldBucket = resolveShieldBucket(player);
+    const sample = this._encoder.buildSample({
+      enemyType: registry.enemyType,
+      player,
+      weapon,
+      enemyX: enemy.x ?? 0,
+      enemyY: enemy.y ?? 0,
+      speed: enemy.speed ?? 0,
+      squad,
+      threat,
+      actionMode,
+    });
+
+    registry.samples.push({
+      sample,
+      timeMs: this._elapsedMs,
+      reason,
+      actionMode,
+      threatBucket,
+      shieldBucket,
+    });
+    registry.lastSampleTimeMs = this._elapsedMs;
+    registry.lastSampleReason = reason;
+    registry.lastActionMode = actionMode;
+    registry.lastThreatBucket = threatBucket;
+    registry.lastShieldBucket = shieldBucket;
+
+    this._recordPlayerSampleOnce(player, weapon, liveEnemies);
+    if (registry.squadId) {
+      this._sampleSquad(registry.squadId, liveEnemies, player, weapon);
+    }
+
+    return true;
   }
 
   _recordPlayerSample(player, weapon, liveEnemies) {
@@ -183,6 +320,7 @@ export class EnemyLearningSession {
     const squadRegistry = this._squadRegistry.get(squadId);
     if (!squadRegistry) return;
     if (squadRegistry.samples.length >= ENEMY_LEARNING_CONFIG.maxSamplesPerEnemy) return;
+    if (squadRegistry.lastSampleTimeMs === this._elapsedMs) return;
 
     const squadEnemies = liveEnemies.filter(enemy => enemy?._squadId === squadId);
     if (squadEnemies.length === 0) return;
@@ -215,6 +353,7 @@ export class EnemyLearningSession {
     });
 
     squadRegistry.samples.push(sample);
+    squadRegistry.lastSampleTimeMs = this._elapsedMs;
   }
 
   _onEnemySpawned(payload = {}) {
@@ -236,6 +375,7 @@ export class EnemyLearningSession {
       hpDamageToPlayer: 0,
       shieldDamageToPlayer: 0,
       pressureTimes: [],
+      pressureEvents: [],
       collisionDeath: false,
       bulletDeath: false,
       deathCount: 0,
@@ -243,6 +383,11 @@ export class EnemyLearningSession {
       resolvedCount: 0,
       resolutionTimeMs: null,
       lifetimeMsTotal: 0,
+      lastSampleTimeMs: Number.NEGATIVE_INFINITY,
+      lastSampleReason: null,
+      lastActionMode: enemy._adaptiveActionMode ?? 'hold',
+      lastThreatBucket: 0,
+      lastShieldBucket: this._lastPlayerShieldBucket ?? 0,
     });
 
     const squadId = payload.squadId ?? enemy._squadId ?? null;
@@ -269,12 +414,17 @@ export class EnemyLearningSession {
         resolvedCount: 0,
         lifetimeMsTotal: 0,
         samples: [],
+        lastSampleTimeMs: Number.NEGATIVE_INFINITY,
       });
     }
 
     const squadRegistry = this._squadRegistry.get(squadId);
     squadRegistry.spawnCount += 1;
     squadRegistry.primaryEnemyType = squadRegistry.primaryEnemyType ?? enemyType;
+
+    const context = this._buildSamplingContext(enemy);
+    const registry = this._enemyRegistry.get(enemy);
+    this._recordEnemySample(enemy, registry, context, 'spawn', { force: true });
   }
 
   _onEnemyFired(payload = {}) {
@@ -286,6 +436,9 @@ export class EnemyLearningSession {
         registry.shotCount += 1;
         const squadRegistry = registry.squadId ? this._squadRegistry.get(registry.squadId) : null;
         squadRegistry && (squadRegistry.shotCount += 1);
+        this._recordEnemySample(candidate, registry, this._buildSamplingContext(candidate), 'fire', {
+          force: true,
+        });
         return;
       }
     }
@@ -304,12 +457,20 @@ export class EnemyLearningSession {
       registry.hpDamageToPlayer += Math.max(0, payload.hpDamage ?? 0);
       registry.shieldDamageToPlayer += Math.max(0, payload.absorbed ?? 0);
       registry.pressureTimes.push(this._elapsedMs);
+      registry.pressureEvents.push({
+        timeMs: this._elapsedMs,
+        hpDamage: Math.max(0, payload.hpDamage ?? 0),
+        shieldDamage: Math.max(0, payload.absorbed ?? 0),
+      });
       const squadRegistry = registry.squadId ? this._squadRegistry.get(registry.squadId) : null;
       if (squadRegistry) {
         squadRegistry.playerHitCount += 1;
         squadRegistry.hpDamageToPlayer += Math.max(0, payload.hpDamage ?? 0);
         squadRegistry.shieldDamageToPlayer += Math.max(0, payload.absorbed ?? 0);
       }
+      this._recordEnemySample(enemy, registry, this._buildSamplingContext(enemy), 'player_hit', {
+        force: true,
+      });
       return;
     }
   }
@@ -339,6 +500,10 @@ export class EnemyLearningSession {
       squadRegistry.resolvedCount += 1;
       squadRegistry.lifetimeMsTotal += Math.max(0, this._elapsedMs - registry.spawnTimeMs);
     }
+
+    this._recordEnemySample(enemy, registry, this._buildSamplingContext(enemy), resolution, {
+      force: true,
+    });
   }
 
   /**
@@ -347,16 +512,11 @@ export class EnemyLearningSession {
   buildTrainingRecords(outcome = 'player_win') {
     const grouped = new Map();
     const labeling = ENEMY_LEARNING_CONFIG.labeling ?? {};
-    const outcomePrior = outcome === 'enemy_win'
-      ? labeling.enemyWinPrior ?? 0.8
-      : labeling.playerWinPrior ?? 0.2;
-    const outcomePriorWeight = labeling.outcomePriorWeight ?? 0.2;
-    const contributionWeight = labeling.contributionWeight ?? 0.8;
-    const pressureWindowMs = labeling.pressureWindowMs ?? 1600;
-    const collisionWindowMs = labeling.collisionWindowMs ?? 850;
-    const bulletWindowMs = labeling.bulletWindowMs ?? 1250;
-    const survivalWindowMs = labeling.survivalWindowMs ?? 1800;
-    const escapeContribution = labeling.escapeContribution ?? 0.35;
+    const outcomeHorizonMs = Math.max(1, labeling.outcomeHorizonMs ?? 750);
+    const minSurvivalObservationMs = Math.max(0, labeling.minSurvivalObservationMs ?? 500);
+    const strongOutcomeMagnitudeThreshold = clamp(labeling.strongOutcomeMagnitudeThreshold ?? 0.35, 0, 1);
+    const weakOutcomeMagnitudeThreshold = clamp(labeling.weakOutcomeMagnitudeThreshold ?? 0.15, 0, 1);
+    const heartbeatDropThreshold = clamp(labeling.heartbeatDropThreshold ?? 0.25, 0, 1);
 
     for (const registry of this._enemyRegistry.values()) {
       if (!grouped.has(registry.enemyType)) {
@@ -394,56 +554,102 @@ export class EnemyLearningSession {
       record.summary.lifetimeMsTotal += registry.lifetimeMsTotal;
 
       const didEscape = registry.escapeCount > 0;
-      const didDie = registry.deathCount > 0;
-      const resolutionTimeMs = registry.resolutionTimeMs ?? this._elapsedMs;
-      const escapeTimes = didEscape ? [resolutionTimeMs] : [];
-      const collisionTimes = registry.collisionDeath ? [resolutionTimeMs] : [];
-      const bulletTimes = registry.bulletDeath ? [resolutionTimeMs] : [];
+      const resolutionTimeMs = registry.resolutionTimeMs ?? Number.POSITIVE_INFINITY;
+      const exampleCountBefore = record.examples.length;
 
-      for (const sampleEntry of registry.samples) {
+      for (let index = 0; index < registry.samples.length; index += 1) {
+        const sampleEntry = registry.samples[index];
         const sample = sampleEntry?.sample ?? sampleEntry;
         const sampleTimeMs = sampleEntry?.timeMs ?? registry.spawnTimeMs;
-        const pressureLabel = resolveEventSignal(sampleTimeMs, registry.pressureTimes, pressureWindowMs);
-        const collisionLabel = resolveEventSignal(sampleTimeMs, collisionTimes, collisionWindowMs);
-        const bulletLabel = resolveEventSignal(sampleTimeMs, bulletTimes, bulletWindowMs);
-        const terminalDanger = didDie
-          ? resolveEventSignal(sampleTimeMs, [resolutionTimeMs], survivalWindowMs)
+        const nextSampleTimeMs = registry.samples[index + 1]?.timeMs ?? Number.POSITIVE_INFINITY;
+        const horizonEndMs = Math.min(
+          sampleTimeMs + outcomeHorizonMs,
+          nextSampleTimeMs,
+          resolutionTimeMs,
+          this._elapsedMs
+        );
+        const observedHorizonMs = Math.max(0, horizonEndMs - sampleTimeMs);
+        const pressureEventsInHorizon = (registry.pressureEvents ?? []).filter(event => (
+          event?.timeMs >= sampleTimeMs && event?.timeMs <= horizonEndMs
+        ));
+        const pressureLabel = pressureEventsInHorizon.length > 0 ? 1 : 0;
+        const collisionLabel = registry.collisionDeath
+          && Number.isFinite(registry.resolutionTimeMs)
+          && registry.resolutionTimeMs >= sampleTimeMs
+          && registry.resolutionTimeMs <= horizonEndMs
+          ? 1
           : 0;
-        const escapeSignal = resolveEventSignal(sampleTimeMs, escapeTimes, survivalWindowMs);
-        const survivalLabel = clamp(
-          didDie
-            ? 1 - terminalDanger
-            : (didEscape ? 0.72 + escapeSignal * 0.12 : 0.82),
-          0,
-          1
+        const bulletLabel = registry.bulletDeath
+          && Number.isFinite(registry.resolutionTimeMs)
+          && registry.resolutionTimeMs >= sampleTimeMs
+          && registry.resolutionTimeMs <= horizonEndMs
+          ? 1
+          : 0;
+        const escapedInHorizon = didEscape
+          && Number.isFinite(registry.resolutionTimeMs)
+          && registry.resolutionTimeMs >= sampleTimeMs
+          && registry.resolutionTimeMs <= horizonEndMs;
+        const hasMeaningfulSurvivalObservation = observedHorizonMs >= minSurvivalObservationMs
+          || collisionLabel > 0
+          || bulletLabel > 0
+          || escapedInHorizon;
+        const survivalSignal = escapedInHorizon || (
+          hasMeaningfulSurvivalObservation
+          && (
+            (sampleEntry?.threatBucket ?? 0) > 0
+            || isSurvivalSignalReason(sampleEntry?.reason)
+          )
         );
-        const contributionScore = clamp(
-          pressureLabel * 0.65
-          + survivalLabel * 0.2
-          + escapeSignal * escapeContribution,
-          0,
-          1
+        const survivalLabel = collisionLabel > 0 || bulletLabel > 0
+          ? 0
+          : survivalSignal
+            ? 1
+            : 0.5;
+        const winShift = (
+          pressureLabel * 0.55
+          + (survivalLabel - 0.5) * 0.45
+          - collisionLabel * 0.7
+          - bulletLabel * 0.75
         );
-        const winLabel = clamp(
-          outcomePrior * outcomePriorWeight
-          + contributionScore * contributionWeight,
-          0,
-          1
-        );
+        const winLabel = clamp(0.5 + winShift, 0, 1);
+        const labels = {
+          win: winLabel,
+          survival: survivalLabel,
+          pressure: pressureLabel,
+          collision: collisionLabel,
+          bullet: bulletLabel,
+        };
+        const outcomeMagnitude = resolveOutcomeMagnitude(labels);
+        if (sampleEntry?.reason === 'heartbeat' && outcomeMagnitude < heartbeatDropThreshold) {
+          continue;
+        }
+        if (!isHighValueReason(sampleEntry?.reason) && outcomeMagnitude < weakOutcomeMagnitudeThreshold) {
+          continue;
+        }
+        if (
+          pressureLabel <= 0
+          && collisionLabel <= 0
+          && bulletLabel <= 0
+          && outcomeMagnitude < strongOutcomeMagnitudeThreshold
+        ) {
+          continue;
+        }
         const encoded = this._encoder.encodeSample(sample);
         record.examples.push({
           vector: encoded.vector,
-          labels: {
-            win: winLabel,
-            survival: survivalLabel,
-            pressure: pressureLabel,
-            collision: collisionLabel,
-            bullet: bulletLabel,
+          labels,
+          meta: {
+            reason: sampleEntry?.reason ?? 'heartbeat',
+            actionMode: sampleEntry?.actionMode ?? 'hold',
+            threatBucket: sampleEntry?.threatBucket ?? 0,
+            shieldBucket: sampleEntry?.shieldBucket ?? 0,
+            horizonMs: observedHorizonMs,
+            outcomeMagnitude,
           },
         });
       }
 
-      record.sampleCount += registry.samples.length;
+      record.sampleCount += record.examples.length - exampleCountBefore;
     }
 
     return [...grouped.values()];

@@ -26,6 +26,9 @@ const {
 const {
   LogisticRegressor,
 } = await import('../../../systems/ml/LogisticRegressor.js');
+const {
+  ENEMY_LEARNING_CONFIG,
+} = await import('../../../config/enemyLearning.config.js');
 
 const hadLocalStorage = Object.prototype.hasOwnProperty.call(globalThis, 'localStorage');
 const originalLocalStorage = globalThis.localStorage;
@@ -184,6 +187,35 @@ describe('EnemyAdaptivePolicy', () => {
     );
   });
 
+  it('builds recency weights from telemetry order and upweights rare collision/bullet positives', () => {
+    const policy = new EnemyAdaptivePolicy();
+    policy.load();
+
+    const trainingSet = policy._buildEnemyTrainingSet([
+      {
+        vector: [0.2],
+        labels: { win: 0.1, survival: 0.4, pressure: 0.1, collision: 0, bullet: 0 },
+        meta: { telemetryLevelId: 2, levelNumber: 2 },
+      },
+      {
+        vector: [0.4],
+        labels: { win: 0.2, survival: 0.5, pressure: 0.2, collision: 0, bullet: 0 },
+        meta: { telemetryLevelId: 3, levelNumber: 3 },
+      },
+      {
+        vector: [0.6],
+        labels: { win: 0.8, survival: 0.9, pressure: 0.7, collision: 1, bullet: 1 },
+        meta: { telemetryLevelId: 4, levelNumber: 4 },
+      },
+    ]);
+
+    assert.equal(trainingSet.examples.length, 3);
+    assert.ok(trainingSet.recencyWeights[2] > trainingSet.recencyWeights[1]);
+    assert.ok(trainingSet.recencyWeights[1] > trainingSet.recencyWeights[0]);
+    assert.ok(trainingSet.collisionWeights[2] > trainingSet.collisionWeights[0]);
+    assert.ok(trainingSet.bulletWeights[2] > trainingSet.bulletWeights[1]);
+  });
+
   it('uses Level 1 squad data to bootstrap the level 2 squad network', () => {
     const squadEncoder = new SquadFeatureEncoder();
     const squadSample = squadEncoder.encodeSample(squadEncoder.buildSample({
@@ -262,7 +294,7 @@ describe('EnemyAdaptivePolicy', () => {
     dense1Kernel[featureIndex] = 1;
 
     globalThis.localStorage.setItem(SQUAD_LEARNING_STORAGE_KEY, JSON.stringify({
-      featureVersion: 6,
+      featureVersion: ENEMY_LEARNING_CONFIG.featureVersion,
       squadModels: {
         level2: {
           inputSize,
@@ -416,23 +448,32 @@ describe('EnemyAdaptivePolicy', () => {
     assert.ok(rawDataset.enemyExamples.skirm.every(example => example.meta.levelNumber >= 2));
   });
 
-  it('scores runtime movement candidates with the learned pressure and collision models', () => {
+  it('prefers survivable pressure over suicidal pressure in runtime scoring', () => {
     const encoder = new EnemyFeatureEncoder();
     const featureNames = encoder.getFeatureNames();
-    const zeroWeights = Object.fromEntries(featureNames.map(name => [name, 0]));
-    zeroWeights.shotAlignment = 4;
-    zeroWeights.shieldedLaneRisk = 6;
-    zeroWeights.shieldedProximityNorm = 4;
+    const pressureWeights = Object.fromEntries(featureNames.map(name => [name, 0]));
+    pressureWeights.shotAlignment = 8;
+    pressureWeights.shieldedLaneRisk = 8;
+    pressureWeights.shieldedProximityNorm = 4;
 
-    const weights = featureNames.map(name => zeroWeights[name] ?? 0);
+    const survivalWeights = Object.fromEntries(featureNames.map(name => [name, 0]));
+    survivalWeights.shotAlignment = -6;
+    survivalWeights.shieldedLaneRisk = -6;
+    survivalWeights.shieldedProximityNorm = -3;
+
+    const winWeights = Object.fromEntries(featureNames.map(name => [name, 0]));
+    winWeights.shotAlignment = -3;
+    winWeights.shieldedLaneRisk = -3;
+
+    const toWeightArray = (weightMap) => featureNames.map(name => weightMap[name] ?? 0);
     globalThis.localStorage.setItem(ENEMY_LEARNING_STORAGE_KEY, JSON.stringify({
-      featureVersion: 6,
+      featureVersion: ENEMY_LEARNING_CONFIG.featureVersion,
       enemyModels: {
         skirm: {
-          winModel: { weights: new Array(featureNames.length).fill(0), bias: 0 },
-          survivalModel: { weights: new Array(featureNames.length).fill(0), bias: 0 },
-          pressureModel: { weights, bias: 0 },
-          collisionModel: { weights, bias: 0 },
+          winModel: { weights: toWeightArray(winWeights), bias: 1.5 },
+          survivalModel: { weights: toWeightArray(survivalWeights), bias: 2 },
+          pressureModel: { weights: toWeightArray(pressureWeights), bias: 0 },
+          collisionModel: { weights: toWeightArray(pressureWeights), bias: 0 },
           bulletModel: { weights: new Array(featureNames.length).fill(0), bias: 0 },
           sampleCount: 8,
           lastScores: { win: 0.5, survival: 0.5, pressure: 0.5, collision: 0.5, bullet: 0.5 },
@@ -465,16 +506,153 @@ describe('EnemyAdaptivePolicy', () => {
       },
     };
 
-    const best = policy.resolveBehavior({
+    const ranked = policy.rankBehaviors({
       enemy,
       enemyType: 'skirm',
       candidates: [
         { x: 200, y: 150, speedScalar: 1 },
         { x: 80, y: 150, speedScalar: 1 },
       ],
+    }, 2);
+
+    assert.equal(ranked[0].x, 80);
+    assert.equal(ranked[1].x, 200);
+    assert.ok(ranked[0].score > ranked[1].score);
+    assert.ok(ranked[0].predictedPressure < ranked[1].predictedPressure);
+    assert.ok(ranked[0].predictedCollisionRisk < ranked[1].predictedCollisionRisk);
+  });
+
+  it('forces attack-mode candidates when the player is not shooting', () => {
+    const encoder = new EnemyFeatureEncoder();
+    const featureNames = encoder.getFeatureNames();
+    const zeroWeights = new Array(featureNames.length).fill(0);
+
+    globalThis.localStorage.setItem(ENEMY_LEARNING_STORAGE_KEY, JSON.stringify({
+      featureVersion: ENEMY_LEARNING_CONFIG.featureVersion,
+      enemyModels: {
+        skirm: {
+          winModel: { weights: zeroWeights, bias: 0 },
+          survivalModel: { weights: zeroWeights, bias: 0 },
+          pressureModel: { weights: zeroWeights, bias: 0 },
+          collisionModel: { weights: zeroWeights, bias: 0 },
+          bulletModel: { weights: zeroWeights, bias: 0 },
+          sampleCount: 8,
+          lastScores: { win: 0.5, survival: 0.5, pressure: 0.5, collision: 0.5, bullet: 0.5 },
+        },
+      },
+    }));
+
+    const policy = new EnemyAdaptivePolicy({ encoder });
+    policy.load();
+
+    const enemy = {
+      enemyType: 'skirm',
+      _nativeSpeed: 80,
+      scene: {
+        _enemies: [],
+        _player: { x: 200, y: 500 },
+        _getEnemyLearningPlayerSnapshot() {
+          return { x: 200, y: 500, hasShield: false, shieldRatio: 0, hpRatio: 1 };
+        },
+        _weapons: {
+          getLearningSnapshot() {
+            return {
+              primaryWeaponKey: 'laser',
+              heatRatio: 0,
+              isOverheated: false,
+              primaryDamageMultiplier: 1,
+            };
+          },
+          pool: {
+            getChildren() {
+              return [];
+            },
+          },
+        },
+      },
+    };
+
+    const best = policy.resolveBehavior({
+      enemy,
+      enemyType: 'skirm',
+      candidates: [
+        { x: 200, y: 120, speedScalar: 1, actionMode: 'evade' },
+        { x: 220, y: 140, speedScalar: 1, actionMode: 'press' },
+        { x: 120, y: 130, speedScalar: 1, actionMode: 'flank' },
+      ],
     });
 
-    assert.equal(best.x, 80);
+    assert.ok(best);
+    assert.notEqual(best.actionMode, 'evade');
+    assert.ok(best.actionMode === 'press' || best.actionMode === 'flank');
+  });
+
+  it('reuses cached runtime regressor bundles instead of rebuilding them on every resolveBehavior call', () => {
+    const encoder = new EnemyFeatureEncoder();
+    const featureNames = encoder.getFeatureNames();
+    const zeroWeights = new Array(featureNames.length).fill(0);
+
+    globalThis.localStorage.setItem(ENEMY_LEARNING_STORAGE_KEY, JSON.stringify({
+      featureVersion: ENEMY_LEARNING_CONFIG.featureVersion,
+      enemyModels: {
+        skirm: {
+          winModel: { inputSize: featureNames.length, weights: zeroWeights, bias: 0 },
+          survivalModel: { inputSize: featureNames.length, weights: zeroWeights, bias: 0 },
+          pressureModel: { inputSize: featureNames.length, weights: zeroWeights, bias: 0 },
+          collisionModel: { inputSize: featureNames.length, weights: zeroWeights, bias: 0 },
+          bulletModel: { inputSize: featureNames.length, weights: zeroWeights, bias: 0 },
+          sampleCount: 8,
+          lastScores: { win: 0.5, survival: 0.5, pressure: 0.5, collision: 0.5, bullet: 0.5 },
+        },
+      },
+    }));
+
+    const policy = new EnemyAdaptivePolicy({ encoder });
+    policy.load();
+
+    const enemy = {
+      enemyType: 'skirm',
+      _nativeSpeed: 80,
+      scene: {
+        _enemies: [],
+        _player: { x: 200, y: 500 },
+        _getEnemyLearningPlayerSnapshot() {
+          return { x: 200, y: 500, hasShield: false, shieldRatio: 0, hpRatio: 1 };
+        },
+        _weapons: {
+          getLearningSnapshot() {
+            return {
+              primaryWeaponKey: 'laser',
+              heatRatio: 0.2,
+              isOverheated: false,
+              primaryDamageMultiplier: 1,
+            };
+          },
+          pool: {
+            getChildren() {
+              return [];
+            },
+          },
+        },
+      },
+    };
+
+    policy.resolveBehavior({
+      enemy,
+      enemyType: 'skirm',
+      candidates: [{ x: 200, y: 150, speedScalar: 1 }],
+    });
+    const firstBundle = policy._runtimeRegressorCache.get('skirm');
+
+    policy.resolveBehavior({
+      enemy,
+      enemyType: 'skirm',
+      candidates: [{ x: 220, y: 150, speedScalar: 1 }],
+    });
+    const secondBundle = policy._runtimeRegressorCache.get('skirm');
+
+    assert.ok(firstBundle);
+    assert.strictEqual(secondBundle, firstBundle);
   });
 
   it('penalizes collapsing same-type enemies into the same corner', () => {
@@ -524,5 +702,48 @@ describe('EnemyAdaptivePolicy', () => {
     });
 
     assert.equal(best.x, 180);
+  });
+
+  it('curates the training set by keeping eventful samples and capping boring telemetry', () => {
+    const policy = new EnemyAdaptivePolicy();
+    policy.load();
+
+    const examples = [
+      ...Array.from({ length: 40 }, (_, index) => ({
+        vector: [1, index / 40],
+        labels: { win: 0.9, survival: 1, pressure: 1, collision: 0, bullet: 0 },
+        meta: { telemetryLevelId: 4, levelNumber: 4, outcomeMagnitude: 1, reason: 'player_hit' },
+      })),
+      ...Array.from({ length: 220 }, (_, index) => ({
+        vector: [0.5, index / 220],
+        labels: { win: 0.725, survival: 1, pressure: 0, collision: 0, bullet: 0 },
+        meta: { telemetryLevelId: 4, levelNumber: 4, outcomeMagnitude: 1, reason: 'spawn' },
+      })),
+      ...Array.from({ length: 220 }, (_, index) => ({
+        vector: [0, index / 220],
+        labels: { win: 0.5, survival: 0.5, pressure: 0, collision: 0, bullet: 0 },
+        meta: { telemetryLevelId: 4, levelNumber: 4, outcomeMagnitude: 0, reason: 'heartbeat' },
+      })),
+    ];
+
+    const trainingSet = policy._buildEnemyTrainingSet(examples);
+    const retainedEventful = trainingSet.examples.filter(example => (example.labels?.pressure ?? 0) > 0).length;
+    const retainedSafe = trainingSet.examples.filter(example => (
+      (example.labels?.pressure ?? 0) <= 0
+      && (example.labels?.collision ?? 0) <= 0
+      && (example.labels?.bullet ?? 0) <= 0
+      && (example.labels?.survival ?? 0) >= 0.75
+    )).length;
+    const retainedNeutral = trainingSet.examples.filter(example => (
+      (example.labels?.pressure ?? 0) <= 0
+      && (example.labels?.collision ?? 0) <= 0
+      && (example.labels?.bullet ?? 0) <= 0
+      && (example.labels?.survival ?? 0) < 0.75
+    )).length;
+
+    assert.equal(retainedEventful, 40);
+    assert.equal(retainedSafe, 40);
+    assert.equal(retainedNeutral, 10);
+    assert.equal(trainingSet.examples.length, 90);
   });
 });

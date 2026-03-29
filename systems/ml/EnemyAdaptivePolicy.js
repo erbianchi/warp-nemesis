@@ -12,11 +12,228 @@ import { SquadDatasetStore } from './SquadDatasetStore.js';
 import { SquadFeatureEncoder } from './SquadFeatureEncoder.js';
 import { SquadLearningStore } from './SquadLearningStore.js';
 import { SquadPolicyNetwork } from './SquadPolicyNetwork.js';
-import { DanceWaypointNetwork, stripActionModes } from './DanceWaypointNetwork.js';
+import {
+  ACTION_MODE_COUNT,
+  ACTION_MODE_OFFSET,
+  DanceWaypointNetwork,
+  stripActionModes,
+} from './DanceWaypointNetwork.js';
 import { DanceWaypointStore } from './DanceWaypointStore.js';
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function normalizeInteger(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : fallback;
+}
+
+function normalizeSampleWeights(weights = []) {
+  if (!Array.isArray(weights) || weights.length === 0) return [];
+  const normalized = weights.map(weight => Math.max(0, Number(weight) || 0));
+  const meanWeight = normalized.reduce((sum, weight) => sum + weight, 0) / Math.max(1, normalized.length);
+  if (meanWeight <= 0) return new Array(normalized.length).fill(1);
+  return normalized.map(weight => weight / meanWeight);
+}
+
+function combineSampleWeights(...weightSets) {
+  const size = weightSets.find(weights => Array.isArray(weights) && weights.length > 0)?.length ?? 0;
+  if (size <= 0) return [];
+
+  const combined = new Array(size).fill(1);
+  for (const weightSet of weightSets) {
+    if (!Array.isArray(weightSet) || weightSet.length !== size) continue;
+    for (let index = 0; index < size; index += 1) {
+      combined[index] *= Math.max(0, Number(weightSet[index]) || 0);
+    }
+  }
+
+  return normalizeSampleWeights(combined);
+}
+
+function buildSoftClassBalanceWeights(labels = []) {
+  if (!Array.isArray(labels) || labels.length === 0) return [];
+
+  const positiveMass = labels.reduce((sum, label) => sum + clamp(Number(label) || 0, 0, 1), 0);
+  const negativeMass = labels.length - positiveMass;
+  if (positiveMass <= 0 || negativeMass <= 0) {
+    return new Array(labels.length).fill(1);
+  }
+
+  const positiveWeight = labels.length / (2 * positiveMass);
+  const negativeWeight = labels.length / (2 * negativeMass);
+  return normalizeSampleWeights(labels.map(label => {
+    const clampedLabel = clamp(Number(label) || 0, 0, 1);
+    return clampedLabel * positiveWeight + (1 - clampedLabel) * negativeWeight;
+  }));
+}
+
+function resolveTelemetryTrainingKey(meta = {}) {
+  const telemetryLevelId = normalizeInteger(meta.telemetryLevelId);
+  if (telemetryLevelId > 0) return `telemetry:${telemetryLevelId}`;
+
+  const levelNumber = normalizeInteger(meta.levelNumber);
+  return levelNumber > 0 ? `legacy-level:${levelNumber}` : null;
+}
+
+function filterRecentTelemetryExamples(examples = [], windowSize = ENEMY_LEARNING_CONFIG.recentTelemetryLevels ?? 3) {
+  const normalizedWindowSize = Math.max(1, normalizeInteger(windowSize, 3));
+  if (!Array.isArray(examples) || examples.length <= 1) return Array.isArray(examples) ? [...examples] : [];
+
+  const keepKeys = new Set();
+  for (let index = examples.length - 1; index >= 0 && keepKeys.size < normalizedWindowSize; index -= 1) {
+    const key = resolveTelemetryTrainingKey(examples[index]?.meta);
+    if (!key) continue;
+    keepKeys.add(key);
+  }
+
+  if (keepKeys.size === 0) return [...examples];
+  return examples.filter(example => keepKeys.has(resolveTelemetryTrainingKey(example?.meta)));
+}
+
+function buildTelemetryRecencyWeights(examples = []) {
+  if (!Array.isArray(examples) || examples.length === 0) return [];
+
+  const orderedKeys = [];
+  const seenKeys = new Set();
+  for (const example of examples) {
+    const key = resolveTelemetryTrainingKey(example?.meta);
+    if (!key || seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    orderedKeys.push(key);
+  }
+
+  if (orderedKeys.length === 0) return new Array(examples.length).fill(1);
+  const rankByKey = new Map(orderedKeys.map((key, index) => [key, index + 1]));
+  return normalizeSampleWeights(examples.map(example => (
+    rankByKey.get(resolveTelemetryTrainingKey(example?.meta)) ?? 1
+  )));
+}
+
+function resolveExampleOutcomeMagnitude(example = {}) {
+  const storedMagnitude = Number(example?.meta?.outcomeMagnitude);
+  if (Number.isFinite(storedMagnitude)) {
+    return clamp(storedMagnitude, 0, 1);
+  }
+
+  return clamp(Math.max(
+    Math.abs((example?.labels?.win ?? 0.5) - 0.5) * 2,
+    Math.abs((example?.labels?.survival ?? 0.5) - 0.5) * 2,
+    clamp(example?.labels?.pressure ?? 0, 0, 1),
+    clamp(example?.labels?.collision ?? 0, 0, 1),
+    clamp(example?.labels?.bullet ?? 0, 0, 1)
+  ), 0, 1);
+}
+
+function classifyTrainingExample(example = {}) {
+  const collision = clamp(example?.labels?.collision ?? 0, 0, 1);
+  const bullet = clamp(example?.labels?.bullet ?? 0, 0, 1);
+  const pressure = clamp(example?.labels?.pressure ?? 0, 0, 1);
+  const survival = clamp(example?.labels?.survival ?? 0, 0, 1);
+
+  if (collision > 0 || bullet > 0) return 'terminalNegative';
+  if (pressure > 0) return 'eventfulPositive';
+  if (survival >= 0.75) return 'safePositive';
+  return 'neutral';
+}
+
+function compareInformativeExamples(left, right) {
+  const leftTelemetryId = normalizeInteger(left?.example?.meta?.telemetryLevelId ?? left?.example?.meta?.levelNumber);
+  const rightTelemetryId = normalizeInteger(right?.example?.meta?.telemetryLevelId ?? right?.example?.meta?.levelNumber);
+  if (rightTelemetryId !== leftTelemetryId) return rightTelemetryId - leftTelemetryId;
+
+  if ((right?.outcomeMagnitude ?? 0) !== (left?.outcomeMagnitude ?? 0)) {
+    return (right?.outcomeMagnitude ?? 0) - (left?.outcomeMagnitude ?? 0);
+  }
+
+  const rightHorizon = normalizeInteger(right?.example?.meta?.horizonMs);
+  const leftHorizon = normalizeInteger(left?.example?.meta?.horizonMs);
+  if (rightHorizon !== leftHorizon) return rightHorizon - leftHorizon;
+
+  return (left?.index ?? 0) - (right?.index ?? 0);
+}
+
+function buildOutcomeMagnitudeWeights(examples = []) {
+  if (!Array.isArray(examples) || examples.length === 0) return [];
+
+  return normalizeSampleWeights(examples.map((example) => {
+    const labels = example?.labels ?? {};
+    const outcomeMagnitude = resolveExampleOutcomeMagnitude(example);
+    let weight = 0.5 + (2.5 * outcomeMagnitude);
+
+    if ((labels.collision ?? 0) > 0 || (labels.bullet ?? 0) > 0) {
+      weight *= 5;
+    } else if ((labels.pressure ?? 0) > 0) {
+      weight *= 4;
+    } else if ((labels.survival ?? 0) >= 0.75) {
+      weight *= 2;
+    } else {
+      weight *= 0.5;
+    }
+
+    return weight;
+  }));
+}
+
+function curateEnemyTrainingExamples(
+  examples = [],
+  limit = ENEMY_LEARNING_CONFIG.maxExamplesPerEnemyType ?? 480
+) {
+  if (!Array.isArray(examples) || examples.length === 0) return [];
+
+  const wrapped = examples.map((example, index) => ({
+    example,
+    index,
+    category: classifyTrainingExample(example),
+    outcomeMagnitude: resolveExampleOutcomeMagnitude(example),
+  }));
+
+  const groups = {
+    eventfulPositive: [],
+    terminalNegative: [],
+    safePositive: [],
+    neutral: [],
+  };
+
+  for (const entry of wrapped) {
+    groups[entry.category].push(entry);
+  }
+
+  Object.values(groups).forEach(entries => entries.sort(compareInformativeExamples));
+
+  const normalizedLimit = Math.max(1, normalizeInteger(limit, 480));
+  const baselineCount = groups.eventfulPositive.length + groups.terminalNegative.length;
+  const safeLimit = baselineCount > 0
+    ? baselineCount
+    : Math.min(groups.safePositive.length, normalizedLimit);
+  const neutralLimit = baselineCount > 0
+    ? Math.floor(baselineCount * 0.25)
+    : 0;
+
+  const selected = [
+    ...groups.eventfulPositive,
+    ...groups.terminalNegative,
+    ...groups.safePositive.slice(0, safeLimit),
+    ...groups.neutral.slice(0, neutralLimit),
+  ];
+
+  const categoryPriority = new Map([
+    ['eventfulPositive', 0],
+    ['terminalNegative', 1],
+    ['safePositive', 2],
+    ['neutral', 3],
+  ]);
+  selected.sort((left, right) => (
+    (categoryPriority.get(left.category) ?? 99) - (categoryPriority.get(right.category) ?? 99)
+    || compareInformativeExamples(left, right)
+  ));
+
+  return selected.slice(0, normalizedLimit).map(entry => entry.example);
+}
+
+function reportTrainingFailure(context, error) {
+  globalThis.console?.error?.(`[EnemyAdaptivePolicy] ${context} failed.`, error);
 }
 
 function resolveCornerPenalty(x, y, normalization, cornerDistancePx) {
@@ -151,11 +368,13 @@ export class EnemyAdaptivePolicy {
     this._lastPlayerStyleProfile = null;
     this._backgroundTrainingPromise = Promise.resolve();
     this._telemetryLevelCursor = 0;
+    this._runtimeRegressorCache = new Map();
   }
 
   load() {
     this._state = this._store.load();
     this._squadState = this._squadStore.load();
+    this._runtimeRegressorCache.clear();
     const enemyDataset = this._datasetStore.load();
     const squadDataset = this._squadDatasetStore.load();
     this._telemetryLevelCursor = Math.max(
@@ -198,6 +417,7 @@ export class EnemyAdaptivePolicy {
     if (!this._state) this.load();
     if (!this._state.enemyModels[enemyType]) {
       this._state.enemyModels[enemyType] = createDefaultModel();
+      this._runtimeRegressorCache.delete(enemyType);
     }
     return this._state.enemyModels[enemyType];
   }
@@ -250,86 +470,208 @@ export class EnemyAdaptivePolicy {
     });
   }
 
+  _buildEnemyTrainingSet(examples = []) {
+    const filteredExamples = filterRecentTelemetryExamples(
+      examples,
+      this._config.recentTelemetryLevels ?? 3
+    );
+    const curatedExamples = curateEnemyTrainingExamples(
+      filteredExamples,
+      this._config.maxExamplesPerEnemyType ?? 480
+    );
+    const vectors = curatedExamples.map(example => example.vector ?? []);
+    const winLabels = curatedExamples.map(example => example.labels?.win ?? 0);
+    const survivalLabels = curatedExamples.map(example => example.labels?.survival ?? 0);
+    const pressureLabels = curatedExamples.map(example => example.labels?.pressure ?? 0);
+    const collisionLabels = curatedExamples.map(example => example.labels?.collision ?? 0);
+    const bulletLabels = curatedExamples.map(example => example.labels?.bullet ?? 0);
+    const recencyWeights = buildTelemetryRecencyWeights(curatedExamples);
+    const outcomeMagnitudeWeights = buildOutcomeMagnitudeWeights(curatedExamples);
+    const trainingWeights = combineSampleWeights(recencyWeights, outcomeMagnitudeWeights);
+
+    return {
+      examples: curatedExamples,
+      vectors,
+      winLabels,
+      survivalLabels,
+      pressureLabels,
+      collisionLabels,
+      bulletLabels,
+      recencyWeights,
+      outcomeMagnitudeWeights,
+      trainingWeights,
+      collisionWeights: combineSampleWeights(
+        trainingWeights,
+        buildSoftClassBalanceWeights(collisionLabels)
+      ),
+      bulletWeights: combineSampleWeights(
+        trainingWeights,
+        buildSoftClassBalanceWeights(bulletLabels)
+      ),
+    };
+  }
+
+  _buildEnemyModelState(trainingSet, regressors) {
+    const divisor = Math.max(1, trainingSet.examples.length);
+    const scores = trainingSet.examples.reduce((accumulator, example) => ({
+      win: accumulator.win + regressors.win.predictProbability(example.vector),
+      survival: accumulator.survival + regressors.survival.predictProbability(example.vector),
+      pressure: accumulator.pressure + regressors.pressure.predictProbability(example.vector),
+      collision: accumulator.collision + regressors.collision.predictProbability(example.vector),
+      bullet: accumulator.bullet + regressors.bullet.predictProbability(example.vector),
+    }), {
+      win: 0,
+      survival: 0,
+      pressure: 0,
+      collision: 0,
+      bullet: 0,
+    });
+
+    return {
+      winModel: regressors.win.getState(),
+      survivalModel: regressors.survival.getState(),
+      pressureModel: regressors.pressure.getState(),
+      collisionModel: regressors.collision.getState(),
+      bulletModel: regressors.bullet.getState(),
+      sampleCount: trainingSet.examples.length,
+      lastScores: {
+        win: scores.win / divisor,
+        survival: scores.survival / divisor,
+        pressure: scores.pressure / divisor,
+        collision: scores.collision / divisor,
+        bullet: scores.bullet / divisor,
+      },
+    };
+  }
+
+  _trainEnemyModelFromExamples(examples = []) {
+    const trainingSet = this._buildEnemyTrainingSet(examples);
+    if (trainingSet.examples.length === 0) return createDefaultModel();
+
+    const regressors = {
+      win: new LogisticRegressor(),
+      survival: new LogisticRegressor(),
+      pressure: new LogisticRegressor(),
+      collision: new LogisticRegressor(),
+      bullet: new LogisticRegressor(),
+    };
+    const baseOptions = {
+      learningRate: this._config.learningRate,
+      regularization: this._config.regularization,
+      epochs: this._config.trainingEpochsPerRun,
+    };
+
+    regressors.win.trainBatch(trainingSet.vectors, trainingSet.winLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.trainingWeights,
+    });
+    regressors.survival.trainBatch(trainingSet.vectors, trainingSet.survivalLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.trainingWeights,
+    });
+    regressors.pressure.trainBatch(trainingSet.vectors, trainingSet.pressureLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.trainingWeights,
+    });
+    regressors.collision.trainBatch(trainingSet.vectors, trainingSet.collisionLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.collisionWeights,
+    });
+    regressors.bullet.trainBatch(trainingSet.vectors, trainingSet.bulletLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.bulletWeights,
+    });
+
+    return this._buildEnemyModelState(trainingSet, regressors);
+  }
+
+  async _trainEnemyModelFromExamplesAsync(examples = []) {
+    const trainingSet = this._buildEnemyTrainingSet(examples);
+    if (trainingSet.examples.length === 0) return createDefaultModel();
+
+    const regressors = {
+      win: new LogisticRegressor(),
+      survival: new LogisticRegressor(),
+      pressure: new LogisticRegressor(),
+      collision: new LogisticRegressor(),
+      bullet: new LogisticRegressor(),
+    };
+    const baseOptions = {
+      learningRate: this._config.learningRate,
+      regularization: this._config.regularization,
+      epochs: this._config.trainingEpochsPerRun,
+    };
+
+    await regressors.win.trainBatchAsync(trainingSet.vectors, trainingSet.winLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.trainingWeights,
+    });
+    await regressors.survival.trainBatchAsync(trainingSet.vectors, trainingSet.survivalLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.trainingWeights,
+    });
+    await regressors.pressure.trainBatchAsync(trainingSet.vectors, trainingSet.pressureLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.trainingWeights,
+    });
+    await regressors.collision.trainBatchAsync(trainingSet.vectors, trainingSet.collisionLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.collisionWeights,
+    });
+    await regressors.bullet.trainBatchAsync(trainingSet.vectors, trainingSet.bulletLabels, {
+      ...baseOptions,
+      sampleWeights: trainingSet.bulletWeights,
+    });
+
+    return this._buildEnemyModelState(trainingSet, regressors);
+  }
+
+  _createRuntimeRegressorBundle(enemyType) {
+    const modelState = this._ensureModel(enemyType);
+    const expectedInputSize = this._encoder.getFeatureNames().length;
+    const buildRegressor = (state, label) => {
+      const regressor = new LogisticRegressor({
+        ...state,
+        inputSize: state?.inputSize ?? expectedInputSize,
+      });
+      try {
+        regressor._assertFeatureDimension(expectedInputSize);
+        return regressor;
+      } catch (error) {
+        reportTrainingFailure(`invalid runtime ${label} regressor for "${enemyType}"`, error);
+        return new LogisticRegressor({ inputSize: expectedInputSize });
+      }
+    };
+
+    return {
+      modelState,
+      win: buildRegressor(modelState.winModel, 'win'),
+      survival: buildRegressor(modelState.survivalModel, 'survival'),
+      pressure: buildRegressor(modelState.pressureModel, 'pressure'),
+      collision: buildRegressor(modelState.collisionModel, 'collision'),
+      bullet: buildRegressor(modelState.bulletModel, 'bullet'),
+    };
+  }
+
+  _getRuntimeRegressorBundle(enemyType) {
+    const modelState = this._ensureModel(enemyType);
+    const cachedBundle = this._runtimeRegressorCache.get(enemyType);
+    if (cachedBundle?.modelState === modelState) return cachedBundle;
+
+    const bundle = this._createRuntimeRegressorBundle(enemyType);
+    this._runtimeRegressorCache.set(enemyType, bundle);
+    return bundle;
+  }
+
   _buildEnemyStateFromDataset(datasetState) {
     const nextState = cloneJson(this._state ?? this._store.load());
 
     for (const [enemyType, enemyConfig] of Object.entries(this._enemyConfigs)) {
       if (!enemyConfig?.adaptive?.enabled) continue;
 
-      const examples = datasetState.enemyExamples?.[enemyType] ?? [];
-      if (examples.length === 0) {
-        nextState.enemyModels[enemyType] = createDefaultModel();
-        continue;
-      }
-
-      const winRegressor = new LogisticRegressor();
-      const survivalRegressor = new LogisticRegressor();
-      const pressureRegressor = new LogisticRegressor();
-      const collisionRegressor = new LogisticRegressor();
-      const bulletRegressor = new LogisticRegressor();
-      const vectors = examples.map(example => example.vector);
-      const winLabels = examples.map(example => example.labels?.win ?? 0);
-      const survivalLabels = examples.map(example => example.labels?.survival ?? 0);
-      const pressureLabels = examples.map(example => example.labels?.pressure ?? 0);
-      const collisionLabels = examples.map(example => example.labels?.collision ?? 0);
-      const bulletLabels = examples.map(example => example.labels?.bullet ?? 0);
-
-      winRegressor.trainBatch(vectors, winLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-      survivalRegressor.trainBatch(vectors, survivalLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-      pressureRegressor.trainBatch(vectors, pressureLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-      collisionRegressor.trainBatch(vectors, collisionLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-      bulletRegressor.trainBatch(vectors, bulletLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-
-      const divisor = Math.max(1, examples.length);
-      const scores = examples.reduce((accumulator, example) => ({
-        win: accumulator.win + winRegressor.predictProbability(example.vector),
-        survival: accumulator.survival + survivalRegressor.predictProbability(example.vector),
-        pressure: accumulator.pressure + pressureRegressor.predictProbability(example.vector),
-        collision: accumulator.collision + collisionRegressor.predictProbability(example.vector),
-        bullet: accumulator.bullet + bulletRegressor.predictProbability(example.vector),
-      }), {
-        win: 0,
-        survival: 0,
-        pressure: 0,
-        collision: 0,
-        bullet: 0,
-      });
-
-      nextState.enemyModels[enemyType] = {
-        winModel: winRegressor.getState(),
-        survivalModel: survivalRegressor.getState(),
-        pressureModel: pressureRegressor.getState(),
-        collisionModel: collisionRegressor.getState(),
-        bulletModel: bulletRegressor.getState(),
-        sampleCount: examples.length,
-        lastScores: {
-          win: scores.win / divisor,
-          survival: scores.survival / divisor,
-          pressure: scores.pressure / divisor,
-          collision: scores.collision / divisor,
-          bullet: scores.bullet / divisor,
-        },
-      };
+      nextState.enemyModels[enemyType] = this._trainEnemyModelFromExamples(
+        datasetState.enemyExamples?.[enemyType] ?? []
+      );
     }
 
     return nextState;
@@ -341,80 +683,9 @@ export class EnemyAdaptivePolicy {
     for (const [enemyType, enemyConfig] of Object.entries(this._enemyConfigs)) {
       if (!enemyConfig?.adaptive?.enabled) continue;
 
-      const examples = datasetState.enemyExamples?.[enemyType] ?? [];
-      if (examples.length === 0) {
-        nextState.enemyModels[enemyType] = createDefaultModel();
-        continue;
-      }
-
-      const winRegressor = new LogisticRegressor();
-      const survivalRegressor = new LogisticRegressor();
-      const pressureRegressor = new LogisticRegressor();
-      const collisionRegressor = new LogisticRegressor();
-      const bulletRegressor = new LogisticRegressor();
-      const vectors = examples.map(example => example.vector);
-      const winLabels = examples.map(example => example.labels?.win ?? 0);
-      const survivalLabels = examples.map(example => example.labels?.survival ?? 0);
-      const pressureLabels = examples.map(example => example.labels?.pressure ?? 0);
-      const collisionLabels = examples.map(example => example.labels?.collision ?? 0);
-      const bulletLabels = examples.map(example => example.labels?.bullet ?? 0);
-
-      await winRegressor.trainBatchAsync(vectors, winLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-      await survivalRegressor.trainBatchAsync(vectors, survivalLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-      await pressureRegressor.trainBatchAsync(vectors, pressureLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-      await collisionRegressor.trainBatchAsync(vectors, collisionLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-      await bulletRegressor.trainBatchAsync(vectors, bulletLabels, {
-        learningRate: this._config.learningRate,
-        regularization: this._config.regularization,
-        epochs: this._config.trainingEpochsPerRun,
-      });
-
-      const divisor = Math.max(1, examples.length);
-      const scores = examples.reduce((accumulator, example) => ({
-        win: accumulator.win + winRegressor.predictProbability(example.vector),
-        survival: accumulator.survival + survivalRegressor.predictProbability(example.vector),
-        pressure: accumulator.pressure + pressureRegressor.predictProbability(example.vector),
-        collision: accumulator.collision + collisionRegressor.predictProbability(example.vector),
-        bullet: accumulator.bullet + bulletRegressor.predictProbability(example.vector),
-      }), {
-        win: 0,
-        survival: 0,
-        pressure: 0,
-        collision: 0,
-        bullet: 0,
-      });
-
-      nextState.enemyModels[enemyType] = {
-        winModel: winRegressor.getState(),
-        survivalModel: survivalRegressor.getState(),
-        pressureModel: pressureRegressor.getState(),
-        collisionModel: collisionRegressor.getState(),
-        bulletModel: bulletRegressor.getState(),
-        sampleCount: examples.length,
-        lastScores: {
-          win: scores.win / divisor,
-          survival: scores.survival / divisor,
-          pressure: scores.pressure / divisor,
-          collision: scores.collision / divisor,
-          bullet: scores.bullet / divisor,
-        },
-      };
+      nextState.enemyModels[enemyType] = await this._trainEnemyModelFromExamplesAsync(
+        datasetState.enemyExamples?.[enemyType] ?? []
+      );
 
       await new Promise(resolve => globalThis.setTimeout?.(resolve, 0) ?? resolve());
     }
@@ -488,17 +759,25 @@ export class EnemyAdaptivePolicy {
 
   _scheduleBackgroundRetraining() {
     this._backgroundTrainingPromise = this._backgroundTrainingPromise
-      .catch(() => null)
+      .catch((error) => {
+        reportTrainingFailure('background retraining queue', error);
+        return null;
+      })
       .then(async () => {
-        await new Promise(resolve => globalThis.setTimeout?.(resolve, 0) ?? resolve());
-        const latestEnemyDataset = this._datasetStore.load();
-        const latestSquadDataset = this._squadDatasetStore.load();
-        const nextEnemyState = await this._buildEnemyStateFromDatasetAsync(latestEnemyDataset);
-        const nextSquadState = await this._buildLevel2SquadStateFromDatasetAsync(latestSquadDataset);
-        const nextDanceState = await this._buildDanceNetworkFromDatasetAsync(latestEnemyDataset);
-        this._store.stage(nextEnemyState);
-        this._squadStore.stage(nextSquadState);
-        this._danceStore.stage(nextDanceState);
+        try {
+          await new Promise(resolve => globalThis.setTimeout?.(resolve, 0) ?? resolve());
+          const latestEnemyDataset = this._datasetStore.load();
+          const latestSquadDataset = this._squadDatasetStore.load();
+          const nextEnemyState = await this._buildEnemyStateFromDatasetAsync(latestEnemyDataset);
+          const nextSquadState = await this._buildLevel2SquadStateFromDatasetAsync(latestSquadDataset);
+          const nextDanceState = await this._buildDanceNetworkFromDatasetAsync(latestEnemyDataset);
+          this._store.stage(nextEnemyState);
+          this._squadStore.stage(nextSquadState);
+          this._danceStore.stage(nextDanceState);
+        } catch (error) {
+          reportTrainingFailure('background retraining', error);
+          throw error;
+        }
       });
   }
 
@@ -532,6 +811,12 @@ export class EnemyAdaptivePolicy {
               outcome,
               squadId: record.summary?.squadId ?? null,
               waveId: record.summary?.waveId ?? null,
+              reason: example.meta?.reason ?? 'heartbeat',
+              actionMode: example.meta?.actionMode ?? 'hold',
+              threatBucket: example.meta?.threatBucket ?? 0,
+              shieldBucket: example.meta?.shieldBucket ?? 0,
+              horizonMs: example.meta?.horizonMs ?? 0,
+              outcomeMagnitude: example.meta?.outcomeMagnitude ?? 0,
             },
           });
         }
@@ -587,6 +872,7 @@ export class EnemyAdaptivePolicy {
     this._state = this._store.save(nextEnemyState);
     this._squadState = this._squadStore.save(nextSquadState);
     this._danceStore.save(nextDanceState);
+    this._runtimeRegressorCache.clear();
     this._danceNetwork = new DanceWaypointNetwork({
       ...nextDanceState,
       hiddenUnits: this._config.neuralDance?.hiddenUnits ?? 16,
@@ -664,7 +950,10 @@ export class EnemyAdaptivePolicy {
       for (const example of examples) {
         if ((example.labels?.survival ?? 0) < survivalFloor) continue;
         if ((example.labels?.pressure ?? 0) < pressureFloor) continue;
-        const modeOneHot = example.vector.slice(28, 33);
+        const modeOneHot = example.vector.slice(
+          ACTION_MODE_OFFSET,
+          ACTION_MODE_OFFSET + ACTION_MODE_COUNT
+        );
         if (modeOneHot.every(v => v === 0)) continue; // malformed sample
         vectors.push(stripActionModes(example.vector));
         labels.push(modeOneHot);
@@ -734,13 +1023,15 @@ export class EnemyAdaptivePolicy {
 
       this._state = this._store.save(this._buildEnemyStateFromDataset(enemyDataset));
       this._squadState = this._squadStore.save(this._buildLevel2SquadStateFromDataset(squadDataset));
+      this._runtimeRegressorCache.clear();
       return {
         ...this.getSnapshot(),
         playerStyleProfile,
         telemetryLevelId,
         usedImmediateTraining: false,
       };
-    } catch {
+    } catch (error) {
+      reportTrainingFailure('trainFromSession', error);
       return this.getSnapshot();
     } finally {
       session?.destroy?.();
@@ -757,28 +1048,14 @@ export class EnemyAdaptivePolicy {
     )))];
   }
 
-  /**
-   * Score runtime candidate movement choices and return the best option.
-   * @param {{
-   *   enemy: object,
-   *   enemyType: string,
-   *   candidates: Array<{x: number, y: number, speedScalar: number}>,
-   * }} options
-   * @returns {{x: number, y: number, speedScalar: number, actionMode?: string, score: number, predictedEnemyWinRate: number, predictedSurvival: number, predictedPressure: number, predictedCollisionRisk: number, predictedBulletRisk: number}|null}
-   */
-  resolveBehavior(options) {
+  rankBehaviors(options, limit = 1) {
     const enemyType = options.enemyType;
     const adaptiveConfig = this._enemyConfigs[enemyType]?.adaptive;
     if (!adaptiveConfig?.enabled) {
-      return options.candidates?.[0] ?? null;
+      return (options.candidates ?? []).slice(0, Math.max(1, limit));
     }
 
-    const modelState = this._ensureModel(enemyType);
-    const winRegressor = new LogisticRegressor(modelState.winModel);
-    const survivalRegressor = new LogisticRegressor(modelState.survivalModel);
-    const pressureRegressor = new LogisticRegressor(modelState.pressureModel);
-    const collisionRegressor = new LogisticRegressor(modelState.collisionModel);
-    const bulletRegressor = new LogisticRegressor(modelState.bulletModel);
+    const regressors = this._getRuntimeRegressorBundle(enemyType);
     const liveEnemies = options.enemy?.scene?._enemies ?? [];
     const player = options.enemy?.scene?._getEnemyLearningPlayerSnapshot?.() ?? {
       x: options.enemy?.scene?._player?.x ?? 0,
@@ -794,6 +1071,15 @@ export class EnemyAdaptivePolicy {
       primaryDamageMultiplier: 1,
     };
     const playerBullets = options.enemy?.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [];
+    const playerNotShooting = playerBullets.length === 0;
+    const offensiveCandidates = playerNotShooting
+      ? (options.candidates ?? []).filter(candidate => (
+          candidate?.actionMode === 'press' || candidate?.actionMode === 'flank'
+        ))
+      : [];
+    const candidatesToRank = offensiveCandidates.length > 0
+      ? offensiveCandidates
+      : (options.candidates ?? []);
     const weights = this._config.runtimeWeights ?? {
       win: 0.7,
       survival: 0.2,
@@ -805,9 +1091,9 @@ export class EnemyAdaptivePolicy {
       corner: 0.18,
     };
 
-    let bestChoice = null;
+    const rankedChoices = [];
 
-    for (const candidate of options.candidates ?? []) {
+    for (const candidate of candidatesToRank) {
       const squad = buildSquadSnapshot(liveEnemies, options.enemy?._squadId ?? null, {
         ...options.enemy,
         x: candidate.x,
@@ -830,16 +1116,17 @@ export class EnemyAdaptivePolicy {
         actionMode: candidate.actionMode ?? 'hold',
       });
       const encoded = this._encoder.encodeSample(sample);
-      const predictedEnemyWinRate = winRegressor.predictProbability(encoded.vector);
-      const predictedSurvival = survivalRegressor.predictProbability(encoded.vector);
-      const predictedPressure = pressureRegressor.predictProbability(encoded.vector);
-      const predictedCollisionRisk = collisionRegressor.predictProbability(encoded.vector);
-      const predictedBulletRisk = bulletRegressor.predictProbability(encoded.vector);
+      const predictedEnemyWinRate = regressors.win.predictProbability(encoded.vector);
+      const predictedSurvival = regressors.survival.predictProbability(encoded.vector);
+      const predictedPressure = regressors.pressure.predictProbability(encoded.vector);
+      const predictedCollisionRisk = regressors.collision.predictProbability(encoded.vector);
+      const predictedBulletRisk = regressors.bullet.predictProbability(encoded.vector);
       const spatialPenalties = resolveSpatialPenalties(candidate, options.enemy, liveEnemies, this._config);
+      const safePressure = predictedPressure * clamp(predictedSurvival, 0, 1);
       const score = (
         predictedEnemyWinRate * weights.win
-        + predictedPressure * weights.pressure
         + predictedSurvival * (weights.survival ?? 0)
+        + safePressure * (weights.pressure ?? 0)
         - predictedCollisionRisk * weights.collision
         - predictedBulletRisk * (weights.bullet ?? 0)
         - spatialPenalties.spacingPenalty * (weights.spacing ?? 0)
@@ -847,20 +1134,39 @@ export class EnemyAdaptivePolicy {
         - spatialPenalties.cornerPenalty * (weights.corner ?? 0)
       );
 
-      if (!bestChoice || score > bestChoice.score) {
-        bestChoice = {
-          ...candidate,
-          score,
-          predictedEnemyWinRate,
-          predictedSurvival,
-          predictedPressure,
-          predictedCollisionRisk,
-          predictedBulletRisk,
-        };
-      }
+      rankedChoices.push({
+        ...candidate,
+        score,
+        safePressure,
+        predictedEnemyWinRate,
+        predictedSurvival,
+        predictedPressure,
+        predictedCollisionRisk,
+        predictedBulletRisk,
+      });
     }
 
-    return bestChoice ?? null;
+    rankedChoices.sort((left, right) => (
+      (right.score ?? 0) - (left.score ?? 0)
+      || (right.safePressure ?? 0) - (left.safePressure ?? 0)
+      || (right.predictedEnemyWinRate ?? 0) - (left.predictedEnemyWinRate ?? 0)
+      || (right.predictedSurvival ?? 0) - (left.predictedSurvival ?? 0)
+    ));
+
+    return rankedChoices.slice(0, Math.max(1, limit));
+  }
+
+  /**
+   * Score runtime candidate movement choices and return the best option.
+   * @param {{
+   *   enemy: object,
+   *   enemyType: string,
+   *   candidates: Array<{x: number, y: number, speedScalar: number}>,
+   * }} options
+   * @returns {{x: number, y: number, speedScalar: number, actionMode?: string, score: number, predictedEnemyWinRate: number, predictedSurvival: number, predictedPressure: number, predictedCollisionRisk: number, predictedBulletRisk: number}|null}
+   */
+  resolveBehavior(options) {
+    return this.rankBehaviors(options, 1)[0] ?? null;
   }
 
   scoreCurrentPosition(options) {

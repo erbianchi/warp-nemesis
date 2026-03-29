@@ -352,6 +352,13 @@ describe('Skirm', () => {
           };
         },
       };
+      scene._weapons = {
+        pool: {
+          getChildren() {
+            return [{ active: true }];
+          },
+        },
+      };
       skirm.adaptiveProfile.enabled = true;
       skirm.unlockAdaptiveBehavior();
 
@@ -365,6 +372,30 @@ describe('Skirm', () => {
         predictedPressure: 0.7,
         predictedEnemyWinRate: 0.65,
       });
+
+      assert.equal(skirm.shouldFireNow(), true);
+    });
+
+    it('fires immediately when the player is not shooting', () => {
+      const { skirm, scene } = makeSkirm();
+      scene._enemyAdaptivePolicy = {
+        scoreCurrentPosition() {
+          return {
+            score: 0.05,
+            predictedPressure: 0.1,
+            predictedEnemyWinRate: 0.15,
+          };
+        },
+      };
+      scene._weapons = {
+        pool: {
+          getChildren() {
+            return [];
+          },
+        },
+      };
+      skirm.adaptiveProfile.enabled = true;
+      skirm.unlockAdaptiveBehavior();
 
       assert.equal(skirm.shouldFireNow(), true);
     });

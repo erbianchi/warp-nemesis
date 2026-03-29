@@ -376,7 +376,10 @@ export class WaveSpawner {
       });
       const pos   = positions[i] ?? positions[positions.length - 1];
       const dance = plane.dance ?? defaultDance;
-      this._spawnFn(plane.type, pos.x, pos.y, stats, dance, spawnMeta);
+      this._spawnFn(plane.type, pos.x, pos.y, stats, dance, {
+        ...spawnMeta,
+        squadIndex: i,
+      });
     });
 
     if (!meta.overlay) {

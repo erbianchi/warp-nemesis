@@ -163,6 +163,47 @@ describe('EnemyBase', () => {
     assert.equal(unlockedPlan.speedScalar, 1.15);
   });
 
+  it('uses a coarse-to-fine candidate search when rankBehaviors is available', () => {
+    enemy = new TestEnemy(scene, 100, 100, {
+      ...TEST_STATS,
+      speed: 80,
+      adaptive: {
+        enabled: true,
+        minSpeedScalar: 0.9,
+        maxSpeedScalar: 1.15,
+      },
+    });
+    const candidateCounts = [];
+    scene._enemyAdaptivePolicy = {
+      getSpeedCandidates() { return [0.9, 1, 1.15]; },
+      resolveBehavior() { return null; },
+      rankBehaviors({ candidates }, limit) {
+        candidateCounts.push(candidates.length);
+        if (candidateCounts.length === 1) {
+          return [
+            candidates[0],
+            candidates[Math.floor(candidates.length / 2)],
+            candidates.at(-1),
+          ].slice(0, limit);
+        }
+        return candidates.slice(0, limit);
+      },
+    };
+
+    enemy.unlockAdaptiveBehavior();
+    enemy.resolveAdaptiveMovePlan(180, {
+      candidateY: 160,
+      rangePx: 80,
+      yRangePx: 60,
+      commit: false,
+    });
+
+    assert.equal(candidateCounts[0], 135);
+    assert.ok(candidateCounts[1] < candidateCounts[0]);
+    assert.ok(candidateCounts[1] <= 81);
+    assert.ok(candidateCounts[1] >= 27);
+  });
+
   it('enforces the hard class max speed even when adaptive speed scalars ask for more', () => {
     enemy = new TestEnemy(scene, 100, 100, {
       ...TEST_STATS,
@@ -214,5 +255,16 @@ describe('EnemyBase', () => {
     enemy.update(120);
 
     assert.equal(enemy._fireCooldown, 120);
+  });
+
+  it('phases squad members across their authored fire cycle instead of spawning all at zero', () => {
+    enemy = new TestEnemy(scene, 100, 100, {
+      ...TEST_STATS,
+      fireRate: 4400,
+    });
+
+    assert.equal(enemy.primeSquadFireCooldown(2, 4), 2200);
+    assert.equal(enemy._fireCooldown, 2200);
+    assert.equal(enemy.primeSquadFireCooldown(0, 1), 2200);
   });
 });

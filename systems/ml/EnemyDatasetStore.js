@@ -45,6 +45,12 @@ function normalizeExample(example = {}) {
       outcome: typeof example.meta?.outcome === 'string' ? example.meta.outcome : 'player_win',
       squadId: typeof example.meta?.squadId === 'string' ? example.meta.squadId : null,
       waveId: typeof example.meta?.waveId === 'string' ? example.meta.waveId : null,
+      reason: typeof example.meta?.reason === 'string' ? example.meta.reason : 'heartbeat',
+      actionMode: typeof example.meta?.actionMode === 'string' ? example.meta.actionMode : 'hold',
+      threatBucket: normalizeInteger(example.meta?.threatBucket),
+      shieldBucket: normalizeInteger(example.meta?.shieldBucket),
+      horizonMs: normalizeInteger(example.meta?.horizonMs),
+      outcomeMagnitude: clamp(normalizeNumber(example.meta?.outcomeMagnitude, 0), 0, 1),
     },
   };
 }
@@ -174,6 +180,12 @@ export class EnemyDatasetStore {
             outcome,
             squadId: record.summary?.squadId ?? null,
             waveId: record.summary?.waveId ?? null,
+            reason: example.meta?.reason ?? 'heartbeat',
+            actionMode: example.meta?.actionMode ?? 'hold',
+            threatBucket: example.meta?.threatBucket ?? 0,
+            shieldBucket: example.meta?.shieldBucket ?? 0,
+            horizonMs: example.meta?.horizonMs ?? 0,
+            outcomeMagnitude: example.meta?.outcomeMagnitude ?? 0,
           },
         }));
       }

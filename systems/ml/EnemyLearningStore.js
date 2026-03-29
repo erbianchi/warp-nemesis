@@ -29,10 +29,12 @@ function getBrowserStorage(storage) {
 }
 
 function createEmptyRegressorState(modelState = {}) {
+  const weights = Array.isArray(modelState?.weights)
+    ? modelState.weights.map(value => normalizeNumber(value, 0))
+    : [];
   return {
-    weights: Array.isArray(modelState?.weights)
-      ? modelState.weights.map(value => normalizeNumber(value, 0))
-      : [],
+    inputSize: Math.max(0, normalizeInteger(modelState?.inputSize ?? weights.length)),
+    weights,
     bias: normalizeNumber(modelState?.bias, 0),
   };
 }

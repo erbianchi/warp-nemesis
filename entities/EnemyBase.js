@@ -156,6 +156,25 @@ export class EnemyBase extends _BaseSprite {
     this.setupWeapon();
   }
 
+  /**
+   * Deterministically phase squad members around their existing fire cycle so
+   * they do not all spawn at cooldown zero and miss their first legal shot.
+   *
+   * @param {number} slotIndex
+   * @param {number} slotCount
+   * @returns {number}
+   */
+  primeSquadFireCooldown(slotIndex, slotCount) {
+    if (this.fireRate <= 0) return this._fireCooldown;
+
+    const normalizedCount = Math.max(1, Math.round(slotCount ?? 1));
+    if (normalizedCount <= 1) return this._fireCooldown;
+
+    const normalizedIndex = clamp(Math.round(slotIndex ?? 0), 0, normalizedCount - 1);
+    this._fireCooldown = Math.round(this.fireRate * (normalizedIndex / normalizedCount));
+    return this._fireCooldown;
+  }
+
   // ── Lifecycle ─────────────────────────────────────────────────────────
 
   /** @param {number} delta - Frame delta in ms */
@@ -496,6 +515,114 @@ export class EnemyBase extends _BaseSprite {
     return anchors;
   }
 
+  _buildAdaptiveCandidates(anchors, options = {}) {
+    const rangePx = Math.max(0, options.rangePx ?? 0);
+    const yRangePx = Math.max(0, options.yRangePx ?? 0);
+    const marginPx = Math.max(0, options.marginPx ?? 0);
+    const topMarginPx = Math.max(0, options.topMarginPx ?? 0);
+    const bottomMarginPx = Math.max(topMarginPx, options.bottomMarginPx ?? GAME_CONFIG.HEIGHT);
+    const xOffsets = Array.isArray(options.xOffsets) && options.xOffsets.length > 0 ? options.xOffsets : [0];
+    const yOffsets = Array.isArray(options.yOffsets) && options.yOffsets.length > 0 ? options.yOffsets : [0];
+    const speedScalars = Array.isArray(options.speedScalars) && options.speedScalars.length > 0 ? options.speedScalars : [1];
+    const xScale = options.xScale ?? 0.45;
+    const yScale = options.yScale ?? 0.45;
+    const candidates = [];
+
+    for (const anchor of anchors) {
+      for (const xOffset of xOffsets) {
+        const candidateX = clamp(
+          anchor.x + (xOffset * rangePx * xScale),
+          marginPx,
+          GAME_CONFIG.WIDTH - marginPx
+        );
+        for (const yOffset of yOffsets) {
+          const candidateY = clamp(
+            anchor.y + (yOffset * yRangePx * yScale),
+            topMarginPx,
+            bottomMarginPx
+          );
+          for (const speedScalar of speedScalars) {
+            candidates.push({
+              x: candidateX,
+              y: candidateY,
+              speedScalar,
+              actionMode: anchor.mode,
+            });
+          }
+        }
+      }
+    }
+
+    return candidates;
+  }
+
+  _buildFineAdaptiveCandidates(coarseChoices, speedScalars, bounds, rangePx, yRangePx) {
+    const marginPx = Math.max(0, bounds.marginPx ?? 0);
+    const topMarginPx = Math.max(0, bounds.topMarginPx ?? 0);
+    const bottomMarginPx = Math.max(topMarginPx, bounds.bottomMarginPx ?? GAME_CONFIG.HEIGHT);
+    const fineXOffsets = rangePx > 0 ? [-0.5, 0, 0.5] : [0];
+    const fineYOffsets = yRangePx > 0 ? [-0.5, 0, 0.5] : [0];
+    const fineStepX = rangePx * 0.45;
+    const fineStepY = yRangePx * 0.45;
+    const candidates = [];
+    const seen = new Set();
+
+    const resolveSpeedIndex = (value) => {
+      let bestIndex = 0;
+      let bestDelta = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < speedScalars.length; index += 1) {
+        const delta = Math.abs((speedScalars[index] ?? 1) - value);
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          bestIndex = index;
+        }
+      }
+      return bestIndex;
+    };
+
+    for (const choice of coarseChoices ?? []) {
+      const centerSpeedIndex = resolveSpeedIndex(choice.speedScalar ?? 1);
+      const localSpeedScalars = [...new Set([
+        speedScalars[Math.max(0, centerSpeedIndex - 1)],
+        speedScalars[centerSpeedIndex],
+        speedScalars[Math.min(speedScalars.length - 1, centerSpeedIndex + 1)],
+      ].filter(value => Number.isFinite(value)))];
+
+      for (const xOffset of fineXOffsets) {
+        const candidateX = clamp(
+          (choice.x ?? this.x) + (xOffset * fineStepX * 0.5),
+          marginPx,
+          GAME_CONFIG.WIDTH - marginPx
+        );
+        for (const yOffset of fineYOffsets) {
+          const candidateY = clamp(
+            (choice.y ?? this.y) + (yOffset * fineStepY * 0.5),
+            topMarginPx,
+            bottomMarginPx
+          );
+          for (const speedScalar of localSpeedScalars) {
+            const key = [
+              Math.round(candidateX * 100),
+              Math.round(candidateY * 100),
+              Math.round(speedScalar * 1000),
+              choice.actionMode ?? 'hold',
+            ].join(':');
+            if (seen.has(key)) continue;
+            seen.add(key);
+            candidates.push({
+              x: candidateX,
+              y: candidateY,
+              speedScalar,
+              actionMode: choice.actionMode ?? 'hold',
+            });
+          }
+        }
+      }
+    }
+
+    return candidates;
+  }
+
   /**
    * Resolve a learned movement target and speed scalar from candidate actions.
    * @param {number} baseX
@@ -523,7 +650,7 @@ export class EnemyBase extends _BaseSprite {
 
     const clampedBaseX = clamp(baseX, marginPx, GAME_CONFIG.WIDTH - marginPx);
     const clampedBaseY = clamp(candidateY, topMarginPx, bottomMarginPx);
-    if (!this.canUseAdaptiveBehavior() || !policy?.resolveBehavior) {
+    if (!this.canUseAdaptiveBehavior() || (!policy?.resolveBehavior && !policy?.rankBehaviors)) {
       const speedScalar = this.canUseAdaptiveBehavior()
         ? clamp(
             this.adaptiveProfile?.currentSpeedScalar ?? 1,
@@ -546,42 +673,13 @@ export class EnemyBase extends _BaseSprite {
       };
     }
 
-    const xOffsets = rangePx > 0
-      ? (policy.getPositionOffsets?.() ?? [-1, -0.5, 0, 0.5, 1])
-      : [0];
-    const yOffsets = yRangePx > 0
-      ? (policy.getVerticalOffsets?.() ?? [-1, -0.5, 0, 0.5, 1])
-      : [0];
     const speedScalars = options.speedScalars ?? policy.getSpeedCandidates?.(this.enemyType) ?? [1];
-    const candidates = [];
     const anchors = this._buildAdaptiveAnchors(clampedBaseX, clampedBaseY, rangePx, yRangePx, {
       marginPx,
       topMarginPx,
       bottomMarginPx,
     });
-
-    for (const anchor of anchors) {
-      for (const xOffset of xOffsets) {
-        const candidateX = clamp(anchor.x + xOffset * rangePx * 0.45, marginPx, GAME_CONFIG.WIDTH - marginPx);
-        for (const yOffset of yOffsets) {
-          const candidateYValue = clamp(anchor.y + yOffset * yRangePx * 0.45, topMarginPx, bottomMarginPx);
-          for (const speedScalar of speedScalars) {
-            candidates.push({
-              x: candidateX,
-              y: candidateYValue,
-              speedScalar,
-              actionMode: anchor.mode,
-            });
-          }
-        }
-      }
-    }
-
-    const resolved = policy.resolveBehavior({
-      enemy: this,
-      enemyType: this.enemyType,
-      candidates,
-    }) ?? {
+    const fallbackResolved = {
       x: clampedBaseX,
       y: clampedBaseY,
       speedScalar: 1,
@@ -593,6 +691,55 @@ export class EnemyBase extends _BaseSprite {
       score: 0,
       actionMode: 'hold',
     };
+    let resolved = null;
+
+    if (typeof policy.rankBehaviors === 'function') {
+      const coarseCandidates = this._buildAdaptiveCandidates(anchors, {
+        rangePx,
+        yRangePx,
+        marginPx,
+        topMarginPx,
+        bottomMarginPx,
+        xOffsets: rangePx > 0 ? [-1, 0, 1] : [0],
+        yOffsets: yRangePx > 0 ? [-1, 0, 1] : [0],
+        speedScalars,
+      });
+      const coarseChoices = policy.rankBehaviors({
+        enemy: this,
+        enemyType: this.enemyType,
+        candidates: coarseCandidates,
+      }, 3);
+      const fineCandidates = this._buildFineAdaptiveCandidates(
+        coarseChoices,
+        speedScalars,
+        { marginPx, topMarginPx, bottomMarginPx },
+        rangePx,
+        yRangePx
+      );
+      resolved = policy.rankBehaviors({
+        enemy: this,
+        enemyType: this.enemyType,
+        candidates: fineCandidates.length > 0 ? fineCandidates : coarseCandidates,
+      }, 1)?.[0] ?? coarseChoices?.[0] ?? null;
+    } else {
+      const fullCandidates = this._buildAdaptiveCandidates(anchors, {
+        rangePx,
+        yRangePx,
+        marginPx,
+        topMarginPx,
+        bottomMarginPx,
+        xOffsets: rangePx > 0 ? (policy.getPositionOffsets?.() ?? [-1, -0.5, 0, 0.5, 1]) : [0],
+        yOffsets: yRangePx > 0 ? (policy.getVerticalOffsets?.() ?? [-1, -0.5, 0, 0.5, 1]) : [0],
+        speedScalars,
+      });
+      resolved = policy.resolveBehavior({
+        enemy: this,
+        enemyType: this.enemyType,
+        candidates: fullCandidates,
+      });
+    }
+
+    resolved ??= fallbackResolved;
 
     const speedScalar = commit
       ? this._applyAdaptiveSpeedScalar(resolved.speedScalar ?? 1)
@@ -629,6 +776,9 @@ export class EnemyBase extends _BaseSprite {
 
   shouldFireNow() {
     if (!this.shouldUseAdaptiveFireWindow()) return true;
+
+    const playerBullets = this.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [];
+    if (playerBullets.length === 0) return true;
 
     const evaluation = this.scene?._enemyAdaptivePolicy?.scoreCurrentPosition?.({
       enemy: this,

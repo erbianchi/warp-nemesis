@@ -19,6 +19,7 @@ const {
   isHeatWarningActive,
   resolveHeatBarStyle,
 } = await import('../../scenes/GameScene.js');
+const { ENEMY_LEARNING_CONFIG } = await import('../../config/enemyLearning.config.js');
 const SKIRM_STATS = resolveStats('skirm', 1.0, 1.0, {});
 const MINE_STATS = resolveStats('mine', 1.0, 1.0, {});
 const RAPTOR_STATS = resolveStats('raptor', 1.0, 1.0, {});
@@ -237,7 +238,7 @@ describe('GameScene create', () => {
     });
 
     globalThis.localStorage.setItem(ENEMY_LEARNING_STORAGE_KEY, JSON.stringify({
-      featureVersion: 6,
+      featureVersion: ENEMY_LEARNING_CONFIG.featureVersion,
       enemyModels: {
         skirm: {
           winModel: { weights: [], bias: 0 },
@@ -965,6 +966,23 @@ describe('GameScene enemy spawning', () => {
     assert.equal(scene._enemies[0].displayHeight, 32);
     assert.equal(scene._enemies[0]._overlayRaid, true);
     assert.equal(scene._enemies[0]._spawnWaveId, 3);
+  });
+
+  it('primes squad-member fire cooldown from spawn metadata so skirm volleys are phased, not all cold-started', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._enemies = [];
+    scene._enemyGroup = { add: () => {} };
+
+    scene._spawnEnemy('skirm', 140, -40, SKIRM_STATS, 'straight', {
+      squadSize: 4,
+      squadIndex: 2,
+    });
+
+    const spawned = scene._enemies[0];
+    assert.equal(spawned._squadSpawnCount, 4);
+    assert.equal(spawned._squadSpawnIndex, 2);
+    assert.equal(spawned._fireCooldown, Math.round(SKIRM_STATS.fireRate * (2 / 4)));
   });
 
   it('prefers enemy-specific contact damage in the shared enemy-touch path', () => {

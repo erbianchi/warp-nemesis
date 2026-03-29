@@ -6,6 +6,8 @@ import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
 import { resolveShotAlignment } from './EnemyPolicyMath.js';
 
 const WEAPON_KEYS = Object.freeze(Object.keys(WEAPONS));
+export const ENEMY_ACTION_MODE_OFFSET = 24;
+export const ENEMY_ACTION_MODE_COUNT = 5;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -39,10 +41,6 @@ export class EnemyFeatureEncoder {
       'squadYNorm',
       'dxNorm',
       'dyNorm',
-      'absDxNorm',
-      'distanceNorm',
-      'sameLane',
-      'abovePlayer',
       'squadWidthNorm',
       'squadAliveNorm',
       'speedNorm',
@@ -121,10 +119,6 @@ export class EnemyFeatureEncoder {
       squadYNorm: clamp((squad.centroidY ?? enemyY) / this._height, -0.25, 1.25),
       dxNorm: clamp(dx / this._width, -1.5, 1.5),
       dyNorm: clamp(dy / this._height, -1.5, 1.5),
-      absDxNorm: clamp(Math.abs(dx) / this._width, 0, 1.5),
-      distanceNorm,
-      sameLane,
-      abovePlayer: enemyY < (player.y ?? 0) ? 1 : 0,
       squadWidthNorm: clamp((squad.width ?? 0) / this._width, 0, 1),
       squadAliveNorm: clamp(squad.aliveRatio ?? 1, 0, 1),
       speedNorm: clamp((context.speed ?? 0) / Math.max(1, this._normalization.maxSpeed), 0, 2),
@@ -179,10 +173,6 @@ export class EnemyFeatureEncoder {
       sample.squadYNorm ?? 0,
       sample.dxNorm ?? 0,
       sample.dyNorm ?? 0,
-      sample.absDxNorm ?? 0,
-      sample.distanceNorm ?? 0,
-      sample.sameLane ?? 0,
-      sample.abovePlayer ?? 0,
       sample.squadWidthNorm ?? 0,
       sample.squadAliveNorm ?? 0,
       sample.speedNorm ?? 0,
