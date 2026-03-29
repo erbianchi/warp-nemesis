@@ -13,7 +13,7 @@ import {
   buildSquadSnapshot,
 } from '../systems/ml/EnemyPolicyMath.js';
 import { stripActionModes } from '../systems/ml/DanceWaypointNetwork.js';
-import { resolveAdaptiveMovePlan as resolvePolicyAdaptiveMovePlan } from '../systems/ml/EnemyAdaptivePolicy.js';
+import { resolveAdaptiveMovePlan as resolvePolicyAdaptiveMovePlan } from '../systems/ml/EnemyPositionEvaluator.js';
 import { clamp } from '../utils/math.js';
 
 /**
@@ -65,7 +65,35 @@ const _BaseSprite = typeof Phaser !== 'undefined'
  * @property {() => object|null} [getAdaptivePolicy]
  * @property {() => object|null} [getPlayerSnapshot]
  * @property {() => object[]} [getPlayerBullets]
+ * @property {() => object|null} [getServices]
  * @property {(target: object, opts?: object) => ShieldController} [createShieldController]
+ */
+
+/**
+ * Formation-facing enemy interface.
+ * Keeps `FormationController` decoupled from enemy private fields.
+ *
+ * @typedef {object} IFormationMember
+ * @property {number} x
+ * @property {number} y
+ * @property {boolean} active
+ * @property {string} enemyType
+ * @property {number} fireRate
+ * @property {string} dance
+ * @property {(requestedMultiplier?: number) => number} [resolveMovementDurationScale]
+ * @property {(requestedDurationMs: number, targetX: number, targetY: number) => number} [resolveTravelDurationMs]
+ * @property {(baseX: number, options?: object) => object} [resolveAdaptiveMovePlan]
+ * @property {() => boolean} [shouldFireNow]
+ * @property {() => boolean} [canUseAdaptiveBehavior]
+ * @property {() => boolean} [isAdaptiveBehaviorReady]
+ * @property {() => number} [getFormationMovementSpeedMultiplier]
+ * @property {() => object} [getFormationMeta]
+ * @property {(x: number, y: number) => void} [setFormationPosition]
+ * @property {(controller: object, launchAnchor?: {x: number, y: number}) => void} [onFormationStart]
+ * @property {() => void} [onFormationEnd]
+ * @property {() => number} [getFormationFireCooldown]
+ * @property {() => void} [resetFormationFireCooldown]
+ * @property {(options?: object) => void} [emitFormationShot]
  */
 
 /**
@@ -87,10 +115,14 @@ export class EnemyBase extends _BaseSprite {
    * @param {string} texture
    * @param {EnemyStats} stats - Resolved stats from WaveSpawner.resolveStats()
    * @param {string} dance - Movement pattern key (see DANCES in levels.config.js)
-   * @param {{runtimeContext?: EnemyRuntimeContext, shieldFactory?: (target: object, opts?: object) => ShieldController}} [options]
+   * @param {{runtimeContext: EnemyRuntimeContext, shieldFactory?: (target: object, opts?: object) => ShieldController}} options
    */
-  constructor(scene, x, y, texture, stats, dance = 'straight', options = {}) {
+  constructor(scene, x, y, texture, stats, dance = 'straight', options) {
     super(scene, x, y, texture);
+
+    if (!options?.runtimeContext) {
+      throw new Error(`EnemyBase(${texture}) requires an explicit runtimeContext.`);
+    }
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
@@ -100,8 +132,8 @@ export class EnemyBase extends _BaseSprite {
     /** @type {string} */
     this.dance = dance;
 
-    /** @type {EnemyRuntimeContext|null} */
-    this._runtimeContext = options.runtimeContext ?? scene?._enemyRuntimeContext ?? null;
+    /** @type {EnemyRuntimeContext} */
+    this._runtimeContext = options.runtimeContext;
     /** @type {(target: object, opts?: object) => ShieldController} */
     this._shieldFactory = options.shieldFactory
       ?? this._runtimeContext?.createShieldController
@@ -174,6 +206,10 @@ export class EnemyBase extends _BaseSprite {
 
     /** @type {number} - accumulated ms since last shot */
     this._fireCooldown = 0;
+    /** @type {boolean} */
+    this._formationFireControlled = false;
+    /** @type {object|null} */
+    this._formationController = null;
 
     // Velocity tracking (position-diff each frame — works for tween-driven movement)
     this._prevX = x;
@@ -283,7 +319,7 @@ export class EnemyBase extends _BaseSprite {
 
     this._fireCooldown += delta;
     if (this.y < 0) return; // don't fire until on screen, but let entry time count toward the first shot
-    if (this._formationFireControlled) return;
+    if (this.isFormationFireControlled()) return;
     if (this.fireRate > 0 && this._fireCooldown >= this.fireRate) {
       if (this.shouldFireNow()) {
         this._fireCooldown = 0;
@@ -508,27 +544,19 @@ export class EnemyBase extends _BaseSprite {
    * @returns {this}
    */
   setRuntimeContext(runtimeContext) {
-    this._runtimeContext = runtimeContext ?? null;
+    if (!runtimeContext) {
+      throw new Error(`EnemyBase(${this.enemyType}) cannot clear its runtimeContext.`);
+    }
+    this._runtimeContext = runtimeContext;
     return this;
   }
 
-  _createSceneFallbackRuntimeContext() {
-    return {
-      getPlayer: () => this.scene?._player ?? null,
-      getWeapons: () => this.scene?._weapons ?? null,
-      getEffects: () => this.scene?._effects ?? null,
-      getEnemies: () => this.scene?._enemies ?? [],
-      getAdaptivePolicy: () => this.scene?._enemyAdaptivePolicy ?? null,
-      getPlayerSnapshot: () => this.scene?._getEnemyLearningPlayerSnapshot?.() ?? null,
-      getPlayerBullets: () => this.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [],
-    };
+  getRuntimeContext() {
+    return this._runtimeContext;
   }
 
-  getRuntimeContext() {
-    if (!this._runtimeContext) {
-      this._runtimeContext = this._createSceneFallbackRuntimeContext();
-    }
-    return this._runtimeContext;
+  getRuntimeServices() {
+    return this.getRuntimeContext()?.getServices?.() ?? null;
   }
 
   _getEffects() {
@@ -545,6 +573,69 @@ export class EnemyBase extends _BaseSprite {
 
   _getAdaptivePolicy() {
     return this.getRuntimeContext()?.getAdaptivePolicy?.() ?? null;
+  }
+
+  configureSpawnMetadata(meta = {}) {
+    this._learningId = meta.learningId ?? this._learningId ?? null;
+    this._overlayRaid = Boolean(meta.overlay ?? this._overlayRaid);
+    this._spawnWaveId = meta.waveId ?? this._spawnWaveId ?? null;
+    this._sourceEventId = meta.sourceEventId ?? this._sourceEventId ?? null;
+    this._squadId = meta.squadId ?? this._squadId ?? null;
+    this._squadTemplateId = meta.squadTemplateId ?? this._squadTemplateId ?? null;
+    this._squadSpawnCount = meta.squadSize ?? this._squadSpawnCount ?? 1;
+    this._squadSpawnIndex = meta.squadIndex ?? this._squadSpawnIndex ?? 0;
+    this._formationType = meta.formation ?? this._formationType ?? null;
+    this._spawnDance = meta.dance ?? this._spawnDance ?? this.dance;
+    this.primeSquadFireCooldown?.(this._squadSpawnIndex, this._squadSpawnCount);
+    return this;
+  }
+
+  getFormationMeta() {
+    return {
+      squadId: this._squadId ?? null,
+      squadTemplateId: this._squadTemplateId ?? null,
+      formation: this._formationType ?? null,
+      dance: this._spawnDance ?? this.dance ?? null,
+      overlay: Boolean(this._overlayRaid),
+    };
+  }
+
+  getFormationMovementSpeedMultiplier() {
+    return this._baseMovementSpeedMultiplier ?? this._movementSpeedMultiplier ?? 1;
+  }
+
+  setFormationPosition(x, y) {
+    this.x = x;
+    this.y = y;
+    this._syncBodyToSprite();
+    this.body?.reset?.(x, y);
+  }
+
+  onFormationStart(controller, launchAnchor = null) {
+    this._formationFireControlled = true;
+    this._formationController = controller ?? null;
+    if (launchAnchor) this.setFormationPosition(launchAnchor.x, launchAnchor.y);
+  }
+
+  onFormationEnd() {
+    this._formationFireControlled = false;
+    this._formationController = null;
+  }
+
+  isFormationFireControlled() {
+    return this._formationFireControlled === true;
+  }
+
+  getFormationFireCooldown() {
+    return this._fireCooldown ?? 0;
+  }
+
+  resetFormationFireCooldown() {
+    this._fireCooldown = 0;
+  }
+
+  isAdaptiveBehaviorReady() {
+    return this.canUseAdaptiveBehavior() || this._adaptiveUnlocked === true;
   }
 
   _getPlayerSnapshot() {
@@ -762,6 +853,15 @@ export class EnemyBase extends _BaseSprite {
         squadTemplateId: this._squadTemplateId ?? null,
       });
     }
+  }
+
+  emitFormationShot(options = {}) {
+    this.resetFormationFireCooldown();
+    this.emitNativeFireBursts({
+      yOffset: 14,
+      speedOverride: 600,
+      ...options,
+    });
   }
 
   /**

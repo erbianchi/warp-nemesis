@@ -8,6 +8,7 @@ import { readDebugOptions }      from '../config/debug.config.js';
 import { EVENTS }                from '../config/events.config.js';
 import { ScrollingBackground }   from '../systems/ScrollingBackground.js';
 import { EffectsSystem }         from '../systems/EffectsSystem.js';
+import { createGameServices }    from '../systems/GameServices.js';
 import { WaveSpawner, resolveStats } from '../systems/WaveSpawner.js';
 import { FormationController }   from '../systems/FormationController.js';
 import { BonusSystem }           from '../systems/BonusSystem.js';
@@ -159,7 +160,8 @@ export class GameScene extends Phaser.Scene {
     this._formations = [];   // active FormationControllers
     this._enemyAdaptivePolicy = this._deps.enemyAdaptivePolicy ?? new EnemyAdaptivePolicy();
     this._enemyAdaptivePolicy.load?.();
-    this._enemyRuntimeContext = this._createEnemyRuntimeContext();
+    this._services = this._ensureGameServices();
+    this._enemyRuntimeContext = this._services.runtimeContext;
     this._danceGenerator = new DanceGenerator({
       network: this._enemyAdaptivePolicy.getDanceNetwork(),
       encoder: this._enemyAdaptivePolicy.getEncoder?.() ?? this._enemyAdaptivePolicy._encoder,
@@ -270,17 +272,24 @@ export class GameScene extends Phaser.Scene {
     this.sound?.context?.resume?.();
   }
 
-  _createEnemyRuntimeContext() {
-    return {
+  _ensureGameServices() {
+    if (this._services?.scene === this) return this._services;
+
+    this._services = createGameServices(this, {
       getPlayer: () => this._player ?? null,
+      getEnemies: () => this._enemies ?? [],
       getWeapons: () => this._weapons ?? null,
       getEffects: () => this._effects ?? null,
-      getEnemies: () => this._enemies ?? [],
       getAdaptivePolicy: () => this._enemyAdaptivePolicy ?? null,
       getPlayerSnapshot: () => this._getEnemyLearningPlayerSnapshot(),
       getPlayerBullets: () => this._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [],
-      createShieldController: (target, opts = {}) => new ShieldController(this, target, opts),
-    };
+    });
+
+    return this._services;
+  }
+
+  _createEnemyRuntimeContext() {
+    return this._ensureGameServices().runtimeContext;
   }
 
   // ── Main loop ─────────────────────────────────────────────────────────────
@@ -793,7 +802,8 @@ export class GameScene extends Phaser.Scene {
       this,
       ships,
       squadron?.controller ?? {},
-      this._spawner?._rng ?? Math.random
+      this._spawner?._rng ?? Math.random,
+      this._ensureGameServices()
     );
     this._formations.push(fc);
   }
@@ -801,7 +811,7 @@ export class GameScene extends Phaser.Scene {
   // ── Enemy spawning ────────────────────────────────────────────────────────
 
   _spawnEnemy(type, x, y, stats, dance, meta = {}) {
-    const enemyOptions = { runtimeContext: this._enemyRuntimeContext };
+    const enemyOptions = { runtimeContext: this._createEnemyRuntimeContext() };
     let enemy;
     switch (type) {
       case 'mine':
@@ -815,17 +825,11 @@ export class GameScene extends Phaser.Scene {
         enemy = new Skirm(this, x, y, stats, dance, enemyOptions);
         break;
     }
-    enemy._learningId = `enemy-${++this._nextLearningEnemyId}`;
-    enemy._overlayRaid = Boolean(meta.overlay);
-    enemy._spawnWaveId = meta.waveId ?? null;
-    enemy._sourceEventId = meta.sourceEventId ?? null;
-    enemy._squadId = meta.squadId ?? null;
-    enemy._squadTemplateId = meta.squadTemplateId ?? null;
-    enemy._squadSpawnCount = meta.squadSize ?? 1;
-    enemy._squadSpawnIndex = meta.squadIndex ?? 0;
-    enemy._formationType = meta.formation ?? null;
-    enemy._spawnDance = dance;
-    enemy.primeSquadFireCooldown?.(enemy._squadSpawnIndex, enemy._squadSpawnCount);
+    enemy.configureSpawnMetadata?.({
+      ...meta,
+      learningId: `enemy-${++this._nextLearningEnemyId}`,
+      dance,
+    });
     this._enemies.push(enemy);
     this._enemyGroup.add(enemy);
     this.events.emit(EVENTS.ENEMY_SPAWNED, {

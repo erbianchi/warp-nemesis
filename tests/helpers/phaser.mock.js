@@ -314,7 +314,7 @@ export function createMockScene() {
     };
   };
 
-  return {
+  const scene = {
     add: {
       graphics:  () => mockGraphics,
       rectangle: (x = 0, y = 0, width = 0, height = 0) => Object.assign(mockGameObject(), {
@@ -402,5 +402,98 @@ export function createMockScene() {
     },
     scene:  { start: () => {} },
     events: createEmitter(),
+  };
+
+  scene._services = createMockGameServices(scene);
+  scene._enemyRuntimeContext = scene._services.runtimeContext;
+  return scene;
+}
+
+export function createMockGameServices(scene, overrides = {}) {
+  const services = {
+    scene,
+    player: {
+      get: overrides.getPlayer ?? (() => scene._player ?? null),
+      getSnapshot: overrides.getPlayerSnapshot ?? (() => scene._getEnemyLearningPlayerSnapshot?.() ?? null),
+      getBullets: overrides.getPlayerBullets ?? (() => scene._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? []),
+    },
+    enemies: {
+      get: overrides.getEnemies ?? (() => scene._enemies ?? []),
+    },
+    weapons: {
+      get: overrides.getWeapons ?? (() => scene._weapons ?? null),
+      getSnapshot: overrides.getWeaponSnapshot ?? (() => scene._weapons?.getLearningSnapshot?.() ?? {
+        primaryWeaponKey: null,
+        heatRatio: 0,
+        isOverheated: false,
+        primaryDamageMultiplier: 1,
+      }),
+    },
+    effects: {
+      get: overrides.getEffects ?? (() => scene._effects ?? null),
+    },
+    adaptive: {
+      getPolicy: overrides.getAdaptivePolicy ?? (() => scene._enemyAdaptivePolicy ?? null),
+      evaluateSquadDirective: overrides.evaluateSquadDirective ?? ((options = {}) => (
+        scene._enemyAdaptivePolicy?.evaluateSquadDirective?.({
+          ...options,
+          services,
+        }) ?? null
+      )),
+    },
+    shields: {
+      create: overrides.createShieldController ?? ((_target, options = {}) => {
+        let points = Math.max(0, Number(options.points) || 0);
+        const maxPoints = Math.max(points, Number(options.maxPoints) || 400);
+        const shield = {
+          points,
+          maxPoints,
+          sync() {
+            options.onChange?.({ points: this.points, maxPoints: this.maxPoints });
+            return this;
+          },
+          takeDamage(amount = 0) {
+            const numericAmount = Math.max(0, Number(amount) || 0);
+            const absorbed = Math.min(this.points, numericAmount);
+            this.points -= absorbed;
+            options.onChange?.({ points: this.points, maxPoints: this.maxPoints });
+            return {
+              absorbed,
+              overflow: numericAmount - absorbed,
+              points: this.points,
+            };
+          },
+          destroy() {},
+        };
+        shield.sync();
+        return shield;
+      }),
+    },
+  };
+
+  services.runtimeContext = {
+    getServices: () => services,
+    getPlayer: () => services.player.get(),
+    getWeapons: () => services.weapons.get(),
+    getEffects: () => services.effects.get(),
+    getEnemies: () => services.enemies.get(),
+    getAdaptivePolicy: () => services.adaptive.getPolicy(),
+    getPlayerSnapshot: () => services.player.getSnapshot(),
+    getPlayerBullets: () => services.player.getBullets(),
+    createShieldController: (target, options = {}) => services.shields.create(target, options),
+  };
+
+  return services;
+}
+
+export function createMockEnemyOptions(scene, overrides = {}) {
+  if (overrides && Object.keys(overrides).length > 0) {
+    const services = createMockGameServices(scene, overrides);
+    scene._services = services;
+    scene._enemyRuntimeContext = services.runtimeContext;
+  }
+
+  return {
+    runtimeContext: scene._enemyRuntimeContext ?? createMockGameServices(scene).runtimeContext,
   };
 }

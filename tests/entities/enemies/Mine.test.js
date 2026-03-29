@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { installPhaserGlobal, createMockScene } from '../../helpers/phaser.mock.js';
+import { installPhaserGlobal, createMockScene, createMockEnemyOptions } from '../../helpers/phaser.mock.js';
 
 installPhaserGlobal();
 
@@ -28,7 +28,7 @@ function makeMine(statsOverride = {}, dance = 'creep_drop') {
   };
 
   const stats = { ...BASE_STATS, ...statsOverride };
-  const mine = new Mine(scene, 180, -40, stats, dance);
+  const mine = new Mine(scene, 180, -40, stats, dance, createMockEnemyOptions(scene));
 
   return {
     mine,
@@ -84,7 +84,7 @@ describe('Mine', () => {
         createGravityWell: () => ({ update: () => {}, destroy: () => {} }),
       };
 
-      const mine = new Mine(scene, 180, -40, BASE_STATS);
+      const mine = new Mine(scene, 180, -40, BASE_STATS, 'creep_drop', createMockEnemyOptions(scene));
 
       assert.equal(mine.dance, 'creep_drop');
     });

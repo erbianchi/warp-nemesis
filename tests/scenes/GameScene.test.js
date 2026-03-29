@@ -1,6 +1,6 @@
 import { beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js';
+import { installPhaserGlobal, createMockScene, createMockEnemyOptions } from '../helpers/phaser.mock.js';
 
 installPhaserGlobal();
 
@@ -1025,7 +1025,7 @@ describe('GameScene enemy spawning', () => {
       playerDamage = damage;
     };
 
-    const mine = new Mine(scene, 180, 220, MINE_STATS, 'creep_drop');
+    const mine = new Mine(scene, 180, 220, MINE_STATS, 'creep_drop', createMockEnemyOptions(scene));
     scene._onEnemyTouchPlayer(scene._player, mine);
 
     assert.equal(playerDamage, MINE_STATS.contactDamage);
@@ -1160,7 +1160,7 @@ describe('GameScene enemy score awards', () => {
       if (event === EVENTS.ENEMY_DIED) scene._onEnemyDied(data);
     };
 
-    const skirm = new Skirm(scene, 120, 80, SKIRM_STATS, 'straight');
+    const skirm = new Skirm(scene, 120, 80, SKIRM_STATS, 'straight', createMockEnemyOptions(scene));
     const bullet = {
       _damage: 11,
       _scoreMultiplier: 1.1,
@@ -1197,7 +1197,7 @@ describe('GameScene enemy score awards', () => {
       if (event === EVENTS.ENEMY_DIED) scene._onEnemyDied(data);
     };
 
-    const skirm = new Skirm(scene, 120, 80, { ...SKIRM_STATS, hp: 10 }, 'straight');
+    const skirm = new Skirm(scene, 120, 80, { ...SKIRM_STATS, hp: 10 }, 'straight', createMockEnemyOptions(scene));
     const hotBullet = {
       _damage: 5,
       _scoreMultiplier: 1.2,
@@ -1238,7 +1238,7 @@ describe('GameScene enemy score awards', () => {
       if (event === EVENTS.ENEMY_DIED) scene._onEnemyDied(data);
     };
 
-    const skirm = new Skirm(scene, 120, 80, SKIRM_STATS, 'straight');
+    const skirm = new Skirm(scene, 120, 80, SKIRM_STATS, 'straight', createMockEnemyOptions(scene));
     const bullet = {
       _damage: 15,
       _scoreMultiplier: 1.5,
@@ -1265,7 +1265,7 @@ describe('GameScene enemy score awards', () => {
       if (event === EVENTS.ENEMY_DIED) scene._onEnemyDied(data);
     };
 
-    const skirm = new Skirm(scene, 120, 80, { ...SKIRM_STATS, hp: 20 }, 'straight');
+    const skirm = new Skirm(scene, 120, 80, { ...SKIRM_STATS, hp: 20 }, 'straight', createMockEnemyOptions(scene));
     const bullet = {
       _damage: 15,
       _scoreMultiplier: 1.5,
@@ -1317,8 +1317,8 @@ describe('GameScene enemy score awards', () => {
     scene._enemyGroup = { add: () => {}, remove: () => {} };
     scene._player = { x: 220, y: 520, active: true };
 
-    const dyingSkirm = new Skirm(scene, 100, 100, SKIRM_STATS, 'straight');
-    const nearbySkirm = new Skirm(scene, 112, 100, SKIRM_STATS, 'straight');
+    const dyingSkirm = new Skirm(scene, 100, 100, SKIRM_STATS, 'straight', createMockEnemyOptions(scene));
+    const nearbySkirm = new Skirm(scene, 112, 100, SKIRM_STATS, 'straight', createMockEnemyOptions(scene));
     scene._enemies = [dyingSkirm, nearbySkirm];
 
     const startX = nearbySkirm.x;

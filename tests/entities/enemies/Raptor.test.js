@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { installPhaserGlobal, createMockScene } from '../../helpers/phaser.mock.js';
+import { installPhaserGlobal, createMockScene, createMockEnemyOptions } from '../../helpers/phaser.mock.js';
 
 installPhaserGlobal();
 
@@ -14,7 +14,7 @@ const BASE_STATS = resolveStats('raptor', 1.0, 1.0, {});
 function makeRaptor(statsOverride = {}, dance = 'side_left') {
   const scene = createMockScene();
   const stats = { ...BASE_STATS, ...statsOverride };
-  return { raptor: new Raptor(scene, 120, -60, stats, dance), scene };
+  return { raptor: new Raptor(scene, 120, -60, stats, dance, createMockEnemyOptions(scene)), scene };
 }
 
 describe('Raptor', () => {
@@ -52,14 +52,14 @@ describe('Raptor', () => {
 
     it('uses the default side-left dance when none is provided', () => {
       const scene = createMockScene();
-      const raptor = new Raptor(scene, 120, -60, BASE_STATS);
+      const raptor = new Raptor(scene, 120, -60, BASE_STATS, 'side_left', createMockEnemyOptions(scene));
 
       assert.equal(raptor.dance, 'side_left');
     });
 
     it('enters from the left when using the side_left dance', () => {
       const scene = createMockScene();
-      const raptor = new Raptor(scene, -40, 180, BASE_STATS, 'side_left');
+      const raptor = new Raptor(scene, -40, 180, BASE_STATS, 'side_left', createMockEnemyOptions(scene));
 
       raptor.update(1000);
 
@@ -68,7 +68,7 @@ describe('Raptor', () => {
 
     it('enters from the right when using the side_right dance', () => {
       const scene = createMockScene();
-      const raptor = new Raptor(scene, 520, 180, BASE_STATS, 'side_right');
+      const raptor = new Raptor(scene, 520, 180, BASE_STATS, 'side_right', createMockEnemyOptions(scene));
 
       raptor.update(1000);
 
@@ -77,7 +77,7 @@ describe('Raptor', () => {
 
     it('never displaces farther than its hard max speed allows in a single update', () => {
       const scene = createMockScene();
-      const raptor = new Raptor(scene, -40, 220, BASE_STATS, 'side_left');
+      const raptor = new Raptor(scene, -40, 220, BASE_STATS, 'side_left', createMockEnemyOptions(scene));
       const start = { x: raptor.x, y: raptor.y };
 
       raptor.update(1000);
@@ -91,7 +91,7 @@ describe('Raptor', () => {
 
     it('keeps patrolling on screen instead of exiting once it has entered', () => {
       const scene = createMockScene();
-      const raptor = new Raptor(scene, -40, 220, BASE_STATS, 'side_left');
+      const raptor = new Raptor(scene, -40, 220, BASE_STATS, 'side_left', createMockEnemyOptions(scene));
 
       for (let i = 0; i < 80; i++) raptor.update(250);
 
@@ -109,7 +109,7 @@ describe('Raptor', () => {
           minSpeedScalar: 0.9,
           maxSpeedScalar: 1.1,
         },
-      }, 'side_left');
+      }, 'side_left', createMockEnemyOptions(scene));
 
       assert.equal(raptor.canUseAdaptiveBehavior(), false);
 

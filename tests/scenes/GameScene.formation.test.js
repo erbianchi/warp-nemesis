@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js';
+import { installPhaserGlobal, createMockScene, createMockEnemyOptions } from '../helpers/phaser.mock.js';
 
 installPhaserGlobal();
 
@@ -289,7 +289,7 @@ describe('FormationController — scoreMultiplier forwarding through onDeath', (
     const scene = createMockScene();
     const emitted = [];
     scene.events.emit = (event, data) => emitted.push({ event, data });
-    const skirm = new Skirm(scene, 120, 50, { ...SKIRM_STATS, ...statsOverride }, 'straight');
+    const skirm = new Skirm(scene, 120, 50, { ...SKIRM_STATS, ...statsOverride }, 'straight', createMockEnemyOptions(scene));
     new FormationController(scene, [skirm]);
     return { skirm, scene, emitted };
   }
@@ -327,7 +327,7 @@ describe('FormationController — scoreMultiplier forwarding through onDeath', (
         RunState.kills++;
       }
     };
-    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight');
+    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight', createMockEnemyOptions(scene));
     new FormationController(scene, [skirm]);
 
     skirm.takeDamage(skirm.hp, 1.3);
@@ -345,7 +345,7 @@ describe('FormationController — scoreMultiplier forwarding through onDeath', (
         RunState.kills++;
       }
     };
-    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight');
+    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight', createMockEnemyOptions(scene));
     new FormationController(scene, [skirm]);
 
     skirm.takeDamage(skirm.hp, 2.0);
@@ -363,7 +363,7 @@ describe('FormationController — scoreMultiplier forwarding through onDeath', (
         RunState.kills++;
       }
     };
-    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight');
+    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight', createMockEnemyOptions(scene));
     new FormationController(scene, [skirm]);
 
     skirm.takeDamage(skirm.hp, 1.5);  // kills it
@@ -394,7 +394,7 @@ describe('FormationController — hard speed cap', () => {
     };
     scene.time.addEvent = () => ({ remove: () => {} });
 
-    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight');
+    const skirm = new Skirm(scene, 120, 50, SKIRM_STATS, 'straight', createMockEnemyOptions(scene));
     new FormationController(scene, [skirm], {
       speed: 4,
       launchStaggerMs: 1,
@@ -427,7 +427,7 @@ describe('FormationController firing cadence', () => {
       if (event === EVENTS.ENEMY_FIRE) fired.push(data);
     };
 
-    const skirm = new Skirm(scene, 120, 120, { ...SKIRM_STATS, fireRate: 100 }, 'straight');
+    const skirm = new Skirm(scene, 120, 120, { ...SKIRM_STATS, fireRate: 100 }, 'straight', createMockEnemyOptions(scene));
     skirm._formationFireControlled = true;
     skirm._fireCooldown = 100;
 
@@ -451,7 +451,7 @@ describe('FormationController firing cadence', () => {
     scene.tweens.add = () => ({ stop() {} });
 
     const ships = Array.from({ length: 4 }, (_, index) => {
-      const ship = new Skirm(scene, 120 + index * 18, 120, { ...SKIRM_STATS, fireRate: 200 }, 'straight');
+      const ship = new Skirm(scene, 120 + index * 18, 120, { ...SKIRM_STATS, fireRate: 200 }, 'straight', createMockEnemyOptions(scene));
       ship._fireCooldown = 200;
       return ship;
     });
@@ -485,9 +485,9 @@ describe('FormationController firing cadence', () => {
     };
     scene.tweens.add = () => ({ stop() {} });
 
-    const readyShip = new Skirm(scene, 140, 120, { ...SKIRM_STATS, fireRate: 250 }, 'straight');
+    const readyShip = new Skirm(scene, 140, 120, { ...SKIRM_STATS, fireRate: 250 }, 'straight', createMockEnemyOptions(scene));
     readyShip._fireCooldown = 300;
-    const coolingShip = new Skirm(scene, 220, 120, { ...SKIRM_STATS, fireRate: 900 }, 'straight');
+    const coolingShip = new Skirm(scene, 220, 120, { ...SKIRM_STATS, fireRate: 900 }, 'straight', createMockEnemyOptions(scene));
     coolingShip._fireCooldown = 300;
 
     const controller = new FormationController(scene, [readyShip, coolingShip], {
@@ -533,7 +533,7 @@ describe('FormationController firing cadence', () => {
         minSpeedScalar: 0.9,
         maxSpeedScalar: 1.1,
       },
-    }, 'straight');
+    }, 'straight', createMockEnemyOptions(scene));
     ship.unlockAdaptiveBehavior();
 
     const controller = new FormationController(scene, [ship], {

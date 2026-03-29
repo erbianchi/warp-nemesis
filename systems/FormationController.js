@@ -296,19 +296,22 @@ function resolveIdlePlan(ship, x, y, rangePx, yRangePx) {
 export class FormationController {
   /**
    * @param {Phaser.Scene} scene
-   * @param {EnemyBase[]} ships - Formation ships already spawned in the scene
+   * @param {import('../entities/EnemyBase.js').IFormationMember[]} ships - Formation ships already spawned in the scene
    * @param {object} [controller={}] - Squadron-specific formation behaviour
    * @param {Function} [rng=Math.random]
+   * @param {object|null} [services=scene?._services ?? null]
    */
-  constructor(scene, ships, controller = {}, rng = Math.random) {
+  constructor(scene, ships, controller = {}, rng = Math.random, services = scene?._services ?? null) {
     this._scene = scene;
+    this._services = services;
     this._rng = rng;
     this._behavior = resolveFormationBehavior(controller, rng);
-    this._squadId = ships[0]?._squadId ?? null;
-    this._squadTemplateId = ships[0]?._squadTemplateId ?? null;
-    this._formation = ships[0]?._formationType ?? controller.formation ?? null;
-    this._dance = controller.dance ?? ships[0]?._spawnDance ?? ships[0]?.dance ?? null;
-    this._overlay = Boolean(controller.overlay ?? ships[0]?._overlayRaid);
+    const firstMeta = ships[0]?.getFormationMeta?.() ?? {};
+    this._squadId = firstMeta.squadId ?? null;
+    this._squadTemplateId = firstMeta.squadTemplateId ?? null;
+    this._formation = firstMeta.formation ?? controller.formation ?? null;
+    this._dance = controller.dance ?? firstMeta.dance ?? ships[0]?.dance ?? null;
+    this._overlay = Boolean(controller.overlay ?? firstMeta.overlay);
     this._primaryEnemyType = ships[0]?.enemyType ?? null;
     this._squadDirective = null;
     this._squadStats = {
@@ -350,7 +353,7 @@ export class FormationController {
     const slots = calcFormationSlots(ships.length, pathBehavior);
 
     ships.forEach((ship, i) => {
-      const movementSpeedMultiplier = ship._baseMovementSpeedMultiplier ?? ship._movementSpeedMultiplier ?? 1;
+      const movementSpeedMultiplier = ship.getFormationMovementSpeedMultiplier?.() ?? 1;
       const requestedMovementSpeed = pathBehavior.speed * movementSpeedMultiplier;
       const slotPlan = resolveAdaptiveSlot(
         ship,
@@ -387,11 +390,7 @@ export class FormationController {
       this._fleet.push(data);
 
       const launchAnchor = data.path[0];
-      ship.x = launchAnchor.x;
-      ship.y = launchAnchor.y;
-      if (ship.body) ship.body.reset(launchAnchor.x, launchAnchor.y);
-      ship._formationFireControlled = true;
-      ship._formationController = this;
+      ship.onFormationStart?.(this, launchAnchor);
 
       const origOnDeath = ship.onDeath.bind(ship);
       ship.onDeath = (opts) => {
@@ -676,7 +675,7 @@ export class FormationController {
 
     const newSlots = calcFormationSlots(alive.length, pathBehavior);
     alive.forEach((data, i) => {
-      const movementSpeedMultiplier = data.ship._baseMovementSpeedMultiplier ?? data.ship._movementSpeedMultiplier ?? 1;
+      const movementSpeedMultiplier = data.ship.getFormationMovementSpeedMultiplier?.() ?? 1;
       const slotPlan = resolveAdaptiveSlot(data.ship, newSlots[i], pathBehavior);
       const requestedDurationScale = pathBehavior.speed * movementSpeedMultiplier * (slotPlan.speedScalar ?? 1);
       const resolvedDurationScale = data.ship.resolveMovementDurationScale?.(requestedDurationScale) ?? requestedDurationScale;
@@ -730,7 +729,7 @@ export class FormationController {
       data.slot = { x: slotPlan.x, y: slotPlan.y };
       data.rowIndex = this._resolveRowIndex(slotPlan.y, behavior);
       const requestedDurationScale = behavior.speed
-        * (data.ship._baseMovementSpeedMultiplier ?? data.ship._movementSpeedMultiplier ?? 1)
+        * (data.ship.getFormationMovementSpeedMultiplier?.() ?? 1)
         * (slotPlan.speedScalar ?? 1);
       data.speed = data.ship.resolveMovementDurationScale?.(requestedDurationScale) ?? requestedDurationScale;
       data.drifting = false;
@@ -797,7 +796,7 @@ export class FormationController {
   _isShipReadyToFire(data) {
     const fireRate = Math.max(0, data?.ship?.fireRate ?? 0);
     if (fireRate <= 0) return true;
-    return (data?.ship?._fireCooldown ?? 0) >= fireRate;
+    return (data?.ship?.getFormationFireCooldown?.() ?? 0) >= fireRate;
   }
 
   _selectVolleyCandidates(phase, predicate, cadence) {
@@ -861,7 +860,6 @@ export class FormationController {
     if (!data || data.dead || !data.ship?.active) return;
     if (!this._isShipReadyToFire(data)) return;
 
-    data.ship._fireCooldown = 0;
     this._squadStats.shotCount += 1;
     this._scene.tweens.add({
       targets: data.ship,
@@ -871,7 +869,7 @@ export class FormationController {
       repeat: 1,
     });
 
-    data.ship.emitNativeFireBursts?.({ yOffset: 14, speedOverride: 600 });
+    data.ship.emitFormationShot?.();
   }
 
   /** Stop all timers and tweens (call on game over). */
@@ -889,10 +887,7 @@ export class FormationController {
       if (!data.dead && data.ship.active) {
         this._scene.tweens.killTweensOf(data.ship);
       }
-      if (data.ship) {
-        data.ship._formationFireControlled = false;
-        data.ship._formationController = null;
-      }
+      data.ship?.onFormationEnd?.();
     }
     this._scene.events?.off?.(EVENTS.PLAYER_HIT, this._handlePlayerHit);
     this._scene.events?.off?.(EVENTS.ENEMY_DIED, this._handleEnemyDied);
@@ -919,15 +914,14 @@ export class FormationController {
     const liveShips = this._fleet
       .filter(data => !data.dead && data.ship?.active)
       .map(data => data.ship);
-    const adaptiveReady = liveShips.some(ship => ship.canUseAdaptiveBehavior?.() || ship._adaptiveUnlocked);
+    const adaptiveReady = liveShips.some(ship => ship.isAdaptiveBehaviorReady?.() || ship.canUseAdaptiveBehavior?.());
     if (!adaptiveReady) {
       this._squadDirective = this._createNeutralSquadDirective();
       return this._squadDirective;
     }
 
-    const directive = this._scene?._enemyAdaptivePolicy?.evaluateSquadDirective?.({
+    const directive = this._services?.adaptive?.evaluateSquadDirective?.({
       phase,
-      scene: this._scene,
       squadId: this._squadId,
       squadTemplateId: this._squadTemplateId,
       formation: this._formation,

@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { installPhaserGlobal, createMockScene } from '../helpers/phaser.mock.js';
+import { installPhaserGlobal, createMockScene, createMockEnemyOptions } from '../helpers/phaser.mock.js';
 
 installPhaserGlobal();
 
@@ -20,7 +20,7 @@ const TEST_STATS = {
 
 class TestEnemy extends EnemyBase {
   constructor(scene, x = 100, y = 100, stats = TEST_STATS) {
-    super(scene, x, y, 'test_enemy', stats, 'straight');
+    super(scene, x, y, 'test_enemy', stats, 'straight', createMockEnemyOptions(scene));
     this.destroyHookCalls = 0;
   }
 

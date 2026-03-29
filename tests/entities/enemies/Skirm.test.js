@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { installPhaserGlobal, createMockScene } from '../../helpers/phaser.mock.js';
+import { installPhaserGlobal, createMockScene, createMockEnemyOptions } from '../../helpers/phaser.mock.js';
 
 installPhaserGlobal();
 
@@ -15,7 +15,7 @@ const BASE_STATS = resolveStats('skirm', 1.0, 1.0, {});
 function makeSkirm(dance = 'straight', statsOverride = {}) {
   const scene = createMockScene();
   const stats = { ...BASE_STATS, ...statsOverride };
-  return { skirm: new Skirm(scene, 100, -40, stats, dance), scene };
+  return { skirm: new Skirm(scene, 100, -40, stats, dance, createMockEnemyOptions(scene)), scene };
 }
 
 describe('Skirm', () => {
@@ -51,7 +51,7 @@ describe('Skirm', () => {
 
     it('defaults dance to straight when omitted', () => {
       const scene = createMockScene();
-      const skirm = new Skirm(scene, 0, 0, BASE_STATS);
+      const skirm = new Skirm(scene, 0, 0, BASE_STATS, 'straight', createMockEnemyOptions(scene));
       assert.equal(skirm.dance, 'straight');
     });
 
@@ -130,7 +130,7 @@ describe('Skirm', () => {
         return { stop: () => {} };
       };
 
-      new Skirm(scene, 100, -40, BASE_STATS, 'sweep_right');
+      new Skirm(scene, 100, -40, BASE_STATS, 'sweep_right', createMockEnemyOptions(scene));
 
       const firstTravel = tweenCalls[0];
       assert.ok(firstTravel, 'expected an initial sweep tween');
@@ -159,7 +159,7 @@ describe('Skirm', () => {
         return { stop: () => {} };
       };
 
-      const skirm = new Skirm(scene, 120, -40, BASE_STATS, 'whirl');
+      const skirm = new Skirm(scene, 120, -40, BASE_STATS, 'whirl', createMockEnemyOptions(scene));
       assert.equal(skirm.alive, true);
       assert.ok(tweenCalls.length >= 1, 'whirl should schedule an entry tween');
 
@@ -182,7 +182,7 @@ describe('Skirm', () => {
         return { stop: () => {} };
       };
 
-      const skirm = new Skirm(scene, 200, -40, BASE_STATS, 'hourglass');
+      const skirm = new Skirm(scene, 200, -40, BASE_STATS, 'hourglass', createMockEnemyOptions(scene));
       assert.equal(skirm.alive, true);
       assert.ok(tweenCalls.length >= 1, 'hourglass should schedule an entry tween');
 
@@ -245,7 +245,7 @@ describe('Skirm', () => {
           minSpeedScalar: 0.9,
           maxSpeedScalar: 1.15,
         },
-      }, 'zigzag');
+      }, 'zigzag', createMockEnemyOptions(scene));
 
       assert.equal(skirm.canUseAdaptiveBehavior(), false);
       tweenCalls[0].onComplete();
