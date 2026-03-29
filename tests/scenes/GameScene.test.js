@@ -241,18 +241,11 @@ describe('GameScene create', () => {
       featureVersion: ENEMY_LEARNING_CONFIG.featureVersion,
       enemyModels: {
         skirm: {
-          winModel: { weights: [], bias: 0 },
-          survivalModel: { weights: [], bias: 0 },
-          pressureModel: { weights: [], bias: 0 },
-          collisionModel: { weights: [], bias: 0 },
-          bulletModel: { weights: [], bias: 0 },
+          combatNetwork: null,
           sampleCount: 3,
           lastScores: {
-            win: 0.61,
             survival: 0.55,
-            pressure: 0.52,
-            collision: 0.28,
-            bullet: 0.31,
+            offense: 0.61,
           },
         },
       },
@@ -274,7 +267,7 @@ describe('GameScene create', () => {
       assert.equal(adaptedStats.speed, SKIRM_STATS.speed);
       assert.equal(adaptedStats.adaptive.sampleCount, 3);
       assert.equal(adaptedStats.adaptive.predictedEnemyWinRate, 0.61);
-      assert.equal(adaptedStats.adaptive.predictedCollisionRisk, 0.28);
+      assert.equal(adaptedStats.adaptive.predictedCollisionRisk, 0.5);
 
       scene._spawnEnemy('skirm', 140, 80, adaptedStats, 'straight', {});
       const spawned = scene._enemies.at(-1);
@@ -1072,17 +1065,45 @@ describe('GameScene enemy spawning', () => {
     assert.equal(enemy.updateCalled, 1);
   });
 
-  it('ignores overlay squadron spawns for the main wave checkpoint flow', () => {
+  it('keeps overlay raptor raids out of the main-wave checkpoint flow but still creates a doctrine controller', () => {
     const scene = new GameScene();
+    Object.assign(scene, createMockScene());
     scene._squadronScoreCheckpoint = 27;
-    scene._enemies = [];
     scene._formations = [];
+    scene._spawner = { _rng: () => 0.5 };
+    const left = new Raptor(scene, 120, 180, RAPTOR_STATS, 'side_left', createMockEnemyOptions(scene));
+    const right = new Raptor(scene, 320, 180, RAPTOR_STATS, 'side_right', createMockEnemyOptions(scene));
+    scene._enemies = [left, right];
 
     scene._onSquadronSpawned({
       overlay: true,
       count: 2,
       squadron: {
         dance: 'side_left',
+        formation: 'line',
+        controller: {},
+      },
+    });
+
+    assert.equal(scene._squadronScoreCheckpoint, 27);
+    assert.equal(scene._formations.length, 1);
+  });
+
+  it('keeps mine-only overlays out of the doctrine-controller flow', () => {
+    const scene = new GameScene();
+    Object.assign(scene, createMockScene());
+    scene._squadronScoreCheckpoint = 27;
+    scene._formations = [];
+    scene._spawner = { _rng: () => 0.5 };
+    const mine = new Mine(scene, 180, 220, MINE_STATS, 'creep_drop', createMockEnemyOptions(scene));
+    scene._enemies = [mine];
+
+    scene._onSquadronSpawned({
+      overlay: true,
+      count: 1,
+      squadron: {
+        dance: 'creep_drop',
+        formation: 'line',
         controller: {},
       },
     });

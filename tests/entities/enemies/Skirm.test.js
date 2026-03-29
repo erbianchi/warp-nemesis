@@ -230,6 +230,32 @@ describe('Skirm', () => {
       assert.equal(plan.actionMode, 'flank');
     });
 
+    it('can bias authored movement toward a live squad doctrine anchor before adaptive unlock', () => {
+      const { skirm } = makeSkirm('straight', {
+        adaptive: {
+          enabled: true,
+          minSpeedScalar: 0.9,
+          maxSpeedScalar: 1.15,
+        },
+      });
+      skirm.setSquadDoctrineState({
+        active: true,
+        doctrine: 'crossfire',
+        anchorX: 260,
+        anchorY: 180,
+        anchorWeight: 0.8,
+        speedScalar: 1.1,
+        rangePx: 72,
+        yRangePx: 60,
+      });
+
+      const plan = skirm._adaptivePlan(120, 120, 30, 30, false, 20);
+
+      assert.ok(plan.x > 200, `expected doctrine-biased x > 200, got ${plan.x}`);
+      assert.ok(plan.y > 150, `expected doctrine-biased y > 150, got ${plan.y}`);
+      assert.equal(plan.speedScalar, 1.1);
+    });
+
     it('completes one authored dance pass before unlocking adaptive movement', () => {
       const scene = createMockScene();
       const tweenCalls = [];

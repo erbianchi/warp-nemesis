@@ -40,10 +40,18 @@ export class Skirm extends EnemyBase {
   }
 
   _adaptivePlan(baseX, candidateY = this.y, rangePx = 72, marginPx = 30, commit = true, yRangePx = 56) {
-    return this.resolveAdaptiveMovePlan(baseX, {
+    const doctrine = this.getSquadDoctrineState?.();
+    const doctrinePhase = doctrine?.phase ?? null;
+    const resolvedRangePx = doctrine?.active
+      ? Math.min(rangePx, doctrinePhase === 'attack' ? 28 : doctrinePhase === 'commit' ? 40 : rangePx)
+      : rangePx;
+    const resolvedYRangePx = doctrine?.active
+      ? Math.min(yRangePx, doctrinePhase === 'attack' ? 22 : doctrinePhase === 'commit' ? 32 : yRangePx)
+      : yRangePx;
+    return this.resolveDoctrineMovePlan(baseX, {
       candidateY,
-      rangePx,
-      yRangePx,
+      rangePx: resolvedRangePx,
+      yRangePx: resolvedYRangePx,
       marginPx,
       topMarginPx: 24,
       bottomMarginPx: H - 96,

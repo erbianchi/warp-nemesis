@@ -210,6 +210,8 @@ export class EnemyBase extends _BaseSprite {
     this._formationFireControlled = false;
     /** @type {object|null} */
     this._formationController = null;
+    /** @type {object|null} */
+    this._squadDoctrineState = null;
 
     // Velocity tracking (position-diff each frame — works for tween-driven movement)
     this._prevX = x;
@@ -620,6 +622,7 @@ export class EnemyBase extends _BaseSprite {
   onFormationEnd() {
     this._formationFireControlled = false;
     this._formationController = null;
+    this.clearSquadDoctrineState();
   }
 
   isFormationFireControlled() {
@@ -636,6 +639,45 @@ export class EnemyBase extends _BaseSprite {
 
   isAdaptiveBehaviorReady() {
     return this.canUseAdaptiveBehavior() || this._adaptiveUnlocked === true;
+  }
+
+  /**
+   * Apply tactical squad-doctrine hints from a runtime squad controller.
+   * These hints bias authored movement toward a living squad plan while still
+   * respecting the class-native action space.
+   *
+   * @param {object|null} state
+   * @returns {this}
+   */
+  setSquadDoctrineState(state = null) {
+    if (!state || state.active === false) {
+      this._squadDoctrineState = null;
+      return this;
+    }
+
+    this._squadDoctrineState = {
+      ...state,
+      active: true,
+      speedScalar: clamp(
+        state.speedScalar ?? this.adaptiveProfile?.currentSpeedScalar ?? 1,
+        this.adaptiveProfile?.minSpeedScalar ?? 1,
+        this.adaptiveProfile?.maxSpeedScalar ?? 1
+      ),
+    };
+    return this;
+  }
+
+  /**
+   * Clear any controller-provided squad doctrine state.
+   * @returns {this}
+   */
+  clearSquadDoctrineState() {
+    this._squadDoctrineState = null;
+    return this;
+  }
+
+  getSquadDoctrineState() {
+    return this._squadDoctrineState;
   }
 
   _getPlayerSnapshot() {
@@ -789,6 +831,62 @@ export class EnemyBase extends _BaseSprite {
     return resolvePolicyAdaptiveMovePlan(this._getAdaptivePolicy(), this, baseX, options);
   }
 
+  /**
+   * Resolve a movement plan that blends local authored motion with a live
+   * squad-doctrine anchor. If adaptive movement is not yet unlocked, this still
+   * returns a doctrine-biased fallback so coordinated behavior can show up
+   * before the neural policy fully takes over.
+   *
+   * @param {number} baseX
+   * @param {object} [options={}]
+   * @returns {{x: number, y: number, speedScalar: number, actionMode?: string}}
+   */
+  resolveDoctrineMovePlan(baseX, options = {}) {
+    const doctrine = this.getSquadDoctrineState?.();
+    if (!doctrine?.active) {
+      return this.resolveAdaptiveMovePlan(baseX, options);
+    }
+
+    const normalization = this._getAdaptivePolicy()?._config?.normalization ?? ENEMY_LEARNING_CONFIG.normalization ?? {};
+    const marginPx = Math.max(0, options.marginPx ?? 24);
+    const topMarginPx = Math.max(0, options.topMarginPx ?? 24);
+    const bottomMarginPx = Math.max(topMarginPx, options.bottomMarginPx ?? ((normalization.height ?? GAME_CONFIG.HEIGHT) - 24));
+    const candidateY = options.candidateY ?? this.y ?? 0;
+    const anchorWeight = clamp(doctrine.anchorWeight ?? 0.52, 0, 1);
+    const targetX = clamp(
+      baseX + (((doctrine.anchorX ?? baseX) - baseX) * anchorWeight),
+      marginPx,
+      (normalization.width ?? GAME_CONFIG.WIDTH) - marginPx
+    );
+    const targetY = clamp(
+      candidateY + (((doctrine.anchorY ?? candidateY) - candidateY) * anchorWeight),
+      topMarginPx,
+      bottomMarginPx
+    );
+    const speedScalar = clamp(
+      doctrine.speedScalar ?? this.adaptiveProfile?.currentSpeedScalar ?? 1,
+      this.adaptiveProfile?.minSpeedScalar ?? 1,
+      this.adaptiveProfile?.maxSpeedScalar ?? 1
+    );
+
+    if (!this.canUseAdaptiveBehavior()) {
+      return {
+        x: targetX,
+        y: targetY,
+        speedScalar,
+        actionMode: this._adaptiveActionMode ?? DEFAULT_ENEMY_ACTION_MODE,
+      };
+    }
+
+    return this.resolveAdaptiveMovePlan(targetX, {
+      ...options,
+      candidateY: targetY,
+      rangePx: Math.max(options.rangePx ?? 0, doctrine.rangePx ?? 0),
+      yRangePx: Math.max(options.yRangePx ?? 0, doctrine.yRangePx ?? 0),
+      speedScalars: options.speedScalars ?? [speedScalar],
+    });
+  }
+
   shouldUseAdaptiveFireWindow() {
     return Boolean(this.canUseAdaptiveBehavior() && this._getAdaptivePolicy()?.scoreCurrentPosition);
   }
@@ -806,9 +904,13 @@ export class EnemyBase extends _BaseSprite {
     if (!evaluation) return true;
 
     const policy = ENEMY_LEARNING_CONFIG.runtimePolicy ?? {};
+    const bulletRiskCeil = policy.adaptiveFireBulletRiskCeil ?? 0.68;
+    const collisionRiskCeil = policy.adaptiveFireCollisionRiskCeil ?? 0.62;
+    const safeWindow = (evaluation.predictedBulletRisk ?? 0.5) <= bulletRiskCeil
+      && (evaluation.predictedCollisionRisk ?? 0.5) <= collisionRiskCeil;
     return evaluation.score >= (policy.adaptiveFireScoreFloor ?? 0.22)
-      || evaluation.predictedPressure >= (policy.adaptivePressureFloor ?? 0.42)
-      || evaluation.predictedEnemyWinRate >= (policy.adaptiveWinFloor ?? 0.48)
+      || (safeWindow && evaluation.predictedPressure >= (policy.adaptivePressureFloor ?? 0.42))
+      || (safeWindow && evaluation.predictedEnemyWinRate >= (policy.adaptiveWinFloor ?? 0.48))
       || this._fireCooldown >= this.fireRate * (policy.adaptiveForceFireMultiplier ?? 2.1);
   }
 

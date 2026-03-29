@@ -1,12 +1,5 @@
 /** @module enemies.config */
 
-const DEFAULT_ADAPTIVE = Object.freeze({
-  enabled: true,
-  minSpeedScalar: 0.85,
-  maxSpeedScalar: 1.15,
-  minTrainingSpawns: 1,
-});
-
 const HEAVY_ADAPTIVE = Object.freeze({
   enabled: true,
   minSpeedScalar: 0.85,
@@ -36,7 +29,7 @@ export const ENEMIES = {
     damage: 10,
     speed: 80,        // slow base cruise
     maxSpeed: 430,    // authored dance ceiling; fast enough to keep phrases alive without uncapping jink spikes
-    fireRate: 4400,   // ms between shots
+    fireRate: 2400,   // ms between shots; enough pressure that idle players get punished
     score: 50,
     dropChance: 0.10,
     bulletSpeed: 220,
@@ -50,7 +43,7 @@ export const ENEMIES = {
     damage: 25,
     speed: 62,
     maxSpeed: 78,
-    fireRate: 4000,   // deliberate burst cadence, but not sleepy
+    fireRate: 2800,   // deliberate burst cadence with real wing pressure
     score: 300,
     dropChance: 0.18,
     bulletSpeed: 230, // heavy bolts, but fast enough to feel threatening
@@ -71,65 +64,6 @@ export const ENEMIES = {
     adaptive: HEAVY_ADAPTIVE,
   },
 
-  fighter: {
-    hp: 20,
-    damage: 10,
-    speed: 120,
-    maxSpeed: 138,
-    fireRate: 1500,   // ms between shots
-    score: 100,
-    dropChance: 0.15,
-    bulletSpeed: 280,
-    adaptive: DEFAULT_ADAPTIVE,
-  },
-
-  bomber: {
-    hp: 50,
-    damage: 20,
-    speed: 70,
-    maxSpeed: 88,
-    fireRate: 2500,
-    score: 250,
-    dropChance: 0.35,
-    bulletSpeed: 200,
-    adaptive: HEAVY_ADAPTIVE,
-  },
-
-  interceptor: {
-    hp: 15,
-    damage: 8,
-    speed: 220,
-    maxSpeed: 260,
-    fireRate: 1000,
-    score: 150,
-    dropChance: 0.10,
-    bulletSpeed: 350,
-    adaptive: DEFAULT_ADAPTIVE,
-  },
-
-  turretDrone: {
-    hp: 40,
-    damage: 12,
-    speed: 50,
-    maxSpeed: 68,
-    fireRate: 800,
-    score: 200,
-    dropChance: 0.20,
-    bulletSpeed: 260,
-    adaptive: DEFAULT_ADAPTIVE,
-  },
-
-  kamikaze: {
-    hp: 10,
-    damage: 30,   // collision damage — rams the player
-    speed: 280,
-    maxSpeed: 320,
-    fireRate: 0,  // no ranged attack
-    score: 80,
-    dropChance: 0.05,
-    bulletSpeed: 0,
-    adaptive: DEFAULT_ADAPTIVE,
-  },
 };
 
 /**

@@ -119,6 +119,41 @@ describe('Raptor', () => {
 
       assert.equal(raptor.canUseAdaptiveBehavior(), true);
     });
+
+    it('steers patrol anchors toward a live wing doctrine target after entry', () => {
+      const scene = createMockScene();
+      const raptor = new Raptor(scene, 140, 180, {
+        ...BASE_STATS,
+        adaptive: {
+          enabled: true,
+          minSpeedScalar: 0.85,
+          maxSpeedScalar: 1.25,
+        },
+      }, 'side_left', createMockEnemyOptions(scene));
+      raptor.x = 140;
+      raptor.y = 180;
+      raptor._entryTargetX = 140;
+      raptor._anchorX = 140;
+      raptor._anchorY = 180;
+      raptor._sideDir = 1;
+      raptor._adaptiveDecisionCooldownMs = 0;
+      raptor.unlockAdaptiveBehavior();
+      raptor.setSquadDoctrineState({
+        active: true,
+        doctrine: 'crossfire',
+        anchorX: 250,
+        anchorY: 224,
+        anchorWeight: 0.82,
+        speedScalar: 1.08,
+        rangePx: 72,
+        yRangePx: 64,
+      });
+
+      raptor.update(200);
+
+      assert.ok(raptor._adaptiveTargetX > 200, `expected doctrine target to pull right, got ${raptor._adaptiveTargetX}`);
+      assert.ok(raptor._anchorY > 200, `expected doctrine target to pull down, got ${raptor._anchorY}`);
+    });
   });
 
   describe('fire()', () => {

@@ -15,6 +15,7 @@ const { WIDTH: W, HEIGHT: H } = GAME_CONFIG;
 const RAPTOR_SCREEN_MARGIN_X = 56;
 const RAPTOR_SCREEN_MARGIN_TOP = 96;
 const RAPTOR_SCREEN_MARGIN_BOTTOM = 156;
+const RAPTOR_ENTRY_COMPLETE_EPSILON_PX = 6;
 const STAR_DIRECTIONS = Object.freeze([
   { x: 0, y: 1 },
   { x: DIAGONAL_COMPONENT, y: DIAGONAL_COMPONENT },
@@ -117,10 +118,11 @@ export class Raptor extends EnemyBase {
 
   _advanceFlight(delta) {
     this._laneClock += delta;
+    const entryDeltaX = this._entryTargetX - this.x;
 
     const stillEntering = this._sideDir > 0
-      ? this.x < this._entryTargetX
-      : this.x > this._entryTargetX;
+      ? entryDeltaX > RAPTOR_ENTRY_COMPLETE_EPSILON_PX
+      : entryDeltaX < -RAPTOR_ENTRY_COMPLETE_EPSILON_PX;
 
     if (stillEntering) {
       const targetY = clamp(
@@ -147,24 +149,49 @@ export class Raptor extends EnemyBase {
       this.unlockAdaptiveBehavior();
     }
 
-    const baseTargetX = this._anchorX + Math.sin(this._laneClock / 1000 + this._lanePhase) * this._patrolRangeX;
+    const doctrine = this.getSquadDoctrineState?.();
+    const patrolCenterX = clamp(
+      doctrine?.active ? (doctrine.anchorX ?? this._anchorX) : this._anchorX,
+      RAPTOR_SCREEN_MARGIN_X,
+      W - RAPTOR_SCREEN_MARGIN_X
+    );
+    const patrolCenterY = clamp(
+      doctrine?.active ? (doctrine.anchorY ?? this._anchorY) : this._anchorY,
+      RAPTOR_SCREEN_MARGIN_TOP,
+      H - RAPTOR_SCREEN_MARGIN_BOTTOM
+    );
+    const doctrinePhase = doctrine?.phase ?? null;
+    const doctrinePatrolScaleX = doctrine?.active
+      ? (doctrinePhase === 'attack' ? 0.12 : doctrinePhase === 'commit' ? 0.22 : 0.38)
+      : 1;
+    const doctrinePatrolScaleY = doctrine?.active
+      ? (doctrinePhase === 'attack' ? 0.10 : doctrinePhase === 'commit' ? 0.18 : 0.32)
+      : 1;
+    const patrolRangeX = this._patrolRangeX * doctrinePatrolScaleX;
+    const patrolRangeY = this._patrolRangeY * doctrinePatrolScaleY;
+    const baseTargetX = patrolCenterX + Math.sin(this._laneClock / 1000 + this._lanePhase) * patrolRangeX;
     const targetY = clamp(
-      this._anchorY + Math.sin(this._laneClock / 760 + this._lanePhase * 0.85) * this._patrolRangeY,
+      patrolCenterY + Math.sin(this._laneClock / 760 + this._lanePhase * 0.85) * patrolRangeY,
       RAPTOR_SCREEN_MARGIN_TOP,
       H - RAPTOR_SCREEN_MARGIN_BOTTOM
     );
     this._adaptiveDecisionCooldownMs -= delta;
 
     if (this._adaptiveDecisionCooldownMs <= 0) {
-      const plan = this.resolveAdaptiveMovePlan(baseTargetX, {
+      const plan = this.resolveDoctrineMovePlan(baseTargetX, {
         candidateY: targetY,
-        rangePx: 72,
+        rangePx: doctrine?.active
+          ? (doctrinePhase === 'attack' ? 20 : doctrinePhase === 'commit' ? 28 : 42)
+          : 72,
         marginPx: RAPTOR_SCREEN_MARGIN_X,
-        yRangePx: 64,
+        yRangePx: doctrine?.active
+          ? (doctrinePhase === 'attack' ? 18 : doctrinePhase === 'commit' ? 26 : 40)
+          : 64,
         topMarginPx: RAPTOR_SCREEN_MARGIN_TOP,
         bottomMarginPx: H - RAPTOR_SCREEN_MARGIN_BOTTOM,
       });
       this._adaptiveTargetX = plan.x;
+      this._anchorX = patrolCenterX;
       this._anchorY = plan.y;
       this._adaptiveDecisionCooldownMs = 180;
     }
@@ -197,8 +224,18 @@ export class Raptor extends EnemyBase {
       this._adaptiveActionMode = newMode;
 
       const anchor          = this._resolveNeuralAnchor(newMode);
-      this._adaptiveTargetX = anchor.x;
-      this._anchorY         = anchor.y;
+      const plan            = this.resolveDoctrineMovePlan(anchor.x, {
+        candidateY: anchor.y,
+        rangePx: 72,
+        marginPx: RAPTOR_SCREEN_MARGIN_X,
+        yRangePx: 64,
+        topMarginPx: RAPTOR_SCREEN_MARGIN_TOP,
+        bottomMarginPx: H - RAPTOR_SCREEN_MARGIN_BOTTOM,
+        commit: false,
+      });
+      this._adaptiveTargetX = plan.x;
+      this._anchorX         = plan.x;
+      this._anchorY         = plan.y;
 
       const timing          = (cfg.phraseTiming ?? {})[newMode] ?? { durationMs: 500, holdMs: 300 };
       this._neuralCommitMs  = timing.durationMs + timing.holdMs;

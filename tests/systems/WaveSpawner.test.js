@@ -19,35 +19,35 @@ function makeScene() {
 // ─── resolveStats ─────────────────────────────────────────────────────────────
 describe('resolveStats', () => {
   it('returns base stats at difficulty 1.0 with standard preset', () => {
-    const stats = resolveStats('fighter', 1.0, 1.0, {});
-    assert.equal(stats.hp,     Math.round(ENEMIES.fighter.hp));
-    assert.equal(stats.damage, Math.round(ENEMIES.fighter.damage));
-    assert.equal(stats.speed,  Math.round(ENEMIES.fighter.speed));
+    const stats = resolveStats('skirm', 1.0, 1.0, {});
+    assert.equal(stats.hp,     Math.round(ENEMIES.skirm.hp));
+    assert.equal(stats.damage, Math.round(ENEMIES.skirm.damage));
+    assert.equal(stats.speed,  Math.round(ENEMIES.skirm.speed));
   });
 
   it('scales hp and damage by level difficulty', () => {
-    const stats = resolveStats('fighter', 2.0, 1.0, {});
-    assert.equal(stats.hp,     Math.round(ENEMIES.fighter.hp     * 2.0));
-    assert.equal(stats.damage, Math.round(ENEMIES.fighter.damage * 2.0));
+    const stats = resolveStats('skirm', 2.0, 1.0, {});
+    assert.equal(stats.hp,     Math.round(ENEMIES.skirm.hp     * 2.0));
+    assert.equal(stats.damage, Math.round(ENEMIES.skirm.damage * 2.0));
   });
 
   it('compounds level and wave difficulty', () => {
-    const stats = resolveStats('bomber', 2.0, 1.2, {});
-    assert.equal(stats.hp,     Math.round(ENEMIES.bomber.hp     * 2.0 * 1.2));
-    assert.equal(stats.damage, Math.round(ENEMIES.bomber.damage * 2.0 * 1.2));
+    const stats = resolveStats('raptor', 2.0, 1.2, {});
+    assert.equal(stats.hp,     Math.round(ENEMIES.raptor.hp     * 2.0 * 1.2));
+    assert.equal(stats.damage, Math.round(ENEMIES.raptor.damage * 2.0 * 1.2));
   });
 
   it('does NOT compound speed with difficulty', () => {
-    const stats = resolveStats('fighter', 3.0, 2.0, {});
-    assert.equal(stats.speed, Math.round(ENEMIES.fighter.speed));
+    const stats = resolveStats('skirm', 3.0, 2.0, {});
+    assert.equal(stats.speed, Math.round(ENEMIES.skirm.speed));
   });
 
   it('applies heavy preset modifiers', () => {
     const preset = PLANE_PRESETS.heavy;
-    const stats  = resolveStats('fighter', 1.0, 1.0, { preset: 'heavy' });
-    assert.equal(stats.hp,    Math.round(ENEMIES.fighter.hp     * preset.hpModifier));
-    assert.equal(stats.damage,Math.round(ENEMIES.fighter.damage * preset.damageModifier));
-    assert.equal(stats.speed, Math.round(ENEMIES.fighter.speed  * preset.speedModifier));
+    const stats  = resolveStats('skirm', 1.0, 1.0, { preset: 'heavy' });
+    assert.equal(stats.hp,    Math.round(ENEMIES.skirm.hp     * preset.hpModifier));
+    assert.equal(stats.damage,Math.round(ENEMIES.skirm.damage * preset.damageModifier));
+    assert.equal(stats.speed, Math.round(ENEMIES.skirm.speed  * preset.speedModifier));
   });
 
   it('never lets plane modifiers exceed an enemy class max speed', () => {
@@ -58,9 +58,9 @@ describe('resolveStats', () => {
   });
 
   it('inline modifiers override preset', () => {
-    const stats = resolveStats('fighter', 1.0, 1.0, { preset: 'heavy', damageModifier: 0.5 });
-    assert.equal(stats.damage, Math.round(ENEMIES.fighter.damage * 0.5));
-    assert.equal(stats.hp,     Math.round(ENEMIES.fighter.hp     * PLANE_PRESETS.heavy.hpModifier));
+    const stats = resolveStats('skirm', 1.0, 1.0, { preset: 'heavy', damageModifier: 0.5 });
+    assert.equal(stats.damage, Math.round(ENEMIES.skirm.damage * 0.5));
+    assert.equal(stats.hp,     Math.round(ENEMIES.skirm.hp     * PLANE_PRESETS.heavy.hpModifier));
   });
 
   it('score = base.score × difficultyBase × difficultyFactor', () => {
@@ -83,7 +83,7 @@ describe('resolveStats', () => {
   });
 
   it('throws on unknown preset', () => {
-    assert.throws(() => resolveStats('fighter', 1.0, 1.0, { preset: 'nope' }), /unknown plane preset/);
+    assert.throws(() => resolveStats('skirm', 1.0, 1.0, { preset: 'nope' }), /unknown plane preset/);
   });
 
   it('skirm at base difficulty → hp=10, damage=10', () => {

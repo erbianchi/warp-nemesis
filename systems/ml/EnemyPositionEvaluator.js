@@ -7,6 +7,93 @@ import {
 import { buildPlayerBulletThreatSnapshot, buildSquadSnapshot } from './EnemyPolicyMath.js';
 import { clamp } from '../../utils/math.js';
 
+const ACTION_MODE_BIASES = Object.freeze({
+  hold: Object.freeze({ survival: 0, offense: 0, collision: 0, bullet: 0 }),
+  press: Object.freeze({ survival: -0.08, offense: 0.18, collision: 0.10, bullet: 0.08 }),
+  flank: Object.freeze({ survival: 0.03, offense: 0.15, collision: 0.02, bullet: -0.03 }),
+  evade: Object.freeze({ survival: 0.20, offense: -0.14, collision: -0.12, bullet: -0.22 }),
+  retreat: Object.freeze({ survival: 0.12, offense: -0.22, collision: -0.08, bullet: -0.10 }),
+});
+
+function blendValue(fallback, learned, weight) {
+  return fallback + ((learned - fallback) * weight);
+}
+
+function resolveHeuristicBlendWeight(config, modelState) {
+  const policy = config.runtimePolicy ?? {};
+  const minSamples = Math.max(1, policy.heuristicBlendMinSamples ?? 18);
+  const maxSamples = Math.max(minSamples, policy.heuristicBlendMaxSamples ?? 180);
+  const sampleCount = Math.max(0, Math.round(modelState?.sampleCount ?? 0));
+  if (maxSamples === minSamples) return sampleCount >= maxSamples ? 1 : 0;
+  return clamp((sampleCount - minSamples) / (maxSamples - minSamples), 0, 1);
+}
+
+function resolveHeuristicPredictions(sample = {}, candidate = {}, player = {}, threat = {}) {
+  const actionMode = candidate.actionMode ?? DEFAULT_ENEMY_ACTION_MODE;
+  const modeBias = ACTION_MODE_BIASES[actionMode] ?? ACTION_MODE_BIASES.hold;
+  const shotAlignment = clamp(sample.shotAlignment ?? 0, 0, 1);
+  const proximity = clamp(sample.proximityNorm ?? 0, 0, 1);
+  const shieldedLaneRisk = clamp(sample.shieldedLaneRisk ?? 0, 0, 1);
+  const bulletLaneThreat = clamp(sample.bulletLaneThreat ?? 0, 0, 1);
+  const bulletUrgency = clamp(1 - (sample.bulletTimeToImpactNorm ?? 1), 0, 1);
+  const bulletDistanceThreat = clamp(1 - (sample.nearestBulletDistanceNorm ?? 1), 0, 1);
+  const playerShieldTax = player?.hasShield ? 0.10 : 0;
+
+  const bullet = clamp(
+    bulletLaneThreat * 0.62
+    + bulletUrgency * 0.48
+    + bulletDistanceThreat * 0.24
+    + modeBias.bullet,
+    0,
+    1
+  );
+
+  const collision = clamp(
+    proximity * 0.56
+    + shieldedLaneRisk * 0.58
+    + playerShieldTax
+    + modeBias.collision,
+    0,
+    1
+  );
+
+  const offense = clamp(
+    shotAlignment * 0.54
+    + proximity * 0.24
+    + clamp(sample.squadAliveNorm ?? 1, 0, 1) * 0.08
+    - bullet * 0.14
+    - collision * 0.10
+    - playerShieldTax * 0.45
+    + modeBias.offense,
+    0,
+    1
+  );
+
+  const survival = clamp(
+    0.60
+    - bullet * 0.52
+    - collision * 0.38
+    + (1 - clamp(sample.playerDamageMultiplierNorm ?? 0, 0, 1.5)) * 0.08
+    + modeBias.survival,
+    0,
+    1
+  );
+
+  return {
+    survival,
+    offense,
+    collision,
+    bullet,
+    pressure: offense,
+    enemyWinRate: offense,
+    threat: {
+      bulletLaneThreat,
+      bulletUrgency,
+      bulletDistanceThreat,
+    },
+  };
+}
+
 function resolveCornerPenalty(x, y, normalization, cornerDistancePx) {
   const width = normalization.width ?? 0;
   const height = normalization.height ?? 0;
@@ -456,7 +543,6 @@ export class EnemyPositionEvaluator {
       return (options.candidates ?? []).slice(0, Math.max(1, limit));
     }
 
-    const regressors = policy._getRuntimeRegressorBundle(enemyType);
     const runtimeContext = options.context ?? resolveEnemyRuntimeContext(options.enemy);
     const liveEnemies = options.liveEnemies ?? runtimeContext?.getEnemies?.() ?? [];
     const player = options.player ?? resolveEnemyPlayerSnapshot(options.enemy, runtimeContext);
@@ -477,16 +563,17 @@ export class EnemyPositionEvaluator {
       ? offensiveCandidates
       : (options.candidates ?? []);
     const weights = policy._config.runtimeWeights ?? {
-      win: 0.7,
-      survival: 0.2,
-      pressure: 1,
-      collision: 1.05,
-      bullet: 1.15,
+      survival: 0.45,
+      offense: 0.55,
+      collision: 0.38,
+      bullet: 0.52,
       spacing: 0.45,
       laneCrowding: 0.25,
       corner: 0.18,
     };
 
+    const { modelState, network } = policy._getRuntimeCombatNetwork(enemyType);
+    const learnedWeight = resolveHeuristicBlendWeight(policy._config, modelState);
     const rankedChoices = [];
 
     for (const candidate of candidatesToRank) {
@@ -512,41 +599,50 @@ export class EnemyPositionEvaluator {
         actionMode: candidate.actionMode ?? 'hold',
       });
       const encoded = policy._encoder.encodeSample(sample);
-      const predictedEnemyWinRate = regressors.win.predictProbability(encoded.vector);
-      const predictedSurvival = regressors.survival.predictProbability(encoded.vector);
-      const predictedPressure = regressors.pressure.predictProbability(encoded.vector);
-      const predictedCollisionRisk = regressors.collision.predictProbability(encoded.vector);
-      const predictedBulletRisk = regressors.bullet.predictProbability(encoded.vector);
+      const heuristic = resolveHeuristicPredictions(sample, candidate, player, threat);
+      const learned = network.predict(encoded.vector);
+      const predictedSurvival = blendValue(heuristic.survival, learned.survival ?? 0.5, learnedWeight);
+      const predictedOffense = blendValue(heuristic.offense, learned.offense ?? 0.5, learnedWeight);
+      const predictedCollisionRisk = blendValue(heuristic.collision, learned.collision ?? 0.5, learnedWeight);
+      const predictedBulletRisk = blendValue(heuristic.bullet, learned.bullet ?? 0.5, learnedWeight);
       const spatialPenalties = resolveSpatialPenalties(candidate, options.enemy, liveEnemies, policy._config);
-      const safePressure = predictedPressure * clamp(predictedSurvival, 0, 1);
+      const bulletWeight = (weights.bullet ?? 0.52) * (
+        0.7
+        + heuristic.threat.bulletLaneThreat * 0.55
+        + heuristic.threat.bulletUrgency * 0.35
+      );
+      const collisionWeight = (weights.collision ?? 0.38) * (
+        0.72
+        + clamp(sample.proximityNorm ?? 0, 0, 1) * 0.45
+        + (player?.hasShield ? 0.18 : 0)
+      );
       const score = (
-        predictedEnemyWinRate * weights.win
-        + predictedSurvival * (weights.survival ?? 0)
-        + safePressure * (weights.pressure ?? 0)
-        - predictedCollisionRisk * weights.collision
-        - predictedBulletRisk * (weights.bullet ?? 0)
-        - spatialPenalties.spacingPenalty * (weights.spacing ?? 0)
+        predictedSurvival * (weights.survival ?? 0.45)
+        + predictedOffense  * (weights.offense  ?? 0.55)
+        - predictedCollisionRisk * collisionWeight
+        - predictedBulletRisk * bulletWeight
+        - spatialPenalties.spacingPenalty      * (weights.spacing      ?? 0)
         - spatialPenalties.laneCrowdingPenalty * (weights.laneCrowding ?? 0)
-        - spatialPenalties.cornerPenalty * (weights.corner ?? 0)
+        - spatialPenalties.cornerPenalty       * (weights.corner       ?? 0)
       );
 
       rankedChoices.push({
         ...candidate,
         score,
-        safePressure,
-        predictedEnemyWinRate,
         predictedSurvival,
-        predictedPressure,
+        predictedOffense,
+        // Legacy aliases consumed by EnemyBase / adaptiveProfile
+        predictedEnemyWinRate:  predictedOffense,
+        predictedPressure:      predictedOffense,
         predictedCollisionRisk,
         predictedBulletRisk,
       });
     }
 
     rankedChoices.sort((left, right) => (
-      (right.score ?? 0) - (left.score ?? 0)
-      || (right.safePressure ?? 0) - (left.safePressure ?? 0)
-      || (right.predictedEnemyWinRate ?? 0) - (left.predictedEnemyWinRate ?? 0)
-      || (right.predictedSurvival ?? 0) - (left.predictedSurvival ?? 0)
+      (right.score ?? 0)            - (left.score ?? 0)
+      || (right.predictedOffense ?? 0)   - (left.predictedOffense ?? 0)
+      || (right.predictedSurvival ?? 0)  - (left.predictedSurvival ?? 0)
     ));
 
     return rankedChoices.slice(0, Math.max(1, limit));

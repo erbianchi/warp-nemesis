@@ -14,32 +14,13 @@ function getBrowserStorage(storage) {
   return browserStorage;
 }
 
-function createEmptyRegressorState(modelState = {}) {
-  const weights = Array.isArray(modelState?.weights)
-    ? modelState.weights.map(value => normalizeNumber(value, 0))
-    : [];
-  return {
-    inputSize: Math.max(0, normalizeInteger(modelState?.inputSize ?? weights.length)),
-    weights,
-    bias: normalizeNumber(modelState?.bias, 0),
-  };
-}
-
-/**
- * @returns {{winModel: {weights: number[], bias: number}, pressureModel: {weights: number[], bias: number}, collisionModel: {weights: number[], bias: number}, sampleCount: number, lastScores: {win: number, pressure: number, collision: number}}}
- */
 function createDefaultEnemyModel() {
   return {
-    winModel: createEmptyRegressorState(),
-    survivalModel: createEmptyRegressorState(),
-    pressureModel: createEmptyRegressorState(),
-    collisionModel: createEmptyRegressorState(),
-    bulletModel: createEmptyRegressorState(),
+    combatNetwork: null,
     sampleCount: 0,
     lastScores: {
-      win: 0.5,
       survival: 0.5,
-      pressure: 0.5,
+      offense: 0.5,
       collision: 0.5,
       bullet: 0.5,
     },
@@ -48,7 +29,7 @@ function createDefaultEnemyModel() {
 
 /**
  * @param {object} enemyConfigs
- * @returns {{featureVersion: number, enemyModels: Record<string, {winModel: {weights: number[], bias: number}, pressureModel: {weights: number[], bias: number}, collisionModel: {weights: number[], bias: number}, sampleCount: number, lastScores: {win: number, pressure: number, collision: number}}>} }
+ * @returns {{ featureVersion: number, enemyModels: Record<string, { combatNetwork: object|null, sampleCount: number, lastScores: { survival: number, offense: number, collision: number, bullet: number } }> }}
  */
 export function createDefaultLearningState(enemyConfigs = ENEMIES) {
   const enemyModels = {};
@@ -64,18 +45,20 @@ export function createDefaultLearningState(enemyConfigs = ENEMIES) {
 }
 
 function normalizeModel(modelState) {
+  // Migration: discard old logistic-regressor shape (winModel / survivalModel /
+  // pressureModel / collisionModel / bulletModel) — start fresh so the next run
+  // trains a new EnemyCombatValueNetwork from the existing dataset.
+  if (modelState?.winModel !== undefined && modelState?.combatNetwork === undefined) {
+    return createDefaultEnemyModel();
+  }
+
   const base = createDefaultEnemyModel();
   return {
-    winModel: createEmptyRegressorState(modelState?.winModel),
-    survivalModel: createEmptyRegressorState(modelState?.survivalModel),
-    pressureModel: createEmptyRegressorState(modelState?.pressureModel),
-    collisionModel: createEmptyRegressorState(modelState?.collisionModel),
-    bulletModel: createEmptyRegressorState(modelState?.bulletModel),
+    combatNetwork: modelState?.combatNetwork ?? null,
     sampleCount: normalizeInteger(modelState?.sampleCount),
     lastScores: {
-      win: clamp(normalizeNumber(modelState?.lastScores?.win, base.lastScores.win), 0, 1),
       survival: clamp(normalizeNumber(modelState?.lastScores?.survival, base.lastScores.survival), 0, 1),
-      pressure: clamp(normalizeNumber(modelState?.lastScores?.pressure, base.lastScores.pressure), 0, 1),
+      offense:  clamp(normalizeNumber(modelState?.lastScores?.offense,  base.lastScores.offense),  0, 1),
       collision: clamp(normalizeNumber(modelState?.lastScores?.collision, base.lastScores.collision), 0, 1),
       bullet: clamp(normalizeNumber(modelState?.lastScores?.bullet, base.lastScores.bullet), 0, 1),
     },
@@ -116,7 +99,7 @@ export class EnemyLearningStore {
   }
 
   /**
-   * @returns {{featureVersion: number, enemyModels: Record<string, {winModel: {weights: number[], bias: number}, pressureModel: {weights: number[], bias: number}, collisionModel: {weights: number[], bias: number}, sampleCount: number, lastScores: {win: number, pressure: number, collision: number}}>} }
+   * @returns {{ featureVersion: number, enemyModels: Record<string, { combatNetwork: object|null, sampleCount: number, lastScores: { survival: number, offense: number, collision: number, bullet: number } }> }}
    */
   load() {
     const fallback = createDefaultLearningState(this._enemyConfigs);
@@ -139,8 +122,8 @@ export class EnemyLearningStore {
   }
 
   /**
-   * @param {{featureVersion: number, enemyModels: Record<string, {winModel: {weights: number[], bias: number}, pressureModel: {weights: number[], bias: number}, collisionModel: {weights: number[], bias: number}, sampleCount: number, lastScores: {win: number, pressure: number, collision: number}}>} } state
-   * @returns {{featureVersion: number, enemyModels: Record<string, {winModel: {weights: number[], bias: number}, pressureModel: {weights: number[], bias: number}, collisionModel: {weights: number[], bias: number}, sampleCount: number, lastScores: {win: number, pressure: number, collision: number}}>} }
+   * @param {{ featureVersion: number, enemyModels: Record<string, { combatNetwork: object|null, sampleCount: number, lastScores: { survival: number, offense: number, collision: number, bullet: number } }> }} state
+   * @returns {{ featureVersion: number, enemyModels: Record<string, { combatNetwork: object|null, sampleCount: number, lastScores: { survival: number, offense: number, collision: number, bullet: number } }> }}
    */
   save(state) {
     const normalized = normalizeState(state, this._enemyConfigs);

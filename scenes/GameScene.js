@@ -11,6 +11,7 @@ import { EffectsSystem }         from '../systems/EffectsSystem.js';
 import { createGameServices }    from '../systems/GameServices.js';
 import { WaveSpawner, resolveStats } from '../systems/WaveSpawner.js';
 import { FormationController }   from '../systems/FormationController.js';
+import { WingDoctrineController } from '../systems/WingDoctrineController.js';
 import { BonusSystem }           from '../systems/BonusSystem.js';
 import { ShieldController }      from '../systems/ShieldController.js';
 import { AdaptiveStatsResolver } from '../systems/ml/AdaptiveStatsResolver.js';
@@ -792,20 +793,26 @@ export class GameScene extends Phaser.Scene {
   }
 
   _onSquadronSpawned({ count, squadron, overlay = false }) {
-    if (overlay) return;
-    this._squadronScoreCheckpoint = RunState.score;
+    if (!overlay) this._squadronScoreCheckpoint = RunState.score;
     const ships = this._enemies
       .slice(-count)
-      .filter(enemy => enemy.dance === 'straight');
+      .filter(enemy => enemy?.active !== false && enemy?.enemyType !== 'mine');
     if (ships.length === 0) return;
-    const fc = new FormationController(
-      this,
-      ships,
-      squadron?.controller ?? {},
-      this._spawner?._rng ?? Math.random,
-      this._ensureGameServices()
-    );
-    this._formations.push(fc);
+
+    const controllerOptions = {
+      ...(squadron?.controller ?? {}),
+      dance: squadron?.dance ?? null,
+      formation: squadron?.formation ?? null,
+      overlay,
+    };
+    const services = this._ensureGameServices();
+    const rng = this._spawner?._rng ?? Math.random;
+    const useFormationController = !overlay && (squadron?.dance ?? ships[0]?.dance) === 'straight';
+    const squadController = useFormationController
+      ? new FormationController(this, ships, controllerOptions, rng, services)
+      : new WingDoctrineController(this, ships, controllerOptions, rng, services);
+
+    this._formations.push(squadController);
   }
 
   // ── Enemy spawning ────────────────────────────────────────────────────────
