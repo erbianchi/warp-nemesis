@@ -12,6 +12,7 @@
 
 import { GAME_CONFIG } from '../config/game.config.js';
 import { EVENTS } from '../config/events.config.js';
+import { clamp } from '../utils/math.js';
 
 const { WIDTH, HEIGHT } = GAME_CONFIG;
 
@@ -290,10 +291,6 @@ function resolveIdlePlan(ship, x, y, rangePx, yRangePx) {
     bottomMarginPx: HEIGHT - 96,
     commit: false,
   }) ?? { x, y };
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
 }
 
 export class FormationController {

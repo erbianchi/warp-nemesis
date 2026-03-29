@@ -1,11 +1,7 @@
 /** @module SquadPolicyNetwork */
 
 import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
-
-function normalizeNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
+import { normalizeNumber } from '../../utils/math.js';
 
 function clampScore(score) {
   return Math.max(-60, Math.min(60, score));

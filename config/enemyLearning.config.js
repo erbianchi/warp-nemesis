@@ -6,6 +6,9 @@
 
 import { GAME_CONFIG } from './game.config.js';
 
+export const ENEMY_ACTION_MODES = Object.freeze(['hold', 'press', 'flank', 'evade', 'retreat']);
+export const DEFAULT_ENEMY_ACTION_MODE = ENEMY_ACTION_MODES[0];
+
 export const ENEMY_LEARNING_CONFIG = Object.freeze({
   storageKey: 'warp-nemesis.enemyLearning',
   datasetStorageKey: 'warp-nemesis.enemyLearning.dataset',
@@ -68,6 +71,7 @@ export const ENEMY_LEARNING_CONFIG = Object.freeze({
   }),
   neuralDance: Object.freeze({
     storageKey:                'warp-nemesis.danceWaypoint',
+    actionModes:               ENEMY_ACTION_MODES,
     minSamplesForActivation:   40,
     survivalFloor:             0.55,
     pressureFloor:             0.25,

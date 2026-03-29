@@ -11,12 +11,9 @@
 import { ACTION_MODES, stripActionModes } from './DanceWaypointNetwork.js';
 import { GAME_CONFIG } from '../../config/game.config.js';
 import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
+import { clamp } from '../../utils/math.js';
 
 const { WIDTH: W, HEIGHT: H } = GAME_CONFIG;
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
 
 function average(values) {
   if (!Array.isArray(values) || values.length === 0) return 0;

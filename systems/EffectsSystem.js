@@ -1,6 +1,8 @@
 /** @module EffectsSystem
  * Handles explosion VFX and nearby shockwave impulses. */
 
+import { clamp } from '../utils/math.js';
+
 const FRAGMENT_POOL_SIZE = 192;
 const FRAGMENT_TEXTURE   = 'particle';
 const FRAGMENT_BASE_SIZE = 4;
@@ -24,7 +26,6 @@ const EXPLOSION_SOUND_KEYS = Object.freeze({
   mine: DEFAULT_EXPLOSION_SOUND_KEY,
 });
 
-const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp  = (a, b, t) => a + (b - a) * t;
 
 /**

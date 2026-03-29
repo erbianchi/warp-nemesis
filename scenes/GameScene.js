@@ -159,9 +159,10 @@ export class GameScene extends Phaser.Scene {
     this._formations = [];   // active FormationControllers
     this._enemyAdaptivePolicy = this._deps.enemyAdaptivePolicy ?? new EnemyAdaptivePolicy();
     this._enemyAdaptivePolicy.load?.();
+    this._enemyRuntimeContext = this._createEnemyRuntimeContext();
     this._danceGenerator = new DanceGenerator({
       network: this._enemyAdaptivePolicy.getDanceNetwork(),
-      encoder: this._enemyAdaptivePolicy._encoder,
+      encoder: this._enemyAdaptivePolicy.getEncoder?.() ?? this._enemyAdaptivePolicy._encoder,
       playerStyleProfile: RunState.playerStyleProfile ?? null,
     });
     this._ensureRuntimeWavesReady();
@@ -170,7 +171,7 @@ export class GameScene extends Phaser.Scene {
       baseResolveStats: resolveStats,
     });
     this._enemyLearningSession = this._enemyAdaptivePolicy.createRunSession?.({
-      scene: this,
+      eventSource: this.events,
       levelNumber: (this._levelIndex ?? 0) + 1,
       getPlayerSnapshot: () => this._getEnemyLearningPlayerSnapshot(),
       getWeaponSnapshot: () => this._weapons?.getLearningSnapshot?.() ?? {
@@ -267,6 +268,19 @@ export class GameScene extends Phaser.Scene {
   _unlockAudio() {
     this.sound?.unlock?.();
     this.sound?.context?.resume?.();
+  }
+
+  _createEnemyRuntimeContext() {
+    return {
+      getPlayer: () => this._player ?? null,
+      getWeapons: () => this._weapons ?? null,
+      getEffects: () => this._effects ?? null,
+      getEnemies: () => this._enemies ?? [],
+      getAdaptivePolicy: () => this._enemyAdaptivePolicy ?? null,
+      getPlayerSnapshot: () => this._getEnemyLearningPlayerSnapshot(),
+      getPlayerBullets: () => this._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [],
+      createShieldController: (target, opts = {}) => new ShieldController(this, target, opts),
+    };
   }
 
   // ── Main loop ─────────────────────────────────────────────────────────────
@@ -787,17 +801,18 @@ export class GameScene extends Phaser.Scene {
   // ── Enemy spawning ────────────────────────────────────────────────────────
 
   _spawnEnemy(type, x, y, stats, dance, meta = {}) {
+    const enemyOptions = { runtimeContext: this._enemyRuntimeContext };
     let enemy;
     switch (type) {
       case 'mine':
-        enemy = new Mine(this, x, y, stats, dance);
+        enemy = new Mine(this, x, y, stats, dance, enemyOptions);
         break;
       case 'raptor':
-        enemy = new Raptor(this, x, y, stats, dance);
+        enemy = new Raptor(this, x, y, stats, dance, enemyOptions);
         break;
       case 'skirm':
       default:
-        enemy = new Skirm(this, x, y, stats, dance);
+        enemy = new Skirm(this, x, y, stats, dance, enemyOptions);
         break;
     }
     enemy._learningId = `enemy-${++this._nextLearningEnemyId}`;

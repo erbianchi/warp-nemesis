@@ -4,6 +4,7 @@ import { GAME_CONFIG } from '../../config/game.config.js';
 import { WEAPONS } from '../../config/weapons.config.js';
 import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
 import { resolveShotAlignment } from './EnemyPolicyMath.js';
+import { clamp } from '../../utils/math.js';
 
 const WEAPON_KEYS = Object.freeze(Object.keys(WEAPONS));
 const DANCE_KEYS = Object.freeze([
@@ -20,10 +21,6 @@ const DANCE_KEYS = Object.freeze([
   'side_left',
   'side_right',
 ]);
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
 
 export class SquadFeatureEncoder {
   constructor(options = {}) {

@@ -1,21 +1,9 @@
 /** @module LogisticRegressor */
 
+import { clamp, normalizeInteger, normalizeNumber } from '../../utils/math.js';
+
 function clampScore(score) {
   return Math.max(-60, Math.min(60, score));
-}
-
-function normalizeNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function normalizeInteger(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : fallback;
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
 }
 
 function getTensorFlow() {

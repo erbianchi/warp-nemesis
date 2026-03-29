@@ -1,5 +1,7 @@
 /** @module EnemyPolicyMath */
 
+import { clamp } from '../../utils/math.js';
+
 const STAR_DIRECTIONS = Object.freeze([
   { x: 0, y: 1 },
   { x: Math.SQRT1_2, y: Math.SQRT1_2 },
@@ -10,10 +12,6 @@ const STAR_DIRECTIONS = Object.freeze([
   { x: -1, y: 0 },
   { x: -Math.SQRT1_2, y: Math.SQRT1_2 },
 ]);
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
 
 function safeDivide(numerator, denominator, fallback = 0) {
   return denominator > 0 ? numerator / denominator : fallback;

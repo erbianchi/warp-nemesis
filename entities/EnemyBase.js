@@ -2,13 +2,19 @@
 
 import { EVENTS } from '../config/events.config.js';
 import { GAME_CONFIG } from '../config/game.config.js';
-import { ENEMY_LEARNING_CONFIG } from '../config/enemyLearning.config.js';
+import {
+  DEFAULT_ENEMY_ACTION_MODE,
+  ENEMY_ACTION_MODES,
+  ENEMY_LEARNING_CONFIG,
+} from '../config/enemyLearning.config.js';
 import { ShieldController } from '../systems/ShieldController.js';
-import { buildPlayerBulletThreatSnapshot } from '../systems/ml/EnemyPolicyMath.js';
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
+import {
+  buildPlayerBulletThreatSnapshot,
+  buildSquadSnapshot,
+} from '../systems/ml/EnemyPolicyMath.js';
+import { stripActionModes } from '../systems/ml/DanceWaypointNetwork.js';
+import { resolveAdaptiveMovePlan as resolvePolicyAdaptiveMovePlan } from '../systems/ml/EnemyAdaptivePolicy.js';
+import { clamp } from '../utils/math.js';
 
 /**
  * In-browser: Phaser is a CDN global, available before any ES module evaluates.
@@ -20,6 +26,47 @@ const _BaseSprite = typeof Phaser !== 'undefined'
       constructor(scene, x, y) { this.scene = scene; this.x = x; this.y = y; this.body = null; this.active = true; }
       destroy() { this.active = false; }
     };
+
+/**
+ * @typedef {object} AdaptiveEnemyStats
+ * @property {boolean} [enabled=false]
+ * @property {number} [minSpeedScalar=1]
+ * @property {number} [maxSpeedScalar=1]
+ * @property {number} [maxSpeed]
+ * @property {number} [predictedEnemyWinRate=0.5]
+ * @property {number} [predictedSurvival=0.5]
+ * @property {number} [predictedPressure=0.5]
+ * @property {number} [predictedCollisionRisk=0.5]
+ * @property {number} [predictedBulletRisk=0.5]
+ */
+
+/**
+ * @typedef {object} EnemyStats
+ * @property {number} hp
+ * @property {number} damage
+ * @property {number} [contactDamage]
+ * @property {number} speed
+ * @property {number} [baseSpeed]
+ * @property {number} [speedCap]
+ * @property {number} fireRate
+ * @property {number} score
+ * @property {number} dropChance
+ * @property {number} bulletSpeed
+ * @property {number} [shield]
+ * @property {AdaptiveEnemyStats} [adaptive]
+ */
+
+/**
+ * @typedef {object} EnemyRuntimeContext
+ * @property {() => object|null} [getPlayer]
+ * @property {() => object|null} [getWeapons]
+ * @property {() => object|null} [getEffects]
+ * @property {() => object[]} [getEnemies]
+ * @property {() => object|null} [getAdaptivePolicy]
+ * @property {() => object|null} [getPlayerSnapshot]
+ * @property {() => object[]} [getPlayerBullets]
+ * @property {(target: object, opts?: object) => ShieldController} [createShieldController]
+ */
 
 /**
  * Abstract base class for all enemies.
@@ -38,21 +85,11 @@ export class EnemyBase extends _BaseSprite {
    * @param {number} x
    * @param {number} y
    * @param {string} texture
-   * @param {object} stats   - Resolved stats from WaveSpawner.resolveStats()
-   * @param {number} stats.hp
-   * @param {number} stats.damage
-   * @param {number} [stats.contactDamage]
-   * @param {number} stats.speed
-   * @param {number} stats.fireRate    - ms between shots (0 = no ranged attack)
-   * @param {number} stats.score
-   * @param {number} stats.dropChance
-   * @param {number} stats.bulletSpeed
-   * @param {number} [stats.shield]
-   */
-  /**
+   * @param {EnemyStats} stats - Resolved stats from WaveSpawner.resolveStats()
    * @param {string} dance - Movement pattern key (see DANCES in levels.config.js)
+   * @param {{runtimeContext?: EnemyRuntimeContext, shieldFactory?: (target: object, opts?: object) => ShieldController}} [options]
    */
-  constructor(scene, x, y, texture, stats, dance = 'straight') {
+  constructor(scene, x, y, texture, stats, dance = 'straight', options = {}) {
     super(scene, x, y, texture);
 
     scene.add.existing(this);
@@ -62,6 +99,13 @@ export class EnemyBase extends _BaseSprite {
     this.enemyType = texture;
     /** @type {string} */
     this.dance = dance;
+
+    /** @type {EnemyRuntimeContext|null} */
+    this._runtimeContext = options.runtimeContext ?? scene?._enemyRuntimeContext ?? null;
+    /** @type {(target: object, opts?: object) => ShieldController} */
+    this._shieldFactory = options.shieldFactory
+      ?? this._runtimeContext?.createShieldController
+      ?? ((target, shieldOptions = {}) => new ShieldController(scene, target, shieldOptions));
 
     /** @type {number} */
     this.maxHp = stats.hp;
@@ -113,6 +157,7 @@ export class EnemyBase extends _BaseSprite {
       predictedBulletRisk: stats.adaptive?.predictedBulletRisk ?? 0.5,
     };
     this._adaptiveUnlocked = !this.adaptiveProfile.enabled;
+    this._adaptiveActionMode = DEFAULT_ENEMY_ACTION_MODE;
 
     /** @type {boolean} */
     this.alive = true;
@@ -141,8 +186,8 @@ export class EnemyBase extends _BaseSprite {
     this._pushOffY = 0;
     this._pushVx   = 0; // velocity of the displacement
     this._pushVy   = 0;
-    this._shield   = new ShieldController(scene, this, {
-      effects:      scene._effects,
+    this._shield   = this._shieldFactory(this, {
+      effects:      this._getEffects(),
       points:       this.shield,
       radius:       16,
       depthOffset:  1,
@@ -458,10 +503,59 @@ export class EnemyBase extends _BaseSprite {
     return this.applyClampedMovement(nextX, nextY, deltaMs);
   }
 
+  /**
+   * @param {EnemyRuntimeContext|null} runtimeContext
+   * @returns {this}
+   */
+  setRuntimeContext(runtimeContext) {
+    this._runtimeContext = runtimeContext ?? null;
+    return this;
+  }
+
+  _createSceneFallbackRuntimeContext() {
+    return {
+      getPlayer: () => this.scene?._player ?? null,
+      getWeapons: () => this.scene?._weapons ?? null,
+      getEffects: () => this.scene?._effects ?? null,
+      getEnemies: () => this.scene?._enemies ?? [],
+      getAdaptivePolicy: () => this.scene?._enemyAdaptivePolicy ?? null,
+      getPlayerSnapshot: () => this.scene?._getEnemyLearningPlayerSnapshot?.() ?? null,
+      getPlayerBullets: () => this.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [],
+    };
+  }
+
+  getRuntimeContext() {
+    if (!this._runtimeContext) {
+      this._runtimeContext = this._createSceneFallbackRuntimeContext();
+    }
+    return this._runtimeContext;
+  }
+
+  _getEffects() {
+    return this.getRuntimeContext()?.getEffects?.() ?? null;
+  }
+
+  _getWeapons() {
+    return this.getRuntimeContext()?.getWeapons?.() ?? null;
+  }
+
+  _getLiveEnemies() {
+    return this.getRuntimeContext()?.getEnemies?.() ?? [];
+  }
+
+  _getAdaptivePolicy() {
+    return this.getRuntimeContext()?.getAdaptivePolicy?.() ?? null;
+  }
+
   _getPlayerSnapshot() {
-    return this.scene?._getEnemyLearningPlayerSnapshot?.() ?? {
-      x: this.scene?._player?.x ?? GAME_CONFIG.WIDTH / 2,
-      y: this.scene?._player?.y ?? GAME_CONFIG.HEIGHT - 80,
+    const runtimeContext = this.getRuntimeContext();
+    const snapshot = runtimeContext?.getPlayerSnapshot?.();
+    if (snapshot) return snapshot;
+
+    const player = runtimeContext?.getPlayer?.();
+    return {
+      x: player?.x ?? GAME_CONFIG.WIDTH / 2,
+      y: player?.y ?? GAME_CONFIG.HEIGHT - 80,
       hasShield: false,
       shieldRatio: 0,
       hpRatio: 1,
@@ -469,318 +563,152 @@ export class EnemyBase extends _BaseSprite {
   }
 
   _getPlayerBulletThreatSnapshot() {
-    const playerBullets = this.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [];
-    return buildPlayerBulletThreatSnapshot(playerBullets, this, this.scene?._enemyAdaptivePolicy?._config?.normalization ?? {});
+    const playerBullets = this.getRuntimeContext()?.getPlayerBullets?.() ?? [];
+    return buildPlayerBulletThreatSnapshot(
+      playerBullets,
+      this,
+      this._getAdaptivePolicy()?._config?.normalization ?? {}
+    );
   }
 
-  _buildAdaptiveAnchors(baseX, candidateY, rangePx, yRangePx, bounds) {
+  _getNeuralFlowNavigationConfig() {
+    return {
+      marginPx: 24,
+      topMarginPx: 24,
+      bottomMarginPx: GAME_CONFIG.HEIGHT - 24,
+      rangePx: 72,
+      yRangePx: 56,
+      pressTargetOffsetY: 90,
+      pressAdvanceLimitPx: 60,
+      flankOffsetBasePx: 80,
+      flankOffsetRandomPx: 40,
+      flankYJitterPx: 40,
+      retreatBasePx: 50,
+      retreatRandomPx: 40,
+    };
+  }
+
+  _sampleNeuralMode(currentMode = DEFAULT_ENEMY_ACTION_MODE) {
+    const policy = this._getAdaptivePolicy();
+    const network = policy?.getDanceNetwork?.();
+    const cfg = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
+    const encoder = policy?.getEncoder?.() ?? policy?._encoder;
+
+    if (network?.isTrained && encoder?.buildSample && encoder?.encodeSample) {
+      const temperature = this._resolveNeuralTemperature(network);
+      const squad = buildSquadSnapshot(this._getLiveEnemies(), this._squadId ?? null, this);
+      const weapon = this._getWeapons()?.getLearningSnapshot?.() ?? {};
+      const sample = encoder.buildSample({
+        enemyType: this.enemyType,
+        player: this._getPlayerSnapshot(),
+        weapon,
+        enemyX: this.x,
+        enemyY: this.y,
+        speed: this.speed,
+        squad,
+        threat: this._getPlayerBulletThreatSnapshot(),
+        actionMode: DEFAULT_ENEMY_ACTION_MODE,
+      });
+      if (sample) {
+        const encoded = encoder.encodeSample(sample);
+        const { mode, probabilities } = network.sample(
+          stripActionModes(encoded.vector),
+          temperature
+        );
+        const hysteresis = cfg.modeHysteresisThreshold ?? 0.15;
+        const modes = cfg.actionModes ?? ENEMY_ACTION_MODES;
+        const currentModeIdx = modes.indexOf(currentMode);
+        const newModeIdx = modes.indexOf(mode);
+        if (currentModeIdx >= 0 && newModeIdx >= 0 && mode !== currentMode) {
+          const currentProbability = probabilities[currentModeIdx] ?? 0;
+          const nextProbability = probabilities[newModeIdx] ?? 0;
+          if ((nextProbability - currentProbability) < hysteresis) {
+            return currentMode;
+          }
+        }
+        return mode;
+      }
+    }
+
+    const navigation = this._getNeuralFlowNavigationConfig();
+    const fallback = resolvePolicyAdaptiveMovePlan(policy, this, this.x, {
+      candidateY: this.y,
+      rangePx: navigation.rangePx,
+      yRangePx: navigation.yRangePx,
+      marginPx: navigation.marginPx,
+      topMarginPx: navigation.topMarginPx,
+      bottomMarginPx: navigation.bottomMarginPx,
+      commit: false,
+    });
+    return fallback?.actionMode ?? currentMode ?? DEFAULT_ENEMY_ACTION_MODE;
+  }
+
+  _resolveNeuralAnchor(mode) {
     const player = this._getPlayerSnapshot();
     const threat = this._getPlayerBulletThreatSnapshot();
-    const baseAnchor = {
-      mode: 'hold',
-      x: baseX,
-      y: candidateY,
-    };
-    const anchors = [
-      baseAnchor,
-      {
-        mode: 'press',
-        x: player.x ?? baseX,
-        y: clamp(
-          Math.min((player.y ?? candidateY) - 90, candidateY + yRangePx),
-          bounds.topMarginPx,
-          bounds.bottomMarginPx
-        ),
-      },
-      {
-        mode: 'retreat',
-        x: baseX,
-        y: clamp(candidateY - yRangePx, bounds.topMarginPx, bounds.bottomMarginPx),
-      },
-      {
-        mode: 'evade',
-        x: clamp(threat.suggestedSafeX ?? baseX, bounds.marginPx, GAME_CONFIG.WIDTH - bounds.marginPx),
-        y: clamp(threat.suggestedSafeY ?? candidateY, bounds.topMarginPx, bounds.bottomMarginPx),
-      },
-    ];
+    const navigation = this._getNeuralFlowNavigationConfig();
+    const clampX = (x) => clamp(x, navigation.marginPx, GAME_CONFIG.WIDTH - navigation.marginPx);
+    const clampY = (y) => clamp(y, navigation.topMarginPx, navigation.bottomMarginPx);
 
-    const playerX = player.x ?? baseX;
-    const flankOffset = Math.max(rangePx, 40);
-    anchors.push({
-      mode: 'flank',
-      x: clamp(playerX + (baseX <= playerX ? -flankOffset : flankOffset), bounds.marginPx, GAME_CONFIG.WIDTH - bounds.marginPx),
-      y: clamp(candidateY + yRangePx * 0.25, bounds.topMarginPx, bounds.bottomMarginPx),
-    });
-
-    return anchors;
-  }
-
-  _buildAdaptiveCandidates(anchors, options = {}) {
-    const rangePx = Math.max(0, options.rangePx ?? 0);
-    const yRangePx = Math.max(0, options.yRangePx ?? 0);
-    const marginPx = Math.max(0, options.marginPx ?? 0);
-    const topMarginPx = Math.max(0, options.topMarginPx ?? 0);
-    const bottomMarginPx = Math.max(topMarginPx, options.bottomMarginPx ?? GAME_CONFIG.HEIGHT);
-    const xOffsets = Array.isArray(options.xOffsets) && options.xOffsets.length > 0 ? options.xOffsets : [0];
-    const yOffsets = Array.isArray(options.yOffsets) && options.yOffsets.length > 0 ? options.yOffsets : [0];
-    const speedScalars = Array.isArray(options.speedScalars) && options.speedScalars.length > 0 ? options.speedScalars : [1];
-    const xScale = options.xScale ?? 0.45;
-    const yScale = options.yScale ?? 0.45;
-    const candidates = [];
-
-    for (const anchor of anchors) {
-      for (const xOffset of xOffsets) {
-        const candidateX = clamp(
-          anchor.x + (xOffset * rangePx * xScale),
-          marginPx,
-          GAME_CONFIG.WIDTH - marginPx
-        );
-        for (const yOffset of yOffsets) {
-          const candidateY = clamp(
-            anchor.y + (yOffset * yRangePx * yScale),
-            topMarginPx,
-            bottomMarginPx
-          );
-          for (const speedScalar of speedScalars) {
-            candidates.push({
-              x: candidateX,
-              y: candidateY,
-              speedScalar,
-              actionMode: anchor.mode,
-            });
-          }
-        }
+    switch (mode) {
+      case 'press':
+        return {
+          x: clampX(player.x ?? this.x),
+          y: clampY(Math.min(
+            (player.y ?? this.y) - navigation.pressTargetOffsetY,
+            this.y + navigation.pressAdvanceLimitPx
+          )),
+        };
+      case 'flank': {
+        const playerX = player.x ?? GAME_CONFIG.WIDTH / 2;
+        const side = this.x <= playerX ? -1 : 1;
+        return {
+          x: clampX(playerX + side * (
+            navigation.flankOffsetBasePx + Math.random() * navigation.flankOffsetRandomPx
+          )),
+          y: clampY(this.y + (Math.random() - 0.5) * navigation.flankYJitterPx),
+        };
       }
+      case 'evade':
+        return {
+          x: clampX(threat.suggestedSafeX ?? this.x),
+          y: clampY(threat.suggestedSafeY ?? this.y),
+        };
+      case 'retreat':
+        return {
+          x: clampX(this.x),
+          y: clampY(this.y - navigation.retreatBasePx - Math.random() * navigation.retreatRandomPx),
+        };
+      case 'hold':
+      default:
+        return { x: clampX(this.x), y: clampY(this.y) };
     }
-
-    return candidates;
   }
 
-  _buildFineAdaptiveCandidates(coarseChoices, speedScalars, bounds, rangePx, yRangePx) {
-    const marginPx = Math.max(0, bounds.marginPx ?? 0);
-    const topMarginPx = Math.max(0, bounds.topMarginPx ?? 0);
-    const bottomMarginPx = Math.max(topMarginPx, bounds.bottomMarginPx ?? GAME_CONFIG.HEIGHT);
-    const fineXOffsets = rangePx > 0 ? [-0.5, 0, 0.5] : [0];
-    const fineYOffsets = yRangePx > 0 ? [-0.5, 0, 0.5] : [0];
-    const fineStepX = rangePx * 0.45;
-    const fineStepY = yRangePx * 0.45;
-    const candidates = [];
-    const seen = new Set();
-
-    const resolveSpeedIndex = (value) => {
-      let bestIndex = 0;
-      let bestDelta = Number.POSITIVE_INFINITY;
-      for (let index = 0; index < speedScalars.length; index += 1) {
-        const delta = Math.abs((speedScalars[index] ?? 1) - value);
-        if (delta < bestDelta) {
-          bestDelta = delta;
-          bestIndex = index;
-        }
-      }
-      return bestIndex;
-    };
-
-    for (const choice of coarseChoices ?? []) {
-      const centerSpeedIndex = resolveSpeedIndex(choice.speedScalar ?? 1);
-      const localSpeedScalars = [...new Set([
-        speedScalars[Math.max(0, centerSpeedIndex - 1)],
-        speedScalars[centerSpeedIndex],
-        speedScalars[Math.min(speedScalars.length - 1, centerSpeedIndex + 1)],
-      ].filter(value => Number.isFinite(value)))];
-
-      for (const xOffset of fineXOffsets) {
-        const candidateX = clamp(
-          (choice.x ?? this.x) + (xOffset * fineStepX * 0.5),
-          marginPx,
-          GAME_CONFIG.WIDTH - marginPx
-        );
-        for (const yOffset of fineYOffsets) {
-          const candidateY = clamp(
-            (choice.y ?? this.y) + (yOffset * fineStepY * 0.5),
-            topMarginPx,
-            bottomMarginPx
-          );
-          for (const speedScalar of localSpeedScalars) {
-            const key = [
-              Math.round(candidateX * 100),
-              Math.round(candidateY * 100),
-              Math.round(speedScalar * 1000),
-              choice.actionMode ?? 'hold',
-            ].join(':');
-            if (seen.has(key)) continue;
-            seen.add(key);
-            candidates.push({
-              x: candidateX,
-              y: candidateY,
-              speedScalar,
-              actionMode: choice.actionMode ?? 'hold',
-            });
-          }
-        }
-      }
-    }
-
-    return candidates;
+  _resolveNeuralTemperature(network) {
+    const cfg = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
+    const temperatureInitial = cfg.temperatureInitial ?? 2.0;
+    const temperatureFinal = cfg.temperatureFinal ?? 0.7;
+    const convergeSamples = cfg.temperatureSampleConverge ?? 200;
+    const t = Math.min((network?.sampleCount ?? 0) / Math.max(1, convergeSamples), 1);
+    return temperatureInitial - (temperatureInitial - temperatureFinal) * t;
   }
 
-  /**
-   * Resolve a learned movement target and speed scalar from candidate actions.
-   * @param {number} baseX
-   * @param {{
-   *   candidateY?: number,
-   *   rangePx?: number,
-   *   yRangePx?: number,
-   *   marginPx?: number,
-   *   topMarginPx?: number,
-   *   bottomMarginPx?: number,
-   *   commit?: boolean,
-   *   speedScalars?: number[],
-   * }} [options={}]
-   * @returns {{x: number, y: number, speedScalar: number, predictedEnemyWinRate: number, predictedSurvival: number, predictedPressure: number, predictedCollisionRisk: number, predictedBulletRisk: number, score: number, actionMode?: string}}
-   */
   resolveAdaptiveMovePlan(baseX, options = {}) {
-    const rangePx = Math.max(0, options.rangePx ?? 0);
-    const yRangePx = Math.max(0, options.yRangePx ?? Math.round(rangePx * 0.7));
-    const marginPx = Math.max(0, options.marginPx ?? 24);
-    const topMarginPx = Math.max(0, options.topMarginPx ?? 24);
-    const bottomMarginPx = Math.max(topMarginPx, options.bottomMarginPx ?? (GAME_CONFIG.HEIGHT - 24));
-    const candidateY = options.candidateY ?? this.y;
-    const commit = options.commit !== false;
-    const policy = this.scene?._enemyAdaptivePolicy;
-
-    const clampedBaseX = clamp(baseX, marginPx, GAME_CONFIG.WIDTH - marginPx);
-    const clampedBaseY = clamp(candidateY, topMarginPx, bottomMarginPx);
-    if (!this.canUseAdaptiveBehavior() || (!policy?.resolveBehavior && !policy?.rankBehaviors)) {
-      const speedScalar = this.canUseAdaptiveBehavior()
-        ? clamp(
-            this.adaptiveProfile?.currentSpeedScalar ?? 1,
-            this.adaptiveProfile?.minSpeedScalar ?? 1,
-            this.adaptiveProfile?.maxSpeedScalar ?? 1
-          )
-        : 1;
-      if (commit) this._applyAdaptiveSpeedScalar(speedScalar);
-      return {
-        x: clampedBaseX,
-        y: clampedBaseY,
-        speedScalar,
-        predictedEnemyWinRate: this.adaptiveProfile?.predictedEnemyWinRate ?? 0.5,
-        predictedSurvival: this.adaptiveProfile?.predictedSurvival ?? 0.5,
-        predictedPressure: this.adaptiveProfile?.predictedPressure ?? 0.5,
-        predictedCollisionRisk: this.adaptiveProfile?.predictedCollisionRisk ?? 0.5,
-        predictedBulletRisk: this.adaptiveProfile?.predictedBulletRisk ?? 0.5,
-        score: 0,
-        actionMode: this._adaptiveActionMode ?? 'hold',
-      };
-    }
-
-    const speedScalars = options.speedScalars ?? policy.getSpeedCandidates?.(this.enemyType) ?? [1];
-    const anchors = this._buildAdaptiveAnchors(clampedBaseX, clampedBaseY, rangePx, yRangePx, {
-      marginPx,
-      topMarginPx,
-      bottomMarginPx,
-    });
-    const fallbackResolved = {
-      x: clampedBaseX,
-      y: clampedBaseY,
-      speedScalar: 1,
-      predictedEnemyWinRate: 0.5,
-      predictedSurvival: 0.5,
-      predictedPressure: 0.5,
-      predictedCollisionRisk: 0.5,
-      predictedBulletRisk: 0.5,
-      score: 0,
-      actionMode: 'hold',
-    };
-    let resolved = null;
-
-    if (typeof policy.rankBehaviors === 'function') {
-      const coarseCandidates = this._buildAdaptiveCandidates(anchors, {
-        rangePx,
-        yRangePx,
-        marginPx,
-        topMarginPx,
-        bottomMarginPx,
-        xOffsets: rangePx > 0 ? [-1, 0, 1] : [0],
-        yOffsets: yRangePx > 0 ? [-1, 0, 1] : [0],
-        speedScalars,
-      });
-      const coarseChoices = policy.rankBehaviors({
-        enemy: this,
-        enemyType: this.enemyType,
-        candidates: coarseCandidates,
-      }, 3);
-      const fineCandidates = this._buildFineAdaptiveCandidates(
-        coarseChoices,
-        speedScalars,
-        { marginPx, topMarginPx, bottomMarginPx },
-        rangePx,
-        yRangePx
-      );
-      resolved = policy.rankBehaviors({
-        enemy: this,
-        enemyType: this.enemyType,
-        candidates: fineCandidates.length > 0 ? fineCandidates : coarseCandidates,
-      }, 1)?.[0] ?? coarseChoices?.[0] ?? null;
-    } else {
-      const fullCandidates = this._buildAdaptiveCandidates(anchors, {
-        rangePx,
-        yRangePx,
-        marginPx,
-        topMarginPx,
-        bottomMarginPx,
-        xOffsets: rangePx > 0 ? (policy.getPositionOffsets?.() ?? [-1, -0.5, 0, 0.5, 1]) : [0],
-        yOffsets: yRangePx > 0 ? (policy.getVerticalOffsets?.() ?? [-1, -0.5, 0, 0.5, 1]) : [0],
-        speedScalars,
-      });
-      resolved = policy.resolveBehavior({
-        enemy: this,
-        enemyType: this.enemyType,
-        candidates: fullCandidates,
-      });
-    }
-
-    resolved ??= fallbackResolved;
-
-    const speedScalar = commit
-      ? this._applyAdaptiveSpeedScalar(resolved.speedScalar ?? 1)
-      : clamp(
-          resolved.speedScalar ?? 1,
-          this.adaptiveProfile?.minSpeedScalar ?? 1,
-          this.adaptiveProfile?.maxSpeedScalar ?? 1
-        );
-
-    this.adaptiveProfile.predictedEnemyWinRate = resolved.predictedEnemyWinRate ?? this.adaptiveProfile.predictedEnemyWinRate;
-    this.adaptiveProfile.predictedSurvival = resolved.predictedSurvival ?? this.adaptiveProfile.predictedSurvival;
-    this.adaptiveProfile.predictedPressure = resolved.predictedPressure ?? this.adaptiveProfile.predictedPressure;
-    this.adaptiveProfile.predictedCollisionRisk = resolved.predictedCollisionRisk ?? this.adaptiveProfile.predictedCollisionRisk;
-    this.adaptiveProfile.predictedBulletRisk = resolved.predictedBulletRisk ?? this.adaptiveProfile.predictedBulletRisk;
-    this._adaptiveActionMode = resolved.actionMode ?? this._adaptiveActionMode ?? 'hold';
-
-    return {
-      x: resolved.x ?? clampedBaseX,
-      y: resolved.y ?? clampedBaseY,
-      speedScalar,
-      predictedEnemyWinRate: resolved.predictedEnemyWinRate ?? 0.5,
-      predictedSurvival: resolved.predictedSurvival ?? 0.5,
-      predictedPressure: resolved.predictedPressure ?? 0.5,
-      predictedCollisionRisk: resolved.predictedCollisionRisk ?? 0.5,
-      predictedBulletRisk: resolved.predictedBulletRisk ?? 0.5,
-      score: resolved.score ?? 0,
-      actionMode: resolved.actionMode ?? 'hold',
-    };
+    return resolvePolicyAdaptiveMovePlan(this._getAdaptivePolicy(), this, baseX, options);
   }
 
   shouldUseAdaptiveFireWindow() {
-    return Boolean(this.canUseAdaptiveBehavior() && this.scene?._enemyAdaptivePolicy?.scoreCurrentPosition);
+    return Boolean(this.canUseAdaptiveBehavior() && this._getAdaptivePolicy()?.scoreCurrentPosition);
   }
 
   shouldFireNow() {
     if (!this.shouldUseAdaptiveFireWindow()) return true;
 
-    const playerBullets = this.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [];
+    const playerBullets = this.getRuntimeContext()?.getPlayerBullets?.() ?? [];
     if (playerBullets.length === 0) return true;
 
-    const evaluation = this.scene?._enemyAdaptivePolicy?.scoreCurrentPosition?.({
+    const evaluation = this._getAdaptivePolicy()?.scoreCurrentPosition?.({
       enemy: this,
       enemyType: this.enemyType,
     });

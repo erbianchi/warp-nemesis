@@ -1,23 +1,9 @@
 /** @module SquadDatasetStore */
 
 import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
+import { clamp, normalizeInteger, normalizeNumber } from '../../utils/math.js';
 
 export const SQUAD_DATASET_STORAGE_KEY = ENEMY_LEARNING_CONFIG.squadDatasetStorageKey;
-
-function normalizeInteger(value) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 0;
-  return Math.max(0, Math.round(parsed));
-}
-
-function normalizeNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
 
 function getBrowserStorage(storage) {
   if (storage) return storage;

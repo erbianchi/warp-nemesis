@@ -2,16 +2,23 @@
 
 import { GAME_CONFIG } from '../../config/game.config.js';
 import { WEAPONS } from '../../config/weapons.config.js';
-import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
+import {
+  DEFAULT_ENEMY_ACTION_MODE,
+  ENEMY_ACTION_MODES,
+  ENEMY_LEARNING_CONFIG,
+} from '../../config/enemyLearning.config.js';
 import { resolveShotAlignment } from './EnemyPolicyMath.js';
+import { clamp } from '../../utils/math.js';
 
 const WEAPON_KEYS = Object.freeze(Object.keys(WEAPONS));
 export const ENEMY_ACTION_MODE_OFFSET = 24;
-export const ENEMY_ACTION_MODE_COUNT = 5;
+export const ENEMY_ACTION_MODE_COUNT = ENEMY_ACTION_MODES.length;
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
+function toActionModeFeatureName(mode) {
+  return `actionMode${mode[0].toUpperCase()}${mode.slice(1)}`;
 }
+
+const ACTION_MODE_FEATURE_NAMES = ENEMY_ACTION_MODES.map(toActionModeFeatureName);
 
 /**
  * Encodes a single enemy state/action sample into a fixed numeric vector that
@@ -51,11 +58,7 @@ export class EnemyFeatureEncoder {
       'nearestBulletDistanceNorm',
       'bulletLaneThreat',
       'bulletTimeToImpactNorm',
-      'actionModeHold',
-      'actionModePress',
-      'actionModeFlank',
-      'actionModeEvade',
-      'actionModeRetreat',
+      ...ACTION_MODE_FEATURE_NAMES,
       ...this._weaponKeys.map(key => `weapon_${key}`),
     ];
   }
@@ -97,7 +100,10 @@ export class EnemyFeatureEncoder {
     const sameLane = Math.abs(dx) <= this._normalization.sameLaneThresholdPx ? 1 : 0;
     const playerShieldUp = player.hasShield ? 1 : 0;
     const threat = context.threat ?? {};
-    const actionMode = context.actionMode ?? 'hold';
+    const actionMode = context.actionMode ?? DEFAULT_ENEMY_ACTION_MODE;
+    const actionModeFlags = Object.fromEntries(
+      ENEMY_ACTION_MODES.map((mode) => [toActionModeFeatureName(mode), actionMode === mode ? 1 : 0])
+    );
 
     return {
       enemyType: context.enemyType ?? 'skirm',
@@ -144,11 +150,7 @@ export class EnemyFeatureEncoder {
         0,
         1.5
       ),
-      actionModeHold: actionMode === 'hold' ? 1 : 0,
-      actionModePress: actionMode === 'press' ? 1 : 0,
-      actionModeFlank: actionMode === 'flank' ? 1 : 0,
-      actionModeEvade: actionMode === 'evade' ? 1 : 0,
-      actionModeRetreat: actionMode === 'retreat' ? 1 : 0,
+      ...actionModeFlags,
       weaponKey: weapon.primaryWeaponKey ?? null,
     };
   }
@@ -183,11 +185,7 @@ export class EnemyFeatureEncoder {
       sample.nearestBulletDistanceNorm ?? 0,
       sample.bulletLaneThreat ?? 0,
       sample.bulletTimeToImpactNorm ?? 0,
-      sample.actionModeHold ?? 0,
-      sample.actionModePress ?? 0,
-      sample.actionModeFlank ?? 0,
-      sample.actionModeEvade ?? 0,
-      sample.actionModeRetreat ?? 0,
+      ...ACTION_MODE_FEATURE_NAMES.map(name => sample[name] ?? 0),
       ...this._weaponKeys.map(key => (sample.weaponKey === key ? 1 : 0)),
     ];
 

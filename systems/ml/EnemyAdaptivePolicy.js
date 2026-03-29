@@ -1,7 +1,10 @@
 /** @module EnemyAdaptivePolicy */
 
 import { ENEMIES } from '../../config/enemies.config.js';
-import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
+import {
+  DEFAULT_ENEMY_ACTION_MODE,
+  ENEMY_LEARNING_CONFIG,
+} from '../../config/enemyLearning.config.js';
 import { EnemyDatasetStore } from './EnemyDatasetStore.js';
 import { EnemyFeatureEncoder } from './EnemyFeatureEncoder.js';
 import { EnemyLearningSession } from './EnemyLearningSession.js';
@@ -19,15 +22,7 @@ import {
   stripActionModes,
 } from './DanceWaypointNetwork.js';
 import { DanceWaypointStore } from './DanceWaypointStore.js';
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
-function normalizeInteger(value, fallback = 0) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed)) : fallback;
-}
+import { clamp, normalizeInteger } from '../../utils/math.js';
 
 function normalizeSampleWeights(weights = []) {
   if (!Array.isArray(weights) || weights.length === 0) return [];
@@ -296,6 +291,382 @@ function resolveSpatialPenalties(candidate, enemy, liveEnemies, config) {
   };
 }
 
+function resolveEnemyRuntimeContext(enemy) {
+  return enemy?.getRuntimeContext?.() ?? enemy?._runtimeContext ?? null;
+}
+
+function resolveEnemyPlayerSnapshot(enemy, runtimeContext) {
+  if (typeof enemy?._getPlayerSnapshot === 'function') {
+    return enemy._getPlayerSnapshot();
+  }
+
+  const snapshot = runtimeContext?.getPlayerSnapshot?.();
+  if (snapshot) return snapshot;
+
+  const normalization = ENEMY_LEARNING_CONFIG.normalization ?? {};
+  const player = runtimeContext?.getPlayer?.() ?? enemy?.scene?._player ?? null;
+  return {
+    x: player?.x ?? (normalization.width ?? 0) / 2,
+    y: player?.y ?? (normalization.height ?? 0) - 80,
+    hasShield: false,
+    shieldRatio: 0,
+    hpRatio: 1,
+  };
+}
+
+function resolveEnemyThreatSnapshot(enemy, runtimeContext, policyApi) {
+  if (typeof enemy?._getPlayerBulletThreatSnapshot === 'function') {
+    return enemy._getPlayerBulletThreatSnapshot();
+  }
+
+  const playerBullets = runtimeContext?.getPlayerBullets?.()
+    ?? enemy?.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active)
+    ?? [];
+  return buildPlayerBulletThreatSnapshot(
+    playerBullets,
+    enemy,
+    policyApi?._config?.normalization ?? ENEMY_LEARNING_CONFIG.normalization ?? {}
+  );
+}
+
+function buildFallbackMovePlan(enemy, baseX, options = {}) {
+  const config = ENEMY_LEARNING_CONFIG.normalization ?? {};
+  const rangePx = Math.max(0, options.rangePx ?? 0);
+  const yRangePx = Math.max(0, options.yRangePx ?? Math.round(rangePx * 0.7));
+  const marginPx = Math.max(0, options.marginPx ?? 24);
+  const topMarginPx = Math.max(0, options.topMarginPx ?? 24);
+  const bottomMarginPx = Math.max(
+    topMarginPx,
+    options.bottomMarginPx ?? ((config.height ?? 0) - 24)
+  );
+  const candidateY = options.candidateY ?? enemy?.y ?? 0;
+  const commit = options.commit !== false;
+  const canUseAdaptiveBehavior = typeof enemy?.canUseAdaptiveBehavior === 'function'
+    ? enemy.canUseAdaptiveBehavior()
+    : false;
+  const speedScalar = canUseAdaptiveBehavior
+    ? clamp(
+        enemy?.adaptiveProfile?.currentSpeedScalar ?? 1,
+        enemy?.adaptiveProfile?.minSpeedScalar ?? 1,
+        enemy?.adaptiveProfile?.maxSpeedScalar ?? 1
+      )
+    : 1;
+
+  if (commit && typeof enemy?._applyAdaptiveSpeedScalar === 'function') {
+    enemy._applyAdaptiveSpeedScalar(speedScalar);
+  }
+
+  return {
+    x: clamp(baseX, marginPx, (config.width ?? 0) - marginPx),
+    y: clamp(candidateY, topMarginPx, bottomMarginPx),
+    speedScalar,
+    predictedEnemyWinRate: enemy?.adaptiveProfile?.predictedEnemyWinRate ?? 0.5,
+    predictedSurvival: enemy?.adaptiveProfile?.predictedSurvival ?? 0.5,
+    predictedPressure: enemy?.adaptiveProfile?.predictedPressure ?? 0.5,
+    predictedCollisionRisk: enemy?.adaptiveProfile?.predictedCollisionRisk ?? 0.5,
+    predictedBulletRisk: enemy?.adaptiveProfile?.predictedBulletRisk ?? 0.5,
+    score: 0,
+    actionMode: enemy?._adaptiveActionMode ?? DEFAULT_ENEMY_ACTION_MODE,
+  };
+}
+
+function buildAdaptiveAnchors(enemy, policyApi, baseX, candidateY, rangePx, yRangePx, bounds) {
+  const runtimeContext = resolveEnemyRuntimeContext(enemy);
+  const player = resolveEnemyPlayerSnapshot(enemy, runtimeContext);
+  const threat = resolveEnemyThreatSnapshot(enemy, runtimeContext, policyApi);
+  const config = policyApi?._config?.normalization ?? ENEMY_LEARNING_CONFIG.normalization ?? {};
+  const viewportWidth = config.width ?? 0;
+
+  const anchors = [
+    {
+      mode: DEFAULT_ENEMY_ACTION_MODE,
+      x: baseX,
+      y: candidateY,
+    },
+    {
+      mode: 'press',
+      x: player.x ?? baseX,
+      y: clamp(
+        Math.min((player.y ?? candidateY) - 90, candidateY + yRangePx),
+        bounds.topMarginPx,
+        bounds.bottomMarginPx
+      ),
+    },
+    {
+      mode: 'retreat',
+      x: baseX,
+      y: clamp(candidateY - yRangePx, bounds.topMarginPx, bounds.bottomMarginPx),
+    },
+    {
+      mode: 'evade',
+      x: clamp(threat.suggestedSafeX ?? baseX, bounds.marginPx, viewportWidth - bounds.marginPx),
+      y: clamp(threat.suggestedSafeY ?? candidateY, bounds.topMarginPx, bounds.bottomMarginPx),
+    },
+  ];
+
+  const playerX = player.x ?? baseX;
+  const flankOffset = Math.max(rangePx, 40);
+  anchors.push({
+    mode: 'flank',
+    x: clamp(
+      playerX + (baseX <= playerX ? -flankOffset : flankOffset),
+      bounds.marginPx,
+      viewportWidth - bounds.marginPx
+    ),
+    y: clamp(candidateY + yRangePx * 0.25, bounds.topMarginPx, bounds.bottomMarginPx),
+  });
+
+  return anchors;
+}
+
+function buildAdaptiveCandidates(policyApi, anchors, options = {}) {
+  const config = policyApi?._config?.normalization ?? ENEMY_LEARNING_CONFIG.normalization ?? {};
+  const viewportWidth = config.width ?? 0;
+  const viewportHeight = config.height ?? 0;
+  const rangePx = Math.max(0, options.rangePx ?? 0);
+  const yRangePx = Math.max(0, options.yRangePx ?? 0);
+  const marginPx = Math.max(0, options.marginPx ?? 0);
+  const topMarginPx = Math.max(0, options.topMarginPx ?? 0);
+  const bottomMarginPx = Math.max(topMarginPx, options.bottomMarginPx ?? viewportHeight);
+  const xOffsets = Array.isArray(options.xOffsets) && options.xOffsets.length > 0 ? options.xOffsets : [0];
+  const yOffsets = Array.isArray(options.yOffsets) && options.yOffsets.length > 0 ? options.yOffsets : [0];
+  const speedScalars = Array.isArray(options.speedScalars) && options.speedScalars.length > 0 ? options.speedScalars : [1];
+  const xScale = options.xScale ?? 0.45;
+  const yScale = options.yScale ?? 0.45;
+  const candidates = [];
+
+  for (const anchor of anchors) {
+    for (const xOffset of xOffsets) {
+      const candidateX = clamp(
+        anchor.x + (xOffset * rangePx * xScale),
+        marginPx,
+        viewportWidth - marginPx
+      );
+      for (const yOffset of yOffsets) {
+        const candidateY = clamp(
+          anchor.y + (yOffset * yRangePx * yScale),
+          topMarginPx,
+          bottomMarginPx
+        );
+        for (const speedScalar of speedScalars) {
+          candidates.push({
+            x: candidateX,
+            y: candidateY,
+            speedScalar,
+            actionMode: anchor.mode,
+          });
+        }
+      }
+    }
+  }
+
+  return candidates;
+}
+
+function buildFineAdaptiveCandidates(policyApi, enemy, coarseChoices, speedScalars, bounds, rangePx, yRangePx) {
+  const config = policyApi?._config?.normalization ?? ENEMY_LEARNING_CONFIG.normalization ?? {};
+  const viewportWidth = config.width ?? 0;
+  const viewportHeight = config.height ?? 0;
+  const marginPx = Math.max(0, bounds.marginPx ?? 0);
+  const topMarginPx = Math.max(0, bounds.topMarginPx ?? 0);
+  const bottomMarginPx = Math.max(topMarginPx, bounds.bottomMarginPx ?? viewportHeight);
+  const fineXOffsets = rangePx > 0 ? [-0.5, 0, 0.5] : [0];
+  const fineYOffsets = yRangePx > 0 ? [-0.5, 0, 0.5] : [0];
+  const fineStepX = rangePx * 0.45;
+  const fineStepY = yRangePx * 0.45;
+  const candidates = [];
+  const seen = new Set();
+
+  const resolveSpeedIndex = (value) => {
+    let bestIndex = 0;
+    let bestDelta = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < speedScalars.length; index += 1) {
+      const delta = Math.abs((speedScalars[index] ?? 1) - value);
+      if (delta < bestDelta) {
+        bestDelta = delta;
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
+  };
+
+  for (const choice of coarseChoices ?? []) {
+    const centerSpeedIndex = resolveSpeedIndex(choice.speedScalar ?? 1);
+    const localSpeedScalars = [...new Set([
+      speedScalars[Math.max(0, centerSpeedIndex - 1)],
+      speedScalars[centerSpeedIndex],
+      speedScalars[Math.min(speedScalars.length - 1, centerSpeedIndex + 1)],
+    ].filter(value => Number.isFinite(value)))];
+
+    for (const xOffset of fineXOffsets) {
+      const candidateX = clamp(
+        (choice.x ?? enemy?.x ?? 0) + (xOffset * fineStepX * 0.5),
+        marginPx,
+        viewportWidth - marginPx
+      );
+      for (const yOffset of fineYOffsets) {
+        const candidateY = clamp(
+          (choice.y ?? enemy?.y ?? 0) + (yOffset * fineStepY * 0.5),
+          topMarginPx,
+          bottomMarginPx
+        );
+        for (const speedScalar of localSpeedScalars) {
+          const key = [
+            Math.round(candidateX * 100),
+            Math.round(candidateY * 100),
+            Math.round(speedScalar * 1000),
+            choice.actionMode ?? DEFAULT_ENEMY_ACTION_MODE,
+          ].join(':');
+          if (seen.has(key)) continue;
+          seen.add(key);
+          candidates.push({
+            x: candidateX,
+            y: candidateY,
+            speedScalar,
+            actionMode: choice.actionMode ?? DEFAULT_ENEMY_ACTION_MODE,
+          });
+        }
+      }
+    }
+  }
+
+  return candidates;
+}
+
+export function resolveAdaptiveMovePlan(policyApi, enemy, baseX, options = {}) {
+  if (!enemy) {
+    return buildFallbackMovePlan(enemy, baseX ?? 0, options);
+  }
+
+  const config = policyApi?._config ?? ENEMY_LEARNING_CONFIG;
+  const normalization = config.normalization ?? {};
+  const rangePx = Math.max(0, options.rangePx ?? 0);
+  const yRangePx = Math.max(0, options.yRangePx ?? Math.round(rangePx * 0.7));
+  const marginPx = Math.max(0, options.marginPx ?? 24);
+  const topMarginPx = Math.max(0, options.topMarginPx ?? 24);
+  const bottomMarginPx = Math.max(topMarginPx, options.bottomMarginPx ?? ((normalization.height ?? 0) - 24));
+  const candidateY = options.candidateY ?? enemy.y ?? 0;
+  const clampedBaseX = clamp(baseX, marginPx, (normalization.width ?? 0) - marginPx);
+  const clampedBaseY = clamp(candidateY, topMarginPx, bottomMarginPx);
+  const runtimeContext = resolveEnemyRuntimeContext(enemy);
+
+  const canUseAdaptiveBehavior = typeof enemy.canUseAdaptiveBehavior === 'function'
+    ? enemy.canUseAdaptiveBehavior()
+    : false;
+  if (!canUseAdaptiveBehavior || (!policyApi?.resolveBehavior && !policyApi?.rankBehaviors)) {
+    return buildFallbackMovePlan(enemy, clampedBaseX, {
+      ...options,
+      candidateY: clampedBaseY,
+      marginPx,
+      topMarginPx,
+      bottomMarginPx,
+    });
+  }
+
+  const speedScalars = options.speedScalars ?? policyApi.getSpeedCandidates?.(enemy.enemyType) ?? [1];
+  const anchors = buildAdaptiveAnchors(
+    enemy,
+    policyApi,
+    clampedBaseX,
+    clampedBaseY,
+    rangePx,
+    yRangePx,
+    { marginPx, topMarginPx, bottomMarginPx }
+  );
+  const fallbackResolved = buildFallbackMovePlan(enemy, clampedBaseX, {
+    ...options,
+    candidateY: clampedBaseY,
+    marginPx,
+    topMarginPx,
+    bottomMarginPx,
+    commit: false,
+  });
+  let resolved = null;
+
+  if (typeof policyApi?.rankBehaviors === 'function') {
+    const coarseCandidates = buildAdaptiveCandidates(policyApi, anchors, {
+      rangePx,
+      yRangePx,
+      marginPx,
+      topMarginPx,
+      bottomMarginPx,
+      xOffsets: rangePx > 0 ? [-1, 0, 1] : [0],
+      yOffsets: yRangePx > 0 ? [-1, 0, 1] : [0],
+      speedScalars,
+    });
+    const coarseChoices = policyApi.rankBehaviors({
+      enemy,
+      enemyType: enemy.enemyType,
+      candidates: coarseCandidates,
+      context: runtimeContext,
+    }, 3);
+    const fineCandidates = buildFineAdaptiveCandidates(
+      policyApi,
+      enemy,
+      coarseChoices,
+      speedScalars,
+      { marginPx, topMarginPx, bottomMarginPx },
+      rangePx,
+      yRangePx
+    );
+    resolved = policyApi.rankBehaviors({
+      enemy,
+      enemyType: enemy.enemyType,
+      candidates: fineCandidates.length > 0 ? fineCandidates : coarseCandidates,
+      context: runtimeContext,
+    }, 1)?.[0] ?? coarseChoices?.[0] ?? null;
+  } else {
+    const fullCandidates = buildAdaptiveCandidates(policyApi, anchors, {
+      rangePx,
+      yRangePx,
+      marginPx,
+      topMarginPx,
+      bottomMarginPx,
+      xOffsets: rangePx > 0 ? (policyApi.getPositionOffsets?.() ?? [-1, -0.5, 0, 0.5, 1]) : [0],
+      yOffsets: yRangePx > 0 ? (policyApi.getVerticalOffsets?.() ?? [-1, -0.5, 0, 0.5, 1]) : [0],
+      speedScalars,
+    });
+    resolved = policyApi.resolveBehavior({
+      enemy,
+      enemyType: enemy.enemyType,
+      candidates: fullCandidates,
+      context: runtimeContext,
+    });
+  }
+
+  resolved ??= fallbackResolved;
+
+  const speedScalar = options.commit !== false && typeof enemy._applyAdaptiveSpeedScalar === 'function'
+    ? enemy._applyAdaptiveSpeedScalar(resolved.speedScalar ?? 1)
+    : clamp(
+        resolved.speedScalar ?? 1,
+        enemy.adaptiveProfile?.minSpeedScalar ?? 1,
+        enemy.adaptiveProfile?.maxSpeedScalar ?? 1
+      );
+
+  if (enemy.adaptiveProfile) {
+    enemy.adaptiveProfile.predictedEnemyWinRate = resolved.predictedEnemyWinRate ?? enemy.adaptiveProfile.predictedEnemyWinRate;
+    enemy.adaptiveProfile.predictedSurvival = resolved.predictedSurvival ?? enemy.adaptiveProfile.predictedSurvival;
+    enemy.adaptiveProfile.predictedPressure = resolved.predictedPressure ?? enemy.adaptiveProfile.predictedPressure;
+    enemy.adaptiveProfile.predictedCollisionRisk = resolved.predictedCollisionRisk ?? enemy.adaptiveProfile.predictedCollisionRisk;
+    enemy.adaptiveProfile.predictedBulletRisk = resolved.predictedBulletRisk ?? enemy.adaptiveProfile.predictedBulletRisk;
+  }
+  enemy._adaptiveActionMode = resolved.actionMode ?? enemy._adaptiveActionMode ?? DEFAULT_ENEMY_ACTION_MODE;
+
+  return {
+    x: resolved.x ?? clampedBaseX,
+    y: resolved.y ?? clampedBaseY,
+    speedScalar,
+    predictedEnemyWinRate: resolved.predictedEnemyWinRate ?? 0.5,
+    predictedSurvival: resolved.predictedSurvival ?? 0.5,
+    predictedPressure: resolved.predictedPressure ?? 0.5,
+    predictedCollisionRisk: resolved.predictedCollisionRisk ?? 0.5,
+    predictedBulletRisk: resolved.predictedBulletRisk ?? 0.5,
+    score: resolved.score ?? 0,
+    actionMode: resolved.actionMode ?? DEFAULT_ENEMY_ACTION_MODE,
+  };
+}
+
 function createDefaultModel() {
   return {
     winModel: { weights: [], bias: 0 },
@@ -403,6 +774,10 @@ export class EnemyAdaptivePolicy {
   getDanceNetwork() {
     if (!this._danceNetwork) this.load();
     return this._danceNetwork;
+  }
+
+  getEncoder() {
+    return this._encoder;
   }
 
   getSnapshot() {
@@ -1056,21 +1431,19 @@ export class EnemyAdaptivePolicy {
     }
 
     const regressors = this._getRuntimeRegressorBundle(enemyType);
-    const liveEnemies = options.enemy?.scene?._enemies ?? [];
-    const player = options.enemy?.scene?._getEnemyLearningPlayerSnapshot?.() ?? {
-      x: options.enemy?.scene?._player?.x ?? 0,
-      y: options.enemy?.scene?._player?.y ?? 0,
-      hasShield: false,
-      shieldRatio: 0,
-      hpRatio: 1,
-    };
-    const weapon = options.enemy?.scene?._weapons?.getLearningSnapshot?.() ?? {
+    const runtimeContext = options.context ?? resolveEnemyRuntimeContext(options.enemy);
+    const liveEnemies = options.liveEnemies ?? runtimeContext?.getEnemies?.() ?? options.enemy?.scene?._enemies ?? [];
+    const player = options.player ?? resolveEnemyPlayerSnapshot(options.enemy, runtimeContext);
+    const weapon = options.weapon ?? runtimeContext?.getWeapons?.()?.getLearningSnapshot?.() ?? {
       primaryWeaponKey: null,
       heatRatio: 0,
       isOverheated: false,
       primaryDamageMultiplier: 1,
     };
-    const playerBullets = options.enemy?.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active) ?? [];
+    const playerBullets = options.playerBullets
+      ?? runtimeContext?.getPlayerBullets?.()
+      ?? options.enemy?.scene?._weapons?.pool?.getChildren?.()?.filter?.(bullet => bullet?.active)
+      ?? [];
     const playerNotShooting = playerBullets.length === 0;
     const offensiveCandidates = playerNotShooting
       ? (options.candidates ?? []).filter(candidate => (
@@ -1167,6 +1540,10 @@ export class EnemyAdaptivePolicy {
    */
   resolveBehavior(options) {
     return this.rankBehaviors(options, 1)[0] ?? null;
+  }
+
+  resolveMovePlan(enemy, baseX, options = {}) {
+    return resolveAdaptiveMovePlan(this, enemy, baseX, options);
   }
 
   scoreCurrentPosition(options) {

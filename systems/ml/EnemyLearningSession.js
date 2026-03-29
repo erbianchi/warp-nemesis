@@ -5,10 +5,7 @@ import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
 import { EnemyFeatureEncoder } from './EnemyFeatureEncoder.js';
 import { buildPlayerBulletThreatSnapshot, buildSquadSnapshot } from './EnemyPolicyMath.js';
 import { SquadFeatureEncoder } from './SquadFeatureEncoder.js';
-
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
+import { clamp } from '../../utils/math.js';
 
 function average(values = []) {
   if (!Array.isArray(values) || values.length === 0) return 0;
@@ -77,7 +74,8 @@ function isSurvivalSignalReason(reason) {
 export class EnemyLearningSession {
   /**
    * @param {{
-   *   scene: Phaser.Scene,
+   *   eventSource?: Phaser.Events.EventEmitter,
+   *   scene?: Phaser.Scene,
    *   getPlayerSnapshot: Function,
    *   getWeaponSnapshot: Function,
    *   getEnemies: Function,
@@ -89,7 +87,7 @@ export class EnemyLearningSession {
    * }} options
    */
   constructor(options) {
-    this._scene = options.scene;
+    this._eventSource = options.eventSource ?? options.scene?.events ?? null;
     this._getPlayerSnapshot = options.getPlayerSnapshot;
     this._getWeaponSnapshot = options.getWeaponSnapshot;
     this._getEnemies = options.getEnemies;
@@ -117,11 +115,11 @@ export class EnemyLearningSession {
     this._handleEnemyDied = (payload) => this._onEnemyResolved(payload, 'death');
     this._handleEnemyEscaped = (payload) => this._onEnemyResolved(payload, 'escape');
 
-    this._scene.events?.on?.(EVENTS.ENEMY_SPAWNED, this._handleEnemySpawned);
-    this._scene.events?.on?.(EVENTS.ENEMY_FIRE, this._handleEnemyFired);
-    this._scene.events?.on?.(EVENTS.PLAYER_HIT, this._handlePlayerHit);
-    this._scene.events?.on?.(EVENTS.ENEMY_DIED, this._handleEnemyDied);
-    this._scene.events?.on?.(EVENTS.ENEMY_ESCAPED, this._handleEnemyEscaped);
+    this._eventSource?.on?.(EVENTS.ENEMY_SPAWNED, this._handleEnemySpawned);
+    this._eventSource?.on?.(EVENTS.ENEMY_FIRE, this._handleEnemyFired);
+    this._eventSource?.on?.(EVENTS.PLAYER_HIT, this._handlePlayerHit);
+    this._eventSource?.on?.(EVENTS.ENEMY_DIED, this._handleEnemyDied);
+    this._eventSource?.on?.(EVENTS.ENEMY_ESCAPED, this._handleEnemyEscaped);
   }
 
   /**
@@ -803,10 +801,10 @@ export class EnemyLearningSession {
   destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
-    this._scene.events?.off?.(EVENTS.ENEMY_SPAWNED, this._handleEnemySpawned);
-    this._scene.events?.off?.(EVENTS.ENEMY_FIRE, this._handleEnemyFired);
-    this._scene.events?.off?.(EVENTS.PLAYER_HIT, this._handlePlayerHit);
-    this._scene.events?.off?.(EVENTS.ENEMY_DIED, this._handleEnemyDied);
-    this._scene.events?.off?.(EVENTS.ENEMY_ESCAPED, this._handleEnemyEscaped);
+    this._eventSource?.off?.(EVENTS.ENEMY_SPAWNED, this._handleEnemySpawned);
+    this._eventSource?.off?.(EVENTS.ENEMY_FIRE, this._handleEnemyFired);
+    this._eventSource?.off?.(EVENTS.PLAYER_HIT, this._handlePlayerHit);
+    this._eventSource?.off?.(EVENTS.ENEMY_DIED, this._handleEnemyDied);
+    this._eventSource?.off?.(EVENTS.ENEMY_ESCAPED, this._handleEnemyEscaped);
   }
 }

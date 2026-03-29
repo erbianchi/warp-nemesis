@@ -9,8 +9,9 @@ import {
   ENEMY_ACTION_MODE_COUNT,
   ENEMY_ACTION_MODE_OFFSET,
 } from './EnemyFeatureEncoder.js';
+import { ENEMY_ACTION_MODES } from '../../config/enemyLearning.config.js';
 
-export const ACTION_MODES = Object.freeze(['hold', 'press', 'flank', 'evade', 'retreat']);
+export const ACTION_MODES = ENEMY_ACTION_MODES;
 
 // Indices of the action-mode one-hot block inside the full EnemyFeatureEncoder
 // vector.  These features are STRIPPED from the input to avoid a circular

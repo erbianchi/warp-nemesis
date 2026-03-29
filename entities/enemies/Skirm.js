@@ -3,8 +3,6 @@
 import { EnemyBase }    from '../EnemyBase.js';
 import { GAME_CONFIG }  from '../../config/game.config.js';
 import { ENEMY_LEARNING_CONFIG } from '../../config/enemyLearning.config.js';
-import { buildSquadSnapshot } from '../../systems/ml/EnemyPolicyMath.js';
-import { stripActionModes } from '../../systems/ml/DanceWaypointNetwork.js';
 
 const { WIDTH: W, HEIGHT: H } = GAME_CONFIG;
 
@@ -26,8 +24,8 @@ const { WIDTH: W, HEIGHT: H } = GAME_CONFIG;
  *   fan_out     — enter clustered, spread outward, hold + shoot, all converge and dive
  */
 export class Skirm extends EnemyBase {
-  constructor(scene, x, y, stats, dance = 'straight') {
-    super(scene, x, y, 'skirm', stats, dance);
+  constructor(scene, x, y, stats, dance = 'straight', options = {}) {
+    super(scene, x, y, 'skirm', stats, dance, options);
   }
 
   _scaleDuration(durationMs, speedScalar = this.adaptiveProfile?.currentSpeedScalar ?? 1) {
@@ -51,6 +49,23 @@ export class Skirm extends EnemyBase {
       bottomMarginPx: H - 96,
       commit,
     });
+  }
+
+  _getNeuralFlowNavigationConfig() {
+    return {
+      marginPx: 30,
+      topMarginPx: 24,
+      bottomMarginPx: H - 96,
+      rangePx: 72,
+      yRangePx: 56,
+      pressTargetOffsetY: 90,
+      pressAdvanceLimitPx: 60,
+      flankOffsetBasePx: 80,
+      flankOffsetRandomPx: 40,
+      flankYJitterPx: 40,
+      retreatBasePx: 50,
+      retreatRandomPx: 40,
+    };
   }
 
   setupMovement() {
@@ -308,7 +323,7 @@ export class Skirm extends EnemyBase {
           ease:     'Sine.easeInOut',
           onComplete: () => {
             if (!this.alive) return;
-            const player = scene._player;
+            const player = this.getRuntimeContext()?.getPlayer?.() ?? null;
             const divePlan = player
               ? this._adaptivePlan(player.x + (Math.random() - 0.5) * 60, H + 80, 88)
               : this._adaptivePlan(midX, H + 80, 88);
@@ -359,7 +374,7 @@ export class Skirm extends EnemyBase {
           ease:     'Sine.easeInOut',
           onComplete: () => {
             if (!this.alive) return;
-            const player = scene._player;
+            const player = this.getRuntimeContext()?.getPlayer?.() ?? null;
             const divePlan = player
               ? this._adaptivePlan(player.x + (Math.random() - 0.5) * 70, H + 80, 92)
               : this._adaptivePlan(spreadX, H + 80, 92);
@@ -443,128 +458,6 @@ export class Skirm extends EnemyBase {
         },
       });
     };
-  }
-
-  /**
-   * Query the DanceWaypointNetwork for the next action mode.
-   * Falls back to the position-scoring argmax when the network is untrained.
-   * Applies mode hysteresis to prevent rapid oscillation.
-   * @param {string} currentMode
-   * @returns {string}
-   */
-  _sampleNeuralMode(currentMode) {
-    const policy  = this.scene?._enemyAdaptivePolicy;
-    const network = policy?.getDanceNetwork?.();
-    const cfg     = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
-
-    if (network?.isTrained) {
-      const temperature = this._resolveNeuralTemperature(network);
-      const player  = this._getPlayerSnapshot();
-      const threat  = this._getPlayerBulletThreatSnapshot();
-      const liveEnemies = this.scene?._enemies ?? [];
-      const squad   = buildSquadSnapshot(liveEnemies, this._squadId ?? null, this);
-      const weapon  = this.scene?._weapons?.getLearningSnapshot?.() ?? {};
-
-      const sample = policy._encoder?.buildSample?.({
-        enemyType: this.enemyType,
-        player,
-        weapon,
-        enemyX:    this.x,
-        enemyY:    this.y,
-        speed:     this.speed,
-        squad,
-        threat,
-        actionMode: 'hold', // placeholder — stripped before inference
-      });
-      if (sample) {
-        const encoded = policy._encoder.encodeSample(sample);
-        const { mode, probabilities } = network.sample(
-          stripActionModes(encoded.vector),
-          temperature
-        );
-        // Hysteresis: require meaningful probability shift to switch modes
-        const hysteresis = cfg.modeHysteresisThreshold ?? 0.15;
-        const currentModeIdx = ['hold','press','flank','evade','retreat'].indexOf(currentMode);
-        const newModeIdx     = ['hold','press','flank','evade','retreat'].indexOf(mode);
-        if (currentModeIdx >= 0 && newModeIdx >= 0 && mode !== currentMode) {
-          if ((probabilities[newModeIdx] ?? 0) - (probabilities[currentModeIdx] ?? 0) < hysteresis) {
-            return currentMode;
-          }
-        }
-        return mode;
-      }
-    }
-
-    // Fallback: use position-scoring to pick the best anchor mode
-    if (policy?.resolveBehavior) {
-      const anchors = this._buildAdaptiveAnchors(this.x, this.y, 72, 56, {
-        marginPx: 30, topMarginPx: 24, bottomMarginPx: H - 96,
-      });
-      const best = policy.resolveBehavior({
-        enemy:     this,
-        enemyType: this.enemyType,
-        candidates: anchors.map(a => ({ x: a.x, y: a.y, speedScalar: 1, actionMode: a.mode })),
-      });
-      return best?.actionMode ?? 'hold';
-    }
-
-    return 'hold';
-  }
-
-  /**
-   * Map an action mode to a movement anchor position.
-   * @param {string} mode
-   * @returns {{ x: number, y: number }}
-   */
-  _resolveNeuralAnchor(mode) {
-    const player = this._getPlayerSnapshot();
-    const threat = this._getPlayerBulletThreatSnapshot();
-    const clampX = (x) => Math.max(30, Math.min(W - 30, x));
-    const clampY = (y) => Math.max(24, Math.min(H - 96, y));
-
-    switch (mode) {
-      case 'press':
-        return {
-          x: clampX(player.x ?? this.x),
-          y: clampY(Math.min((player.y ?? this.y) - 90, this.y + 60)),
-        };
-      case 'flank': {
-        const px    = player.x ?? W / 2;
-        const side  = this.x <= px ? -1 : 1;
-        return {
-          x: clampX(px + side * (80 + Math.random() * 40)),
-          y: clampY(this.y + (Math.random() - 0.5) * 40),
-        };
-      }
-      case 'evade':
-        return {
-          x: clampX(threat.suggestedSafeX ?? this.x),
-          y: clampY(threat.suggestedSafeY ?? this.y),
-        };
-      case 'retreat':
-        return {
-          x: clampX(this.x),
-          y: clampY(this.y - 50 - Math.random() * 40),
-        };
-      case 'hold':
-      default:
-        return { x: clampX(this.x), y: clampY(this.y) };
-    }
-  }
-
-  /**
-   * Compute softmax temperature from training data volume.
-   * More samples → lower temperature → more exploitative.
-   * @param {import('../../systems/ml/DanceWaypointNetwork.js').DanceWaypointNetwork} network
-   * @returns {number}
-   */
-  _resolveNeuralTemperature(network) {
-    const cfg      = ENEMY_LEARNING_CONFIG.neuralDance ?? {};
-    const tInit    = cfg.temperatureInitial        ?? 2.0;
-    const tFinal   = cfg.temperatureFinal          ?? 0.7;
-    const converge = cfg.temperatureSampleConverge ?? 200;
-    const t = Math.min((network?.sampleCount ?? 0) / Math.max(1, converge), 1);
-    return tInit - (tInit - tFinal) * t;
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────

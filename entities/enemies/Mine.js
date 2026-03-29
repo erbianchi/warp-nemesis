@@ -2,6 +2,7 @@
 
 import { EnemyBase } from '../EnemyBase.js';
 import { GAME_CONFIG } from '../../config/game.config.js';
+import { clamp } from '../../utils/math.js';
 
 const MINE_SIZE = 28;
 const MINE_BODY_SIZE = 20;
@@ -19,14 +20,12 @@ const MINE_GRAVITY_WELL = Object.freeze({
   gravity: 360,
 });
 
-const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-
 /**
  * Mine — slow gravity hazard that drifts down the screen and pulls the player in.
  */
 export class Mine extends EnemyBase {
-  constructor(scene, x, y, stats, dance = DEFAULT_DANCE) {
-    super(scene, x, y, 'mine', stats, dance);
+  constructor(scene, x, y, stats, dance = DEFAULT_DANCE, options = {}) {
+    super(scene, x, y, 'mine', stats, dance, options);
 
     this._baseDisplayWidth = MINE_SIZE;
     this._baseDisplayHeight = MINE_SIZE;
@@ -36,9 +35,9 @@ export class Mine extends EnemyBase {
     this._driftClock = 0;
     this._anchorX = x;
     this._driftPhase = Math.random() * Math.PI * 2;
-    this._gravityWell = scene._effects?.createGravityWell?.(
+    this._gravityWell = this.getRuntimeContext()?.getEffects?.()?.createGravityWell?.(
       this,
-      scene._player,
+      this.getRuntimeContext()?.getPlayer?.(),
       MINE_GRAVITY_WELL
     ) ?? null;
   }
